@@ -22,6 +22,4 @@ tracing-subscriber = { workspace = true }
 reqwest = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
-actix-web = { workspace = true }
-actix-rt = { workspace = true }
 once_cell = "1.19"

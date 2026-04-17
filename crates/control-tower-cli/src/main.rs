@@ -8,9 +8,6 @@ mod service;
 mod config;
 mod mode;
 mod connections;
-mod web;
-mod api;
-mod html;
 mod rule;
 mod settings;
 mod update;
@@ -134,17 +131,6 @@ enum Commands {
     Update {
         #[command(subcommand)]
         action: UpdateAction,
-    },
-    /// Start Web UI server
-    ///
-    /// Launches a web-based UI for proxy management.
-    Web {
-        /// Host to bind (default: 0.0.0.0)
-        #[arg(long, default_value = "0.0.0.0")]
-        host: String,
-        /// Port to bind (default: 8080)
-        #[arg(short, long, default_value = "8080")]
-        port: u16,
     },
 }
 
@@ -488,7 +474,6 @@ async fn main() -> Result<()> {
         Commands::Rule { action } => rule::handle(action).await?,
         Commands::Connections { action } => connections::handle(action).await?,
         Commands::Update { action } => update::handle(action).await?,
-        Commands::Web { host, port } => web::start_web_server(&host, port).await?,
     }
 
     Ok(())

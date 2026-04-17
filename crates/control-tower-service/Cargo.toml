@@ -25,6 +25,9 @@ compact_str = { workspace = true }
 dirs = { workspace = true }
 clap = { workspace = true }
 reqwest = { workspace = true }
+actix-web = { workspace = true }
+actix-rt = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

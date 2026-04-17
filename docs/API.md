@@ -1,22 +1,19 @@
-# Control Tower Web API 文档
+# Control Tower Service API
 
-## 概述
+## Base URL
 
-Control Tower 提供基于 HTTP 的 REST API，用于 Web UI 开发和系统集成。
+```
+http://127.0.0.1:8080/api
+```
 
-## 基础信息
-
-| 项目 | 值 |
-|------|-----|
-| Base URL | `http://127.0.0.1:8080/api` |
-| 响应格式 | JSON |
-| 认证 | 无（仅本地访问） |
+端口可通过 `settings.yaml` 中的 `service_port` 配置项进行修改，默认为 `8080`。
 
 ---
 
-## 响应格式
+## 通用响应格式
 
-### 成功响应
+所有 API 响应均采用 JSON 格式，外层结构如下：
+
 ```json
 {
   "code": 0,
@@ -25,58 +22,108 @@ Control Tower 提供基于 HTTP 的 REST API，用于 Web UI 开发和系统集�
 }
 ```
 
-### 错误响应
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `code` | integer | 状态码，`0` 表示成功，`-1` 表示失败 |
+| `message` | string | 状态信息 |
+| `data` | object/null | 响应数据，失败时为 `null` |
+
+---
+
+## Endpoints
+
+### Service Status
+
+#### GET /api/status
+
+获取 Mihomo 服务状态。
+
+**Response:**
+
 ```json
 {
-  "code": -1,
-  "message": "错误描述",
+  "code": 0,
+  "message": "success",
+  "data": {
+    "running": true,
+    "pid": 12345,
+    "uptime_secs": 3600,
+    "state": "Running",
+    "config_path": "/home/user/.config/control-tower/active_config.yaml",
+    "circuit_breaker_remaining_secs": null
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `running` | boolean | 服务是否运行中 |
+| `pid` | number/null | Mihomo 进程 ID |
+| `uptime_secs` | number/null | 服务运行时长（秒） |
+| `state` | string | 服务状态：`Running`、`NotRunning`、`CircuitBroken` |
+| `config_path` | string/null | 当前配置文件的路径 |
+| `circuit_breaker_remaining_secs` | number/null | 熔断器剩余冷却时间（秒） |
+
+---
+
+### Service Control
+
+#### POST /api/service/start
+
+启动 Mihomo 服务。
+
+**Request:** 无
+
+**Response:**
+
+```json
+{
+  "code": 0,
+  "message": "success",
   "data": null
 }
 ```
 
 ---
 
-## API 端点
+#### POST /api/service/stop
 
-### 健康检查
+停止 Mihomo 服务。
 
-#### GET /
-返回服务状态字符串
+**Request:** 无
 
-**请求**
-```bash
-curl http://127.0.0.1:8080/
-```
+**Response:**
 
-**响应**
 ```json
-"Control Tower API"
+{
+  "code": 0,
+  "message": "success",
+  "data": null
+}
 ```
 
 ---
 
-### 订阅管理
+### Profiles
 
-#### GET /profiles
-获取所有订阅列表
+#### GET /api/profiles
 
-**请求**
-```bash
-curl http://127.0.0.1:8080/api/profiles
-```
+获取所有配置列表。
 
-**响应**
+**Response:**
+
 ```json
 {
   "code": 0,
   "message": "success",
   "data": [
     {
-      "id": "12345678",
-      "name": "我的订阅",
-      "url": "https://example.com/sub.yaml",
-      "file": "/root/.config/control-tower/profiles/12345678.yaml",
-      "active": true
+      "uid": "abc123",
+      "name": "Profile 1",
+      "file": "abc123.yaml",
+      "url": "https://example.com/profile.yaml",
+      "cron": null,
+      "updated_at": 1713000000
     }
   ]
 }
@@ -84,78 +131,53 @@ curl http://127.0.0.1:8080/api/profiles
 
 ---
 
-#### POST /profiles
-添加新订阅（下载并保存）
+#### POST /api/profiles
 
-**请求体**
+添加新的远程配置。
+
+**Request:**
+
 ```json
 {
-  "url": "https://example.com/sub.yaml",
-  "name": "可选的名称"
+  "url": "https://example.com/profile.yaml",
+  "name": "My Profile"
 }
 ```
 
-**请求示例**
-```bash
-curl -X POST http://127.0.0.1:8080/api/profiles \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://example.com/sub.yaml", "name": "我的订阅"}'
-```
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `url` | string | 是 | 配置文件 URL |
+| `name` | string | 否 | 配置名称 |
 
-**响应**
+**Response:**
+
 ```json
 {
   "code": 0,
   "message": "success",
   "data": {
-    "id": "profile-550e8400-e29b-41d4-a716-446655440000",
-    "name": "我的订阅",
-    "url": "https://example.com/sub.yaml",
-    "file": null,
-    "active": false
+    "uid": "abc123",
+    "file": "/home/user/.config/control-tower/profiles/abc123.yaml"
   }
 }
 ```
 
 ---
 
-#### DELETE /profiles/{id}
-删除订阅
+#### POST /api/profiles/{id}/activate
 
-**请求示例**
-```bash
-curl -X DELETE http://127.0.0.1:8080/api/profiles/profile-550e8400-e29b-41d4-a716-446655440000
-```
+激活指定配置。
 
-**响应**
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": null
-}
-```
+**Path Parameters:**
 
-**错误响应** (Profile not found)
-```json
-{
-  "code": -1,
-  "message": "Profile not found",
-  "data": null
-}
-```
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | 配置 UID |
 
----
+**Request:** 无
 
-#### POST /profiles/{id}/activate
-激活指定订阅
+**Response:**
 
-**请求示例**
-```bash
-curl -X POST http://127.0.0.1:8080/api/profiles/12345678/activate
-```
-
-**响应**
 ```json
 {
   "code": 0,
@@ -166,58 +188,20 @@ curl -X POST http://127.0.0.1:8080/api/profiles/12345678/activate
 
 ---
 
-### 代理管理
+#### DELETE /api/profiles/{id}
 
-#### GET /proxies
-获取所有代理节点（透传 Mihomo API）
+删除指定配置。
 
-**请求示例**
-```bash
-curl http://127.0.0.1:8080/api/proxies
-```
+**Path Parameters:**
 
-**响应** (透传 Mihomo)
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "GLOBAL": {
-      "name": "GLOBAL",
-      "type": "Selector",
-      "all": ["DIRECT", "REJECT", "香港 101", "..."],
-      "now": "香港 101"
-    },
-    "香港 101": {
-      "name": "香港 101",
-      "type": "Vless",
-      "alive": true,
-      "history": []
-    }
-  }
-}
-```
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | 配置 UID |
 
----
+**Request:** 无
 
-#### PUT /proxies/select
-选择代理节点
+**Response:**
 
-**请求体**
-```json
-{
-  "name": "香港 101"
-}
-```
-
-**请求示例**
-```bash
-curl -X PUT http://127.0.0.1:8080/api/proxies/select \
-  -H "Content-Type: application/json" \
-  -d '{"name": "香港 101"}'
-```
-
-**响应**
 ```json
 {
   "code": 0,
@@ -228,61 +212,14 @@ curl -X PUT http://127.0.0.1:8080/api/proxies/select \
 
 ---
 
-### 连接管理
+### Proxy Mode
 
-#### GET /connections
-获取当前所有连接（透传 Mihomo API）
+#### GET /api/mode
 
-**请求示例**
-```bash
-curl http://127.0.0.1:8080/api/connections
-```
+获取当前代理模式。
 
-**响应** (透传 Mihomo)
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "connections": [...],
-    "uploadTotal": 10240,
-    "downloadTotal": 20480
-  }
-}
-```
+**Response:**
 
----
-
-#### DELETE /connections/{id}
-关闭指定连接
-
-**请求示例**
-```bash
-curl -X DELETE http://127.0.0.1:8080/api/connections/abc123-def456
-```
-
-**响应**
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": null
-}
-```
-
----
-
-### 模式管理
-
-#### GET /mode
-获取当前代理模式
-
-**请求示例**
-```bash
-curl http://127.0.0.1:8080/api/mode
-```
-
-**响应**
 ```json
 {
   "code": 0,
@@ -291,28 +228,28 @@ curl http://127.0.0.1:8080/api/mode
 }
 ```
 
-**可能的值**: `"rule"` | `"global"` | `"direct"`
+返回值为字符串，可能的值：`rule`（规则模式）、`global`（全局模式）、`direct`（直连模式）。
 
 ---
 
-#### PUT /mode
-设置代理模式
+#### POST /api/mode
 
-**请求体**
+设置代理模式。
+
+**Request:**
+
 ```json
 {
-  "mode": "global"
+  "mode": "rule"
 }
 ```
 
-**请求示例**
-```bash
-curl -X PUT http://127.0.0.1:8080/api/mode \
-  -H "Content-Type: application/json" \
-  -d '{"mode": "global"}'
-```
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `mode` | string | 是 | 代理模式：`rule`、`global`、`direct` |
 
-**响应**
+**Response:**
+
 ```json
 {
   "code": 0,
@@ -321,243 +258,181 @@ curl -X PUT http://127.0.0.1:8080/api/mode \
 }
 ```
 
-**错误响应** (无效模式)
+---
+
+### Proxies
+
+#### GET /api/proxies
+
+获取 Mihomo 代理组信息。
+
+**Response:**
+
 ```json
 {
-  "code": -1,
-  "message": "Invalid mode",
+  "code": 0,
+  "message": "success",
+  "data": {
+    "proxies": { ... }
+  }
+}
+```
+
+返回 Mihomo 的完整代理组 JSON 结构。
+
+---
+
+#### POST /api/proxies/select
+
+选择 GLOBAL 组中的代理。
+
+**Request:**
+
+```json
+{
+  "name": "Proxy-1"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | 是 | 代理名称 |
+
+**Response:**
+
+```json
+{
+  "code": 0,
+  "message": "success",
   "data": null
 }
 ```
 
 ---
 
-### 服务状态
+#### GET /api/proxies/{name}/delay
 
-#### GET /service/status
-获取服务运行状态
+测试指定代理的延迟。
 
-**请求示例**
-```bash
-curl http://127.0.0.1:8080/api/service/status
-```
+**Path Parameters:**
 
-**响应** (服务运行中)
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "running": true,
-    "mode": "rule"
-  }
-}
-```
-
-**响应** (服务已停止)
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "running": false,
-    "mode": "stopped"
-  }
-}
-```
-
----
-
-### 配置管理
-
-#### GET /config
-获取 verge.yaml 配置
-
-**请求示例**
-```bash
-curl http://127.0.0.1:8080/api/config
-```
-
-**响应**
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "port": 9090,
-    "socks-port": 7890,
-    ...
-  }
-}
-```
-
----
-
-## 端点汇总
-
-| 方法 | 路径 | 描述 |
+| 参数 | 类型 | 说明 |
 |------|------|------|
-| GET | `/` | 健康检查 |
-| GET | `/api/profiles` | 获取订阅列表 |
-| POST | `/api/profiles` | 添加订阅 |
-| DELETE | `/api/profiles/{id}` | 删除订阅 |
-| POST | `/api/profiles/{id}/activate` | 激活订阅 |
-| GET | `/api/proxies` | 获取代理列表 |
-| PUT | `/api/proxies/select` | 选择代理 |
+| `name` | string | 代理名称 |
+
+**Query Parameters:**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `timeout` | integer | 5000 | 超时时间（毫秒） |
+
+**Response:**
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "delay": 120
+  }
+}
+```
+
+返回值为代理响应延迟（毫秒）。
+
+---
+
+### Connections
+
+#### GET /api/connections
+
+获取当前连接列表。
+
+**Response:**
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "connections": [ ... ]
+  }
+}
+```
+
+返回 Mihomo 当前活动连接的 JSON 结构。
+
+---
+
+#### DELETE /api/connections/{id}
+
+关闭指定连接。
+
+**Path Parameters:**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | 连接 ID |
+
+**Request:** 无
+
+**Response:**
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": null
+}
+```
+
+---
+
+### Configuration
+
+#### GET /api/config
+
+获取当前 verge.yaml 配置。
+
+**Response:**
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": { ... }
+}
+```
+
+返回 verge.yaml 解析后的 JSON 结构。
+
+---
+
+## API 端点汇总
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/status` | 获取服务状态 |
+| POST | `/api/service/start` | 启动 Mihomo 服务 |
+| POST | `/api/service/stop` | 停止 Mihomo 服务 |
+| GET | `/api/profiles` | 获取配置列表 |
+| POST | `/api/profiles` | 添加新配置 |
+| POST | `/api/profiles/{id}/activate` | 激活指定配置 |
+| DELETE | `/api/profiles/{id}` | 删除指定配置 |
+| GET | `/api/mode` | 获取代理模式 |
+| POST | `/api/mode` | 设置代理模式 |
+| GET | `/api/proxies` | 获取代理组信息 |
+| POST | `/api/proxies/select` | 选择代理 |
+| GET | `/api/proxies/{name}/delay` | 测试代理延迟 |
 | GET | `/api/connections` | 获取连接列表 |
 | DELETE | `/api/connections/{id}` | 关闭连接 |
-| GET | `/api/mode` | 获取模式 |
-| PUT | `/api/mode` | 设置模式 |
-| GET | `/api/service/status` | 服务状态 |
-| GET | `/api/config` | 获取配置 |
+| GET | `/api/config` | 获取配置文件 |
 
 ---
 
-## Web UI
+## 错误码
 
-Web UI 提供图形化界面管理代理。
-
-**访问地址**: http://127.0.0.1:8080
-
-**启动 Web UI**:
-```bash
-control-tower web
-```
-
-**自定义端口**:
-```bash
-control-tower web --port 9000
-```
-
----
-
-## 前端集成示例
-
-### JavaScript (Fetch)
-
-```javascript
-const API_BASE = 'http://127.0.0.1:8080/api';
-
-// 获取代理列表
-async function getProxies() {
-  const res = await fetch(`${API_BASE}/proxies`);
-  const data = await res.json();
-  if (data.code === 0) return data.data;
-  throw new Error(data.message);
-}
-
-// 选择代理
-async function selectProxy(name) {
-  const res = await fetch(`${API_BASE}/proxies/select`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name })
-  });
-  const data = await res.json();
-  if (data.code !== 0) throw new Error(data.message);
-}
-
-// 获取连接
-async function getConnections() {
-  const res = await fetch(`${API_BASE}/connections`);
-  const data = await res.json();
-  if (data.code === 0) return data.data;
-  throw new Error(data.message);
-}
-
-// 关闭连接
-async function closeConnection(id) {
-  const res = await fetch(`${API_BASE}/connections/${id}`, {
-    method: 'DELETE'
-  });
-  const data = await res.json();
-  if (data.code !== 0) throw new Error(data.message);
-}
-
-// 获取订阅
-async function getProfiles() {
-  const res = await fetch(`${API_BASE}/profiles`);
-  const data = await res.json();
-  if (data.code === 0) return data.data;
-  throw new Error(data.message);
-}
-
-// 添加订阅
-async function addProfile(url, name) {
-  const res = await fetch(`${API_BASE}/profiles`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url, name })
-  });
-  const data = await res.json();
-  if (data.code !== 0) throw new Error(data.message);
-  return data.data;
-}
-
-// 获取/设置模式
-async function getMode() {
-  const res = await fetch(`${API_BASE}/mode`);
-  const data = await res.json();
-  if (data.code === 0) return data.data;
-  throw new Error(data.message);
-}
-
-async function setMode(mode) {
-  const res = await fetch(`${API_BASE}/mode`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode })
-  });
-  const data = await res.json();
-  if (data.code !== 0) throw new Error(data.message);
-}
-```
-
-### React 组件示例
-
-```jsx
-import React, { useState, useEffect } from 'react';
-
-function ProxySelector() {
-  const [proxies, setProxies] = useState([]);
-  const [selected, setSelected] = useState('');
-
-  useEffect(() => {
-    fetch('http://127.0.0.1:8080/api/proxies')
-      .then(r => r.json())
-      .then(data => {
-        if (data.code === 0) {
-          const globalProxy = data.data.GLOBAL;
-          setProxies(globalProxy?.all || []);
-          setSelected(globalProxy?.now || '');
-        }
-      });
-  }, []);
-
-  const handleSelect = async (name) => {
-    await fetch('http://127.0.0.1:8080/api/proxies/select', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
-    });
-    setSelected(name);
-  };
-
-  return (
-    <select value={selected} onChange={e => handleSelect(e.target.value)}>
-      {proxies.map(p => (
-        <option key={p} value={p}>{p}</option>
-      ))}
-    </select>
-  );
-}
-```
-
----
-
-## 注意事项
-
-1. **错误处理**: 务必检查 `code` 字段，`0` 表示成功，`-1` 表示失败
-2. **CORS**: API 仅供本地访问，不存在跨域问题
-3. **服务依赖**: 部分 API 需要 Mihomo 服务运行才能正常工作
-4. **数据透传**: `/api/proxies` 和 `/api/connections` 是 Mihomo API 的透传，响应格式与 Mihomo 保持一致
+| code | 说明 |
+|------|------|
+| `0` | 成功 |
+| `-1` | 通用错误（失败原因见 `message` 字段） |

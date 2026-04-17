@@ -2,5 +2,4 @@
 .gitignore
 
 target/
-mihomo*
 .worktrees/

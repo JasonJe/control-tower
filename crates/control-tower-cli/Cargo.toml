@@ -1,0 +1,27 @@
+[package]
+name = "control-tower-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Control Tower - Command line interface for proxy management"
+
+[[bin]]
+name = "ctctl"
+path = "src/main.rs"
+
+[dependencies]
+control-tower-service-core = { path = "../control-tower-service-core" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml_ng = { workspace = true }
+dirs = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+reqwest = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+actix-web = { workspace = true }
+actix-rt = { workspace = true }
+once_cell = "1.19"

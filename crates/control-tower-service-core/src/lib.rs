@@ -7,8 +7,10 @@ pub mod mihomo;
 pub mod state;
 pub mod config;
 pub mod installer;
+pub mod active_config;
 
 pub use state::{ServiceState, ServiceStatus};
 pub use mihomo::MihomoManager;
 pub use config::{ServiceConfig, ControlTowerPaths};
 pub use installer::MihomoInstaller;
+pub use active_config::ActiveConfigStore;

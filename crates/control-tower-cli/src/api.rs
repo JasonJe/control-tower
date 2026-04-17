@@ -251,14 +251,16 @@ pub async fn delete_profile(path: web::Path<String>) -> HttpResponse {
 
 pub async fn activate_profile(path: web::Path<String>) -> HttpResponse {
     let id = path.into_inner();
-    let config_dir = get_config_dir();
-    let profiles_path = config_dir.join("profiles.yaml");
+    let profiles_path = get_config_dir().join("profiles.yaml");
 
     if !profiles_path.exists() {
         return HttpResponse::NotFound().json(ApiResponse::<()>::error("Profile not found"));
     }
 
-    let content = std::fs::read_to_string(&profiles_path).unwrap_or_default();
+    let content = match std::fs::read_to_string(&profiles_path) {
+        Ok(c) => c,
+        Err(_) => return HttpResponse::NotFound().json(ApiResponse::<()>::error("Profile not found")),
+    };
 
     #[derive(Serialize, Deserialize)]
     struct ProfilesYaml {
@@ -279,16 +281,32 @@ pub async fn activate_profile(path: web::Path<String>) -> HttpResponse {
         Err(_) => return HttpResponse::NotFound().json(ApiResponse::<()>::error("Parse error")),
     };
 
-    // Check if profile exists
-    if !yaml.items.iter().any(|p| p.uid == id) {
-        return HttpResponse::NotFound().json(ApiResponse::<()>::error("Profile not found"));
-    }
+    // Find the profile item to get its file path
+    let profile_item = yaml.items.iter().find(|p| p.uid == id);
+    let profile_file_path = match profile_item {
+        Some(item) => item.file.clone(),
+        None => return HttpResponse::NotFound().json(ApiResponse::<()>::error("Profile not found")),
+    };
 
-    yaml.current = Some(id);
-
+    // Mark profile as current in profiles.yaml
+    yaml.current = Some(id.clone());
     let yaml_content = serde_yaml_ng::to_string(&yaml).unwrap_or_default();
     if let Err(e) = std::fs::write(&profiles_path, yaml_content) {
         return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e.to_string()));
+    }
+
+    // Replace active config with profile content via ActiveConfigStore
+    if let Some(ref file) = profile_file_path {
+        let profile_file = std::path::PathBuf::from(file);
+        if profile_file.exists() {
+            let store = match crate::settings::shared_paths() {
+                Ok(paths) => control_tower_service_core::ActiveConfigStore::new(paths),
+                Err(e) => return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e.to_string())),
+            };
+            if let Err(e) = store.replace_from_profile(&profile_file) {
+                return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e.to_string()));
+            }
+        }
     }
 
     HttpResponse::Ok().json(ApiResponse::success(()))
@@ -322,29 +340,10 @@ pub async fn set_mode(req: web::Json<SetModeRequest>) -> HttpResponse {
         return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Invalid mode"));
     }
 
-    if !is_clash_api_running() {
-        return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Service not running"));
+    match crate::service::set_mode(mode).await {
+        Ok(()) => HttpResponse::Ok().json(ApiResponse::success(())),
+        Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e.to_string())),
     }
-
-    let url = format!("http://{}:{}/configs", CLASH_API_HOST, crate::settings::get_api_port());
-    let client = reqwest::Client::new();
-
-    match client
-        .put(&url)
-        .json(&serde_json::json!({ "mode": mode }))
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await
-    {
-        Ok(response) => {
-            if response.status().is_success() {
-                return HttpResponse::Ok().json(ApiResponse::success(()));
-            }
-        }
-        Err(e) => return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e.to_string())),
-    }
-
-    HttpResponse::InternalServerError().json(ApiResponse::<()>::error("Failed to set mode"))
 }
 
 pub async fn get_proxies() -> HttpResponse {
@@ -370,72 +369,25 @@ pub async fn get_proxies() -> HttpResponse {
 }
 
 pub async fn select_proxy(req: web::Json<SelectProxyRequest>) -> HttpResponse {
-    if !is_clash_api_running() {
-        return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Service not running"));
+    match crate::service::select_proxy(&req.name).await {
+        Ok(()) => HttpResponse::Ok().json(ApiResponse::success(())),
+        Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e.to_string())),
     }
-
-    let url = format!("http://{}:{}/proxies/GLOBAL", CLASH_API_HOST, crate::settings::get_api_port());
-    let client = reqwest::Client::new();
-
-    match client
-        .put(&url)
-        .json(&serde_json::json!({ "name": req.name }))
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await
-    {
-        Ok(response) => {
-            if response.status().is_success() {
-                return HttpResponse::Ok().json(ApiResponse::success(()));
-            }
-        }
-        Err(e) => return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e.to_string())),
-    }
-
-    HttpResponse::InternalServerError().json(ApiResponse::<()>::error("Failed to select proxy"))
 }
 
 pub async fn get_connections() -> HttpResponse {
-    if !is_clash_api_running() {
-        return HttpResponse::Ok().json(ApiResponse::success(vec![] as Vec<String>));
+    match crate::service::get_connections_via_ipc().await {
+        Ok(json) => HttpResponse::Ok().json(ApiResponse::success(json)),
+        Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e.to_string())),
     }
-
-    let url = format!("http://{}:{}/connections", CLASH_API_HOST, crate::settings::get_api_port());
-    let client = reqwest::Client::new();
-
-    match client.get(&url).timeout(Duration::from_secs(5)).send().await {
-        Ok(response) => {
-            if response.status().is_success() {
-                if let Ok(json) = response.json::<serde_json::Value>().await {
-                    return HttpResponse::Ok().json(ApiResponse::success(json));
-                }
-            }
-        }
-        Err(e) => return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e.to_string())),
-    }
-
-    HttpResponse::InternalServerError().json(ApiResponse::<()>::error("Failed to get connections"))
 }
 
 pub async fn close_connection(path: web::Path<String>) -> HttpResponse {
-    if !is_clash_api_running() {
-        return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Service not running"));
-    }
-
     let id = path.into_inner();
-    let url = format!("http://{}:{}/connections/{}", CLASH_API_HOST, crate::settings::get_api_port(), id);
-    let client = reqwest::Client::new();
-
-    match client.delete(&url).timeout(Duration::from_secs(5)).send().await {
-        Ok(response) => {
-            if response.status().is_success() {
-                return HttpResponse::Ok().json(ApiResponse::success(()));
-            }
-        }
-        Err(e) => return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e.to_string())),
+    match crate::service::close_connection_via_ipc(&id).await {
+        Ok(()) => HttpResponse::Ok().json(ApiResponse::success(())),
+        Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e.to_string())),
     }
-
-    HttpResponse::InternalServerError().json(ApiResponse::<()>::error("Failed to close connection"))
 }
 
 #[derive(Serialize)]

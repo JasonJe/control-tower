@@ -160,44 +160,11 @@ async fn add_rule(rule: &str) -> Result<()> {
         }
     }
 
-    // Read current config
-    let config_path = get_config_dir()?.join("config.yaml");
-    if !config_path.exists() {
-        anyhow::bail!("Config file not found at {:?}", config_path);
-    }
-
-    let content = std::fs::read_to_string(&config_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read config: {}", e))?;
-
-    // Parse YAML
-    let mut config: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("Failed to parse config: {}", e))?;
-
-    // Get or create rules array
-    let rules = if let Some(r) = config.get_mut("rules") {
-        if let Some(arr) = r.as_sequence_mut() {
-            arr
-        } else {
-            anyhow::bail!("Rules in config is not an array");
-        }
-    } else {
-        // Create rules section
-        config.as_mapping_mut().unwrap().insert(
-            serde_yaml_ng::Value::String("rules".to_string()),
-            serde_yaml_ng::Value::Sequence(vec![]),
-        );
-        config.get_mut("rules").unwrap().as_sequence_mut().unwrap()
-    };
-
-    // Add the new rule
-    rules.push(serde_yaml_ng::Value::String(rule.to_string()));
-
-    // Write back
-    let new_content = serde_yaml_ng::to_string(&config)
-        .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
-
-    std::fs::write(&config_path, new_content)
-        .map_err(|e| anyhow::anyhow!("Failed to write config: {}", e))?;
+    // Append rule via centralized store
+    let store = control_tower_service_core::ActiveConfigStore::new(
+        crate::settings::shared_paths()?,
+    );
+    store.append_rule(rule)?;
 
     println!("Rule added successfully: {}", rule);
     println!("Use 'ctctl service restart' to apply changes.");
@@ -211,42 +178,12 @@ async fn remove_rule(index: usize) -> Result<()> {
         anyhow::bail!("Invalid index. Use 1-based index from 'rule list'");
     }
 
-    let config_path = get_config_dir()?.join("config.yaml");
-    if !config_path.exists() {
-        anyhow::bail!("Config file not found at {:?}", config_path);
-    }
+    let store = control_tower_service_core::ActiveConfigStore::new(
+        crate::settings::shared_paths()?,
+    );
+    let removed = store.remove_rule(index)?;
 
-    let content = std::fs::read_to_string(&config_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read config: {}", e))?;
-
-    let mut config: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("Failed to parse config: {}", e))?;
-
-    let rules = if let Some(r) = config.get_mut("rules") {
-        if let Some(arr) = r.as_sequence_mut() {
-            arr
-        } else {
-            anyhow::bail!("Rules in config is not an array");
-        }
-    } else {
-        anyhow::bail!("No rules found in config");
-    };
-
-    if index > rules.len() {
-        anyhow::bail!("Index {} out of range. Valid range: 1-{}", index, rules.len());
-    }
-
-    // Remove the rule (1-based to 0-based)
-    let removed = rules.remove(index - 1);
-
-    // Write back
-    let new_content = serde_yaml_ng::to_string(&config)
-        .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
-
-    std::fs::write(&config_path, new_content)
-        .map_err(|e| anyhow::anyhow!("Failed to write config: {}", e))?;
-
-    println!("Removed rule: {}", removed.as_str().unwrap_or(&format!("{:?}", removed)));
+    println!("Removed rule: {}", removed);
     println!("Use 'ctctl service restart' to apply changes.");
 
     Ok(())
@@ -291,39 +228,13 @@ async fn import_rules(path: &str) -> Result<()> {
         anyhow::bail!("No rules found in file");
     }
 
-    // Read current config
-    let config_path = get_config_dir()?.join("config.yaml");
-    let content = std::fs::read_to_string(&config_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read config: {}", e))?;
-
-    let mut config: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("Failed to parse config: {}", e))?;
-
-    let rules = if let Some(r) = config.get_mut("rules") {
-        if let Some(arr) = r.as_sequence_mut() {
-            arr
-        } else {
-            anyhow::bail!("Rules in config is not an array");
-        }
-    } else {
-        config.as_mapping_mut().unwrap().insert(
-            serde_yaml_ng::Value::String("rules".to_string()),
-            serde_yaml_ng::Value::Sequence(vec![]),
-        );
-        config.get_mut("rules").unwrap().as_sequence_mut().unwrap()
-    };
-
     let count = new_rules.len();
-    for rule in new_rules {
-        rules.push(serde_yaml_ng::Value::String(rule));
-    }
 
-    // Write back
-    let new_content = serde_yaml_ng::to_string(&config)
-        .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
-
-    std::fs::write(&config_path, new_content)
-        .map_err(|e| anyhow::anyhow!("Failed to write config: {}", e))?;
+    // Append rules via centralized store
+    let store = control_tower_service_core::ActiveConfigStore::new(
+        crate::settings::shared_paths()?,
+    );
+    store.import_rules(new_rules)?;
 
     println!("Imported {} rules successfully.", count);
     println!("Use 'ctctl service restart' to apply changes.");

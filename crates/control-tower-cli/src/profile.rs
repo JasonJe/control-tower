@@ -205,20 +205,18 @@ async fn activate_profile(id: &str) -> Result<()> {
     let profile = &profiles[profile_idx];
     let profile_name = profile.name.clone();
 
-    // Get the config file path
-    let config_dir = get_config_dir()?;
-    let config_path = config_dir.join("config.yaml");
-
-    // Copy the profile's config file to config.yaml
+    // Copy the profile's config file to config.yaml via centralized store
     if let Some(ref file) = profile.file {
         let profile_file = PathBuf::from(file);
-        if profile_file.exists() {
-            let content = std::fs::read_to_string(&profile_file)?;
-            std::fs::write(&config_path, &content)?;
-            println!("Config file copied to: {:?}", config_path);
-        } else {
+        if !profile_file.exists() {
             anyhow::bail!("Profile config file not found: {}", file);
         }
+
+        let store = control_tower_service_core::ActiveConfigStore::new(
+            crate::settings::shared_paths()?,
+        );
+        store.replace_from_profile(&profile_file)?;
+        println!("Config file copied to: {:?}", store.active_config_path());
     } else {
         anyhow::bail!("Profile has no config file");
     }

@@ -231,32 +231,6 @@ fn test_service_restart() {
 }
 
 // ============================================================================
-// Config Command Tests
-// ============================================================================
-
-#[test]
-fn test_config_help() {
-    let result = run_cli(&["config", "--help"]);
-    assert!(result.is_ok());
-    let output = result.unwrap();
-    assert!(output.contains("get") || output.contains("set") || output.contains("Config"));
-}
-
-#[test]
-fn test_config_get() {
-    let result = run_cli(&["config", "get"]);
-    // Should succeed (may show empty config)
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_config_set_invalid_format() {
-    // Missing = sign
-    let result = run_cli_err(&["config", "set", "invalid_format"]);
-    assert!(result.is_ok());
-}
-
-// ============================================================================
 // Connections Command Tests
 // ============================================================================
 

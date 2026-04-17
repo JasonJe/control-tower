@@ -30,9 +30,14 @@ pub fn is_clash_api_running() -> bool {
 pub enum IpcCommand {
     Start { config_path: PathBuf },
     Stop,
+    Shutdown,
     Restart,
     Status,
     ReloadCron,
+    GetConnections,
+    CloseConnection { id: String },
+    SetMode { mode: String },
+    SelectProxy { name: String },
 }
 
 /// IPC response types
@@ -103,12 +108,21 @@ pub async fn get_clash_proxies() -> Result<Value> {
     let url = format!("http://{}:{}/proxies", CLASH_API_HOST, crate::settings::get_api_port());
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .get(&url)
         .timeout(Duration::from_secs(5))
         .send()
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to Clash API: {}", e))?;
+    {
+        Ok(resp) => resp,
+        Err(_) => {
+            // Service not running, return empty proxy list gracefully
+            return Ok(serde_json::json!({
+                "proxies": {},
+                "mode": "rule"
+            }));
+        }
+    };
 
     if !response.status().is_success() {
         anyhow::bail!("Clash API error: {}", response.status());
@@ -121,12 +135,22 @@ pub async fn get_clash_proxies() -> Result<Value> {
     Ok(json)
 }
 
-/// Select a proxy in Clash
+/// Select a proxy via IPC, falling back to direct API.
 pub async fn select_proxy(name: &str) -> Result<()> {
-    // Find the proxy group to select from
-    let _proxies = get_clash_proxies().await?;
+    // Try IPC first if daemon is running
+    if default_socket_path().exists() {
+        if let Ok(resp) = ipc_connect_and_send(&IpcCommand::SelectProxy {
+            name: name.to_string(),
+        }) {
+            if resp.is_success() {
+                crate::settings::set_selected_proxy(name.to_string());
+                return Ok(());
+            }
+            tracing::warn!("IPC SelectProxy failed: {}", resp.message);
+        }
+    }
 
-    // For now, assume we have a "GLOBAL" selector group
+    // Fallback to direct Mihomo API
     let url = format!("http://{}:{}/proxies/GLOBAL", CLASH_API_HOST, crate::settings::get_api_port());
 
     let client = reqwest::Client::new();
@@ -142,6 +166,7 @@ pub async fn select_proxy(name: &str) -> Result<()> {
         anyhow::bail!("Failed to select proxy: {}", response.status());
     }
 
+    crate::settings::set_selected_proxy(name.to_string());
     Ok(())
 }
 
@@ -185,8 +210,26 @@ pub async fn get_mode() -> Result<String> {
     Ok("rule".to_string())
 }
 
-/// Set Clash mode - use PATCH /configs with {"mode": mode} and persist to settings.yaml and config.yaml
+/// Set Clash mode via IPC, falling back to direct API.
+/// Updates settings.yaml and config.yaml for persistence.
 pub async fn set_mode(mode: &str) -> Result<()> {
+    // Try IPC first if daemon is running
+    if default_socket_path().exists() {
+        if let Ok(resp) = ipc_connect_and_send(&IpcCommand::SetMode {
+            mode: mode.to_string(),
+        }) {
+            if resp.is_success() {
+                crate::settings::set_mode(mode.to_string());
+                if let Err(e) = update_config_mode(mode) {
+                    tracing::warn!("Failed to update config.yaml with mode: {}", e);
+                }
+                return Ok(());
+            }
+            tracing::warn!("IPC SetMode failed: {}", resp.message);
+        }
+    }
+
+    // Fallback to direct Mihomo API
     let port = crate::settings::get_api_port();
     let url = format!("http://{}:{}/configs", CLASH_API_HOST, port);
 
@@ -216,27 +259,10 @@ pub async fn set_mode(mode: &str) -> Result<()> {
 
 /// Update the mode field in config.yaml
 fn update_config_mode(mode: &str) -> Result<()> {
-    let config_dir = crate::config::get_config_dir()?;
-    let config_path = config_dir.join("config.yaml");
-
-    if !config_path.exists() {
-        return Ok(()); // No config file, skip
-    }
-
-    let content = std::fs::read_to_string(&config_path)?;
-
-    #[derive(serde::Deserialize, serde::Serialize)]
-    struct Config {
-        #[serde(flatten)]
-        rest: serde_yaml_ng::Mapping,
-    }
-
-    let mut config: Config = serde_yaml_ng::from_str(&content)?;
-    config.rest.insert("mode".into(), mode.into());
-
-    let new_content = serde_yaml_ng::to_string(&config.rest)?;
-    std::fs::write(&config_path, new_content)?;
-
+    let store = control_tower_service_core::ActiveConfigStore::new(
+        crate::settings::shared_paths()?,
+    );
+    store.set_mode(mode)?;
     Ok(())
 }
 
@@ -280,6 +306,34 @@ pub async fn close_connection_by_id(id: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Get connections via IPC (falls back to direct API)
+pub async fn get_connections_via_ipc() -> Result<Value> {
+    if default_socket_path().exists() {
+        if let Ok(resp) = ipc_connect_and_send(&IpcCommand::GetConnections) {
+            if resp.is_success() {
+                return Ok(resp.data.unwrap_or_default());
+            }
+            tracing::warn!("IPC GetConnections failed: {}", resp.message);
+        }
+    }
+    get_connections().await
+}
+
+/// Close a connection via IPC (falls back to direct API)
+pub async fn close_connection_via_ipc(id: &str) -> Result<()> {
+    if default_socket_path().exists() {
+        if let Ok(resp) = ipc_connect_and_send(&IpcCommand::CloseConnection {
+            id: id.to_string(),
+        }) {
+            if resp.is_success() {
+                return Ok(());
+            }
+            tracing::warn!("IPC CloseConnection failed: {}", resp.message);
+        }
+    }
+    close_connection_by_id(id).await
 }
 
 /// Start Mihomo service via IPC

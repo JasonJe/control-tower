@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::io::{self, Write};
 use std::time::Duration;
 
-use crate::service::{close_connection_by_id, get_connections};
+use crate::service::{close_connection_via_ipc, get_connections_via_ipc};
 use crate::ConnectionsAction;
 
 pub async fn handle(action: ConnectionsAction) -> Result<()> {
@@ -24,7 +24,7 @@ pub async fn list_connections() -> Result<()> {
     println!();
 
     // Try to get connections from Clash API
-    match get_connections().await {
+    match get_connections_via_ipc().await {
         Ok(conns) => {
             // Show traffic info
             if let Some(upload) = conns.get("uploadTotal").and_then(|v| v.as_u64()) {
@@ -106,7 +106,7 @@ pub async fn list_connections() -> Result<()> {
 
 /// Close a connection by its display index (1-based)
 async fn close_by_index(index: usize) -> Result<()> {
-    let conns = get_connections().await?;
+    let conns = get_connections_via_ipc().await?;
 
     let connections = conns.get("connections")
         .and_then(|v| v.as_array())
@@ -126,7 +126,7 @@ async fn close_by_index(index: usize) -> Result<()> {
 
     println!("Closing connection {} (destination: {})...", id, dest);
 
-    close_connection_by_id(id).await?;
+    close_connection_via_ipc(id).await?;
 
     println!("Connection closed successfully");
     Ok(())
@@ -134,7 +134,7 @@ async fn close_by_index(index: usize) -> Result<()> {
 
 /// Show detailed information about a connection
 async fn show_detail(index: usize) -> Result<()> {
-    let conns = get_connections().await?;
+    let conns = get_connections_via_ipc().await?;
 
     let connections = conns.get("connections")
         .and_then(|v| v.as_array())
@@ -303,7 +303,7 @@ async fn top_connections(interval: u64) -> Result<()> {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
 
         // Try to get connections from Clash API
-        match get_connections().await {
+        match get_connections_via_ipc().await {
             Ok(conns) => {
                 // Show traffic info
                 let upload = conns.get("uploadTotal").and_then(|v| v.as_u64()).unwrap_or(0);

@@ -1820,14 +1820,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = Args::parse();
 
-    // Determine working directory
+    // Determine working directory from executable location
     let work_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
 
+    // Build shared paths model
+    let paths = control_tower_service_core::ControlTowerPaths::from_settings(
+        work_dir.join("settings.yaml"),
+        None,
+    );
+
     // Create logs directory
-    let log_dir = work_dir.join("logs");
+    let log_dir = paths.log_dir.clone();
     std::fs::create_dir_all(&log_dir)?;
 
     // Initialize logging with file output
@@ -1880,9 +1886,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Log directory: {}", log_dir.display());
 
     // Determine socket path
-    let socket_path = args.socket.unwrap_or_else(|| {
-        PathBuf::from("/tmp/ctsvc.sock")
-    });
+    let socket_path = args.socket.unwrap_or_else(|| paths.socket_path.clone());
 
     tracing::info!("Socket path: {}", socket_path.display());
 

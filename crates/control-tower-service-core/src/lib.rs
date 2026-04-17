@@ -10,5 +10,5 @@ pub mod installer;
 
 pub use state::{ServiceState, ServiceStatus};
 pub use mihomo::MihomoManager;
-pub use config::ServiceConfig;
+pub use config::{ServiceConfig, ControlTowerPaths};
 pub use installer::MihomoInstaller;

@@ -42,9 +42,9 @@ fn is_clash_api_running() -> bool {
 }
 
 fn get_config_dir() -> std::path::PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("control-tower")
+    crate::settings::shared_paths()
+        .map(|paths| paths.config_dir)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 #[derive(Debug, Deserialize)]

@@ -8,18 +8,7 @@ use std::path::PathBuf;
 use crate::profile::Profile;
 
 pub fn get_config_dir() -> Result<PathBuf> {
-    // First check settings for working_dir
-    if let Some(working_dir) = crate::settings::get_working_dir() {
-        return Ok(working_dir);
-    }
-
-    // Default: use executable's directory as working directory
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    Ok(exe_dir)
+    Ok(crate::settings::shared_paths()?.config_dir)
 }
 
 pub fn load_profiles() -> Result<Vec<Profile>> {

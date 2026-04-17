@@ -266,6 +266,21 @@ pub fn get_settings_path() -> Option<PathBuf> {
     find_settings_path()
 }
 
+/// Get the current settings path (same as get_settings_path)
+pub fn current_settings_path() -> Option<PathBuf> {
+    find_settings_path()
+}
+
+/// Build shared ControlTowerPaths from the current settings location.
+pub fn shared_paths() -> anyhow::Result<control_tower_service_core::ControlTowerPaths> {
+    let settings_path = current_settings_path()
+        .ok_or_else(|| anyhow::anyhow!("Cannot determine settings path"))?;
+    Ok(control_tower_service_core::ControlTowerPaths::from_settings(
+        settings_path,
+        get_working_dir(),
+    ))
+}
+
 /// Create default settings.yaml
 pub fn create_default_settings() -> Result<PathBuf> {
     // Use custom path if set

@@ -21,9 +21,11 @@ use scheduler::{Schedule, ProfileCronJob};
 pub enum IpcCommand {
     /// Start Mihomo with config
     Start { config_path: PathBuf },
-    /// Stop Mihomo
+    /// Stop Mihomo (leaves the daemon running)
     Stop,
-    /// Restart Mihomo with current config
+    /// Shutdown Mihomo and stop the daemon itself
+    Shutdown,
+    /// Restart Mihomo with the last config path
     Restart,
     /// Get current status
     Status,
@@ -37,6 +39,10 @@ pub enum IpcCommand {
     CloseConnection { id: String },
     /// Reload cron jobs from profiles.yaml
     ReloadCron,
+    /// Set proxy mode (rule/global/direct)
+    SetMode { mode: String },
+    /// Select a proxy in the GLOBAL selector group
+    SelectProxy { name: String },
 }
 
 /// IPC response types
@@ -74,12 +80,22 @@ impl IpcResponse {
     }
 }
 
-/// Service status
+/// Service status — richer than the original { running, pid, uptime_secs }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceStatus {
+    /// Whether Mihomo is currently running
     pub running: bool,
+    /// Mihomo process ID
     pub pid: Option<u32>,
+    /// Seconds since Mihomo was started
     pub uptime_secs: Option<u64>,
+    /// Human-readable lifecycle state name
+    pub state: String,
+    /// Path to the active config file
+    pub config_path: Option<PathBuf>,
+    /// Circuit-breaker cooldown remaining seconds (if tripped), else absent
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub circuit_breaker_remaining_secs: Option<u64>,
 }
 
 /// Default socket path for IPC
@@ -93,27 +109,31 @@ pub fn handle_command(cmd: IpcCommand) -> IpcResponse {
     match cmd {
         IpcCommand::Start { config_path } => {
             tracing::info!("Start command with config: {:?}", config_path);
-            // TODO: Actually start Mihomo
-            // For now, return success
+            // Stateless stub — real work happens in handle_command_with_state
             IpcResponse::success()
         }
         IpcCommand::Stop => {
             tracing::info!("Stop command");
-            // TODO: Actually stop Mihomo
+            IpcResponse::success()
+        }
+        IpcCommand::Shutdown => {
+            tracing::info!("Shutdown command");
+            SHUTDOWN.store(true, Ordering::SeqCst);
             IpcResponse::success()
         }
         IpcCommand::Restart => {
             tracing::info!("Restart command");
-            // Restart requires state - should use handle_command_with_state
-            IpcResponse::error("Restart requires stateful handler")
+            IpcResponse::error("Restart requires stateful handler (use handle_command_with_state)")
         }
         IpcCommand::Status => {
             tracing::info!("Status command");
-            // TODO: Return actual status
             let status = ServiceStatus {
                 running: false,
                 pid: None,
                 uptime_secs: None,
+                state: "Unknown".to_string(),
+                config_path: None,
+                circuit_breaker_remaining_secs: None,
             };
             IpcResponse::success_with_data(&status)
         }
@@ -141,6 +161,12 @@ pub fn handle_command(cmd: IpcCommand) -> IpcResponse {
             tracing::info!("ReloadCron command");
             // Requires state - should use handle_command_with_state in practice
             IpcResponse::error("ReloadCron requires service state")
+        }
+        IpcCommand::SetMode { .. } => {
+            IpcResponse::error("SetMode requires stateful handler")
+        }
+        IpcCommand::SelectProxy { .. } => {
+            IpcResponse::error("SelectProxy requires stateful handler")
         }
     }
 }
@@ -171,6 +197,8 @@ pub struct ServiceState {
     log_buffer: RwLock<VecDeque<String>>,
     /// Cron jobs for profile auto-update
     cron_jobs: RwLock<Vec<ProfileCronJob>>,
+    /// Last config path used to start Mihomo (used for Restart)
+    last_config_path: RwLock<Option<PathBuf>>,
 }
 
 impl Default for ServiceState {
@@ -186,6 +214,7 @@ impl ServiceState {
             start_time: RwLock::new(None),
             log_buffer: RwLock::new(VecDeque::with_capacity(MAX_SERVICE_LOG_LINES)),
             cron_jobs: RwLock::new(Vec::new()),
+            last_config_path: RwLock::new(None),
         }
     }
 
@@ -400,6 +429,7 @@ impl ServiceState {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         *self.start_time.write() = Some(start_time);
+        *self.last_config_path.write() = Some(config_path.clone());
 
         tracing::info!("Mihomo started successfully");
 
@@ -533,10 +563,28 @@ impl ServiceState {
             None
         };
 
+        let last_config = self.last_config_path.read().clone();
+        let circuit_breaker_remaining = if running {
+            manager.remaining_cooldown_secs()
+        } else {
+            None
+        };
+
+        let state = if !running {
+            "NotRunning"
+        } else if manager.remaining_cooldown_secs().is_some() {
+            "CircuitBroken"
+        } else {
+            "Running"
+        };
+
         ServiceStatus {
             running,
             pid,
             uptime_secs,
+            state: state.to_string(),
+            config_path: last_config,
+            circuit_breaker_remaining_secs: circuit_breaker_remaining,
         }
     }
 
@@ -569,8 +617,6 @@ pub fn handle_command_with_state(state: &ServiceState, cmd: IpcCommand) -> IpcRe
             match state.stop() {
                 Ok(()) => {
                     state.append_log("Mihomo stopped");
-                    // Signal shutdown for the server
-                    SHUTDOWN.store(true, Ordering::SeqCst);
                     IpcResponse::success()
                 }
                 Err(e) => {
@@ -579,23 +625,29 @@ pub fn handle_command_with_state(state: &ServiceState, cmd: IpcCommand) -> IpcRe
                 }
             }
         }
+        IpcCommand::Shutdown => {
+            tracing::info!("Shutdown command");
+            state.append_log("Shutting down...");
+            let _ = state.stop();
+            SHUTDOWN.store(true, Ordering::SeqCst);
+            IpcResponse::success()
+        }
         IpcCommand::Restart => {
             tracing::info!("Restart command");
             state.append_log("Restarting Mihomo...");
 
-            // Stop first
-            if let Err(e) = state.stop() {
-                state.append_log(format!("Failed to stop Mihomo: {}", e));
-            }
+            // Stop first (ignore errors if not running)
+            let _ = state.stop();
 
-            // Use executable's directory as working directory
-            let exe_dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-                .unwrap_or_else(|| PathBuf::from("."));
-            let config_path = exe_dir.join("config.yaml");
+            // Use the last config path or error
+            let config_path = match state.last_config_path.read().clone() {
+                Some(path) => path,
+                None => {
+                    state.append_log("No previous config path — use 'Start' first");
+                    return IpcResponse::error("No previous config path — use 'Start' first");
+                }
+            };
 
-            // Start again
             match state.start(&config_path) {
                 Ok(()) => {
                     state.append_log("Mihomo restarted successfully");
@@ -645,6 +697,20 @@ pub fn handle_command_with_state(state: &ServiceState, cmd: IpcCommand) -> IpcRe
             tracing::info!("ReloadCron command");
             state.load_cron_jobs();
             IpcResponse::success()
+        }
+        IpcCommand::SetMode { mode } => {
+            tracing::info!("SetMode command: {}", mode);
+            match state.set_mode(&mode) {
+                Ok(()) => IpcResponse::success(),
+                Err(e) => IpcResponse::error(e),
+            }
+        }
+        IpcCommand::SelectProxy { name } => {
+            tracing::info!("SelectProxy command: {}", name);
+            match state.select_proxy(&name) {
+                Ok(()) => IpcResponse::success(),
+                Err(e) => IpcResponse::error(e),
+            }
         }
     }
 }
@@ -1084,11 +1150,15 @@ mod tests {
             running: true,
             pid: Some(1234),
             uptime_secs: Some(3600),
+            state: "Running".to_string(),
+            config_path: Some(PathBuf::from("/tmp/config.yaml")),
+            circuit_breaker_remaining_secs: None,
         };
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"running\":true"));
         assert!(json.contains("\"pid\":1234"));
         assert!(json.contains("\"uptime_secs\":3600"));
+        assert!(json.contains("\"state\":\"Running\""));
     }
 
     // ============ Deserialization Tests ============
@@ -1269,9 +1339,11 @@ mod tests {
         let data = resp.data.unwrap();
         let status: ServiceStatus = serde_json::from_value(data).unwrap();
 
-        // Initially not running
+        // Initially not running (stateless stub returns Unknown state)
         assert!(!status.running);
         assert!(status.pid.is_none());
+        assert_eq!(status.state, "Unknown");
+        assert!(status.config_path.is_none());
     }
 
     /// Test that Start command twice doesn't panic (idempotent)
@@ -1348,11 +1420,15 @@ mod tests {
             running: false,
             pid: None,
             uptime_secs: None,
+            state: "NotRunning".to_string(),
+            config_path: None,
+            circuit_breaker_remaining_secs: None,
         };
 
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"running\":false"));
         assert!(json.contains("\"pid\":null"));
+        assert!(json.contains("\"state\":\"NotRunning\""));
     }
 
     #[test]
@@ -1361,12 +1437,16 @@ mod tests {
             running: true,
             pid: Some(12345),
             uptime_secs: Some(3600),
+            state: "Running".to_string(),
+            config_path: Some(PathBuf::from("/tmp/config.yaml")),
+            circuit_breaker_remaining_secs: None,
         };
 
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"running\":true"));
         assert!(json.contains("\"pid\":12345"));
         assert!(json.contains("\"uptime_secs\":3600"));
+        assert!(json.contains("\"state\":\"Running\""));
     }
 
     // ============ IpcResponse Builder Tests ============

@@ -1,0 +1,6 @@
+.claude
+.gitignore
+
+target/
+mihomo*
+.worktrees/

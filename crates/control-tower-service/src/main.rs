@@ -4,6 +4,9 @@
 //! via Unix socket.
 
 mod scheduler;
+mod api;
+mod html;
+mod http_server;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -1896,6 +1899,32 @@ fn update_profile_subscription(url: &str, profile_file: &PathBuf) -> anyhow::Res
     Ok(())
 }
 
+/// Get the service HTTP port from settings.yaml, defaulting to 8080
+fn get_service_port() -> u16 {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+    let settings_path = exe_dir
+        .map(|p| p.join("settings.yaml"))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| std::path::PathBuf::from("settings.yaml"));
+
+    if settings_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&settings_path) {
+            if let Ok(settings) = serde_yaml_ng::from_str::<Settings>(&content) {
+                return settings.service_port.unwrap_or(8080);
+            }
+        }
+    }
+    8080 // default
+}
+
+#[derive(serde::Deserialize)]
+struct Settings {
+    service_port: Option<u16>,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = Args::parse();
@@ -1972,6 +2001,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create service state
     let state = Arc::new(ServiceState::new());
+
+    // Only start HTTP server when not in foreground mode (e2e tests use --foreground)
+    // This avoids port binding conflicts between test runs
+    let service_port = get_service_port();
+    if !args.foreground {
+        let http_state = state.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime for HTTP server");
+            rt.block_on(async move {
+                if let Err(e) = http_server::start_http_server(service_port, http_state).await {
+                    tracing::error!("HTTP server error: {}", e);
+                }
+            });
+        });
+        tracing::info!("HTTP API server configured on port {}", service_port);
+    } else {
+        tracing::info!("Foreground mode: HTTP API server disabled");
+    }
 
     // Create IPC server
     let server = ipc_server::IpcServer::new(socket_path, state.clone());

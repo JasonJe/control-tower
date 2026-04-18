@@ -4,7 +4,7 @@ import re
 import time
 from typing import Optional
 
-from playwright.sync_api import Page, Locator, ExpectTimeout
+from playwright.sync_api import Page, TimeoutError
 
 BASE_URL = "http://localhost:8080"
 
@@ -38,7 +38,7 @@ class BasePage:
         try:
             toast = self.page.wait_for_selector(".toast.show", timeout=timeout)
             return toast.inner_text()
-        except ExpectTimeout:
+        except TimeoutError:
             return None
 
     def get_toast_type(self) -> Optional[str]:
@@ -51,7 +51,7 @@ class BasePage:
             if "error" in cls:
                 return "error"
             return None
-        except ExpectTimeout:
+        except TimeoutError:
             return None
 
     def wait_toast_hidden(self, timeout: int = 5000):
@@ -59,7 +59,7 @@ class BasePage:
         time.sleep(0.3)
         try:
             self.page.wait_for_selector(".toast:not(.show)", timeout=timeout)
-        except ExpectTimeout:
+        except TimeoutError:
             pass
 
     def get_status_dot_class(self) -> str:

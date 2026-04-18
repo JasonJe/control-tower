@@ -453,7 +453,6 @@ fn spawn_service_daemon(exe_path: &PathBuf) -> Result<()> {
     // Redirect stdout/stderr to /dev/null to prevent any terminal output
     // The service will only write logs to file
     let child = Command::new(exe_path)
-        .arg("--foreground")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()

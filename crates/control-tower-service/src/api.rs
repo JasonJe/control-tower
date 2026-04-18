@@ -57,8 +57,16 @@ pub struct AddProfileRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct AddRuleRequest {
+    #[serde(rename = "type")]
+    pub rule_type: String,
+    pub value: String,
+    pub proxy: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ProxyDelayRequest {
-    pub name: String,
+    // Note: name is extracted from URL path /proxies/{name}/delay, not from body
     #[serde(default = "default_timeout")]
     pub timeout: u64,
 }
@@ -112,7 +120,9 @@ fn get_control_tower_paths() -> control_tower_service_core::ControlTowerPaths {
 /// Parse profiles.yaml into a JSON-friendly structure
 fn parse_profiles_yaml(content: &str) -> Vec<serde_json::Value> {
     #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
     struct ProfilesYaml {
+        #[serde(skip)]
         current: Option<String>,
         items: Vec<ProfileItem>,
     }
@@ -260,7 +270,8 @@ pub async fn get_config() -> HttpResponse {
     let verge_path = &paths.verge_config_path;
 
     if !verge_path.exists() {
-        return HttpResponse::NotFound().json(ApiResponse::<()>::error("verge.yaml not found"));
+        // Return empty config instead of 404 so the UI handles it gracefully
+        return HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({})));
     }
 
     match std::fs::read_to_string(verge_path) {
@@ -274,6 +285,80 @@ pub async fn get_config() -> HttpResponse {
         }
         Err(e) => HttpResponse::InternalServerError()
             .json(ApiResponse::<()>::error(format!("Failed to read verge.yaml: {}", e))),
+    }
+}
+
+/// GET /api/rules - Returns list of rules from config.yaml
+pub async fn get_rules() -> HttpResponse {
+    let paths = get_control_tower_paths();
+    let config_path = &paths.active_config_path;
+
+    if !config_path.exists() {
+        return HttpResponse::Ok().json(ApiResponse::success(Vec::<String>::new()));
+    }
+
+    match std::fs::read_to_string(config_path) {
+        Ok(content) => {
+            match serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&content) {
+                Ok(yaml) => {
+                    let rules: Vec<String> = yaml
+                        .get("rules")
+                        .and_then(|v| v.as_sequence())
+                        .map(|seq| {
+                            seq.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    HttpResponse::Ok().json(ApiResponse::success(rules))
+                }
+                Err(_) => HttpResponse::Ok().json(ApiResponse::success(Vec::<String>::new())),
+            }
+        }
+        Err(_) => HttpResponse::Ok().json(ApiResponse::success(Vec::<String>::new())),
+    }
+}
+
+/// POST /api/rules - Add a new rule
+pub async fn add_rule(body: web::Json<AddRuleRequest>) -> HttpResponse {
+    let paths = get_control_tower_paths();
+    let store = control_tower_service_core::ActiveConfigStore::new(paths);
+
+    let rule = format!("{},{},{}", body.rule_type.to_uppercase(), body.value, body.proxy);
+
+    match store.append_rule(&rule) {
+        Ok(()) => HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
+            "rule": rule
+        }))),
+        Err(e) => HttpResponse::InternalServerError()
+            .json(ApiResponse::<()>::error(format!("Failed to add rule: {}", e))),
+    }
+}
+
+/// DELETE /api/rules/{index} - Remove a rule by 1-based index
+pub async fn delete_rule(path: web::Path<usize>) -> HttpResponse {
+    let index = path.into_inner();
+    let paths = get_control_tower_paths();
+    let store = control_tower_service_core::ActiveConfigStore::new(paths);
+
+    match store.remove_rule(index) {
+        Ok(removed) => HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
+            "removed": removed
+        }))),
+        Err(e) => HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error(format!("Failed to remove rule: {}", e))),
+    }
+}
+
+/// DELETE /api/rules - Clear all rules
+pub async fn clear_rules() -> HttpResponse {
+    let paths = get_control_tower_paths();
+    let store = control_tower_service_core::ActiveConfigStore::new(paths);
+
+    match store.clear_rules() {
+        Ok(()) => HttpResponse::Ok().json(ApiResponse::<()>::success(())),
+        Err(e) => HttpResponse::InternalServerError()
+            .json(ApiResponse::<()>::error(format!("Failed to clear rules: {}", e))),
     }
 }
 
@@ -376,7 +461,9 @@ pub async fn add_profile(
     };
 
     #[derive(serde::Deserialize, serde::Serialize)]
+    #[allow(dead_code)]
     struct ProfilesYaml {
+        #[serde(skip)]
         current: Option<String>,
         items: Vec<ProfileItem>,
     }
@@ -447,7 +534,9 @@ pub async fn activate_profile(
     };
 
     #[derive(serde::Deserialize, serde::Serialize)]
+    #[allow(dead_code)]
     struct ProfilesYaml {
+        #[serde(skip)]
         current: Option<String>,
         items: Vec<ProfileItem>,
     }
@@ -514,7 +603,9 @@ pub async fn delete_profile(
     };
 
     #[derive(serde::Deserialize, serde::Serialize)]
+    #[allow(dead_code)]
     struct ProfilesYaml {
+        #[serde(skip)]
         current: Option<String>,
         items: Vec<ProfileItem>,
     }
@@ -636,32 +727,4 @@ pub async fn proxy_delay(
         Err(e) => HttpResponse::InternalServerError()
             .json(ApiResponse::<()>::error(format!("Failed to check proxy delay: {}", e))),
     }
-}
-
-/// Configure API routes
-pub fn configure_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::scope("/api")
-            // Service status and control
-            .route("/status", web::get().to(service_status))
-            .route("/service/start", web::post().to(service_start))
-            .route("/service/stop", web::post().to(service_stop))
-            // Proxies
-            .route("/proxies", web::get().to(get_proxies))
-            .route("/proxies/select", web::post().to(select_proxy))
-            .route("/proxies/{name}/delay", web::get().to(proxy_delay))
-            // Mode
-            .route("/mode", web::get().to(get_mode))
-            .route("/mode", web::post().to(set_mode))
-            // Connections
-            .route("/connections", web::get().to(get_connections))
-            .route("/connections/{id}", web::delete().to(close_connection))
-            // Config
-            .route("/config", web::get().to(get_config))
-            // Profiles
-            .route("/profiles", web::get().to(get_profiles))
-            .route("/profiles", web::post().to(add_profile))
-            .route("/profiles/{id}/activate", web::put().to(activate_profile))
-            .route("/profiles/{id}", web::delete().to(delete_profile))
-    );
 }

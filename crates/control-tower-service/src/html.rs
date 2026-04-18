@@ -312,7 +312,6 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
             </div>
             <button type="submit" class="btn">Add</button>
           </form>
-          <p style="margin-top:12px;font-size:13px;color:var(--text3)">Note: Rules API may not be fully implemented. Rules changes may not persist.</p>
         </div>
         <div class="card" style="padding:0;overflow:hidden">
           <div id="rules-loading" class="loading"><div class="spinner"></div>Loading rules...</div>
@@ -799,16 +798,14 @@ async function loadRules() {
   empty.style.display = 'none';
 
   try {
-    // Try to get rules from config
-    const config = await api('GET', '/api/config');
-    rules = config?.rules || [];
+    const data = await api('GET', '/api/rules');
+    rules = data || [];
     renderRules();
   } catch (e) {
-    // Rules API not available
     rules = [];
     loading.style.display = 'none';
     empty.style.display = 'block';
-    document.getElementById('rules-empty').querySelector('p').textContent = 'Rules API not available';
+    document.getElementById('rules-empty').querySelector('p').textContent = 'Failed to load rules';
   }
 }
 
@@ -832,18 +829,25 @@ function renderRules() {
 
   const totalPages = Math.ceil(rules.length / rulesPerPage);
   const start = (rulesPage - 1) * rulesPerPage;
-  const pageRules = rules.slice(start, start + rulesPerPage);
+  // Reverse for display: newest rule first (idx 1)
+  const pageRules = [...rules].reverse().slice(start, start + rulesPerPage);
+  // originalIdx maps display position back to rules[] index for delete API
+  const pageOriginalIdx = pageRules.map((_, i) => rules.length - (start + i));
 
   const tbody = document.getElementById('rules-list');
   tbody.innerHTML = pageRules.map((r, i) => {
     const idx = start + i + 1;
-    const rule = Array.isArray(r) ? r : ['', '', ''];
+    // Rules are "TYPE,VALUE,PROXY" strings
+    const parts = typeof r === 'string' ? r.split(',') : [];
+    const ruleType = parts[0] || '';
+    const ruleValue = parts.slice(1, -1).join(',');
+    const ruleProxy = parts[parts.length - 1] || '';
     return `<tr>
       <td class="mono">${idx}</td>
-      <td>${escapeHtml(rule[0] || '')}</td>
-      <td class="truncate" style="max-width:300px" title="${escapeHtml(rule[1] || '')}">${escapeHtml(rule[1] || '')}</td>
-      <td>${escapeHtml(rule[2] || '')}</td>
-      <td><button class="btn sm danger" onclick="deleteRule(${start + i})">X</button></td>
+      <td>${escapeHtml(ruleType)}</td>
+      <td class="truncate" style="max-width:300px" title="${escapeHtml(ruleValue)}">${escapeHtml(ruleValue)}</td>
+      <td>${escapeHtml(ruleProxy)}</td>
+      <td><button class="btn sm danger" onclick="deleteRule(${pageOriginalIdx[i] + 1})">X</button></td>
     </tr>`;
   }).join('');
 
@@ -867,14 +871,28 @@ function changeRulesPage(p) {
 
 async function addRule(e) {
   e.preventDefault();
-  showToast('Rules API not implemented - changes will not persist', 'error');
-  // Reset form
-  document.getElementById('rule-value').value = '';
-  document.getElementById('rule-proxy').value = '';
+  const ruleType = document.getElementById('rule-type').value;
+  const value = document.getElementById('rule-value').value;
+  const proxy = document.getElementById('rule-proxy').value;
+  try {
+    await api('POST', '/api/rules', { type: ruleType, value, proxy });
+    showToast('Rule added');
+    document.getElementById('rule-value').value = '';
+    document.getElementById('rule-proxy').value = '';
+    loadRules();
+  } catch (err) {
+    showToast('Failed to add rule: ' + err.message, 'error');
+  }
 }
 
 async function deleteRule(idx) {
-  showToast('Rules API not implemented - changes will not persist', 'error');
+  try {
+    await api('DELETE', `/api/rules/${idx}`);
+    showToast('Rule removed');
+    loadRules();
+  } catch (err) {
+    showToast('Failed to remove rule: ' + err.message, 'error');
+  }
 }
 
 // Connections

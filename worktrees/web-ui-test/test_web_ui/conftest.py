@@ -107,11 +107,70 @@ def page(context: BrowserContext, ctsvc_process) -> Page:
     p.close()
 
 
+@pytest.fixture(scope="session")
+def mihomo_running(ctsvc_process):
+    """Mihomo 只启动一次，session 结束才停止."""
+    import urllib.request
+    # 调用 service start API
+    req = urllib.request.Request(f"{BASE_URL}/api/service/start",
+                                data=b"",
+                                method="POST",
+                                headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
+    time.sleep(3)  # 等待 Mihomo 完全启动
+    yield
+    # Teardown: 停止 Mihomo
+    req = urllib.request.Request(f"{BASE_URL}/api/service/stop",
+                                data=b"",
+                                method="POST",
+                                headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+    time.sleep(1)
+
+
 @pytest.fixture(scope="function")
 def service_running(page: Page):
-    """确保 Mihomo 已启动（调用 service start API）."""
+    """确保 Mihomo 已启动（每个测试前启动，测试后停止）."""
     page.request.post(f"{BASE_URL}/api/service/start")
-    time.sleep(2)
+    # Wait for Mihomo to be fully ready (proxies API responding)
+    for _ in range(20):
+        time.sleep(0.5)
+        try:
+            r = page.request.get(f"{BASE_URL}/api/proxies")
+            if r.ok:
+                break
+        except Exception:
+            pass
     yield
     page.request.post(f"{BASE_URL}/api/service/stop")
     time.sleep(1)
+
+
+@pytest.fixture(scope="function")
+def rules_cleanup(page: Page):
+    """清理所有现有规则（仅影响当前 config.yaml，不影响 profiles.yaml）."""
+    import urllib.request
+
+    try:
+        # Single atomic call to clear all rules at once
+        del_req = urllib.request.Request(
+            f"{BASE_URL}/api/rules",
+            data=b"",
+            method="DELETE",
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(del_req, timeout=10)
+    except Exception:
+        pass
+
+    # Reload the page so loadRules() fetches the updated (empty) rules
+    page.reload()
+    page.wait_for_load_state("domcontentloaded")
+
+    yield

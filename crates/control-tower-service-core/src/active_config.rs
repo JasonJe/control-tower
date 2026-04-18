@@ -50,7 +50,12 @@ impl ActiveConfigStore {
 
     /// Append a single rule to the rules array, creating the array if absent.
     pub fn append_rule(&self, rule: &str) -> Result<()> {
-        let content = std::fs::read_to_string(&self.paths.active_config_path)?;
+        let content = if self.paths.active_config_path.exists() {
+            std::fs::read_to_string(&self.paths.active_config_path)?
+        } else {
+            // Create default config if file doesn't exist
+            "mode: rule\n".to_string()
+        };
         let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)?;
 
         // Get or create the rules array
@@ -87,6 +92,25 @@ impl ActiveConfigStore {
 
         self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)?;
         Ok(removed_str)
+    }
+
+    /// Clear all rules from the active config atomically.
+    pub fn clear_rules(&self) -> Result<()> {
+        let content = if self.paths.active_config_path.exists() {
+            std::fs::read_to_string(&self.paths.active_config_path)?
+        } else {
+            "mode: rule\n".to_string()
+        };
+        let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)?;
+        if let Some(map) = yaml.as_mapping_mut() {
+            map.insert("rules".into(), serde_yaml_ng::Value::Sequence(vec![]));
+        } else {
+            let mut new_map = serde_yaml_ng::Mapping::new();
+            new_map.insert("mode".into(), yaml);
+            new_map.insert("rules".into(), serde_yaml_ng::Value::Sequence(vec![]));
+            yaml = serde_yaml_ng::Value::Mapping(new_map);
+        }
+        self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)
     }
 
     /// Import multiple rules, appending them to the existing rules array.

@@ -305,7 +305,10 @@ fn cron_to_human(cron: &str) -> String {
 }
 
 async fn download_subscription(url: &str) -> Result<String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
     let response = client
         .get(url)
         .header("User-Agent", "clash-verge/v2.4.7")

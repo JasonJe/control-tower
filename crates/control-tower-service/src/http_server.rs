@@ -38,6 +38,10 @@ pub async fn start_http_server(port: u16, state: Arc<ServiceState>) -> std::io::
                     .route("/service/start", web::post().to(api::service_start))
                     .route("/service/stop", web::post().to(api::service_stop))
                     .route("/config", web::get().to(api::get_config))
+                    .route("/rules", web::get().to(api::get_rules))
+                    .route("/rules", web::post().to(api::add_rule))
+                    .route("/rules", web::delete().to(api::clear_rules))
+                    .route("/rules/{index}", web::delete().to(api::delete_rule))
             )
     })
     .bind(("0.0.0.0", port))?

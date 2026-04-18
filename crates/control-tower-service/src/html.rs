@@ -7,147 +7,253 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Control Tower</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
---bg:#f8fafc;--bg2:#fff;--bg3:#f1f5f9;--border:#e2e8f0;
+--bg:#f8fafc;--bg2:#ffffff;--bg3:#f1f5f9;--bg4:#e2e8f0;
+--border:#e2e8f0;--border2:#cbd5e1;
 --text:#0f172a;--text2:#475569;--text3:#94a3b8;
---accent:#3b82f6;--accent-hover:#2563eb;
---success:#22c55e;--warning:#eab308;--danger:#ef4444;
---sidebar-w:200px;--header-h:56px;
+--accent:#6366f1;--accent-hover:#4f46e5;--accent-light:rgba(99,102,241,.1);
+--success:#10b981;--success-light:rgba(16,185,129,.1);
+--warning:#f59e0b;--warning-light:rgba(245,158,11,.1);
+--danger:#ef4444;--danger-light:rgba(239,68,68,.1);
+--sidebar-w:220px;--header-h:60px;
+--radius:10px;--radius-sm:6px;--radius-lg:14px;
+--shadow-sm:0 1px 2px rgba(0,0,0,.05);
+--shadow:0 4px 6px -1px rgba(0,0,0,.1),0 2px 4px -2px rgba(0,0,0,.1);
+--shadow-lg:0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.1);
 }
 @media(prefers-color-scheme:dark){
 :root{
---bg:#0f172a;--bg2:#1e293b;--bg3:#334155;--border:#475569;
---text:#f1f5f9;--text2:#cbd5e1;--text3:#64748b;
+--bg:#0f172a;--bg2:#1e293b;--bg3:#0f172a;--bg4:#334155;
+--border:#1e293b;--border2:#334155;
+--text:#f1f5f9;--text2:#94a3b8;--text3:#64748b;
+--accent:#818cf8;--accent-hover:#6366f1;--accent-light:rgba(129,140,248,.1);
+--success:#34d399;--success-light:rgba(52,211,153,.1);
+--warning:#fbbf24;--warning-light:rgba(251,191,36,.1);
+--danger:#f87171;--danger-light:rgba(248,113,113,.1);
+--shadow-sm:0 1px 2px rgba(0,0,0,.3);
+--shadow:0 4px 6px -1px rgba(0,0,0,.4);
+--shadow-lg:0 10px 15px -3px rgba(0,0,0,.5);
 }}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);transition:background 150ms ease,color 150ms ease}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);transition:background 200ms ease,color 200ms ease;line-height:1.5;-webkit-font-smoothing:antialiased}
 .mono{font-family:'JetBrains Mono',monospace}
 
 /* Layout */
 .app{display:flex;flex-direction:column;height:100vh}
-.header{position:fixed;top:0;left:0;right:0;height:var(--header-h);background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;z-index:100;gap:12px}
-.header .logo{width:32px;height:32px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center}
-.header .logo svg{width:20px;height:20px;fill:#fff}
-.header h1{font-size:16px;font-weight:600}
-.status-dot{width:8px;height:8px;border-radius:50%;background:var(--success);margin-left:auto}
+.header{position:fixed;top:0;left:0;right:0;height:var(--header-h);background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;z-index:100;gap:14px;box-shadow:var(--shadow-sm)}
+.header .logo{width:34px;height:34px;background:linear-gradient(135deg,var(--accent),var(--accent-hover));border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.header .logo svg{width:18px;height:18px;fill:#fff}
+.header h1{font-size:15px;font-weight:600;letter-spacing:-.2px}
+.header .subtitle{font-size:12px;color:var(--text3);margin-left:4px;font-weight:400}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--success);margin-left:auto;transition:background 200ms;flex-shrink:0}
 .status-dot.stopped{background:var(--danger)}
+.status-dot.running{background:var(--success);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .main{display:flex;flex:1;padding-top:var(--header-h)}
-.sidebar{position:fixed;left:0;top:var(--header-h);bottom:0;width:var(--sidebar-w);background:var(--bg2);border-right:1px solid var(--border);padding:16px 8px;display:flex;flex-direction:column;gap:4px}
-.nav-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;color:var(--text2);cursor:pointer;transition:all 150ms ease;font-size:14px;font-weight:500}
+
+/* Sidebar */
+.sidebar{position:fixed;left:0;top:var(--header-h);bottom:0;width:var(--sidebar-w);background:var(--bg2);border-right:1px solid var(--border);padding:12px 10px;display:flex;flex-direction:column;gap:2px;overflow-y:auto}
+.nav-group{margin-bottom:8px}
+.nav-group-label{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;padding:8px 10px 4px;margin-top:4px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius-sm);color:var(--text2);cursor:pointer;transition:all 150ms ease;font-size:13px;font-weight:500;border:1px solid transparent}
 .nav-item:hover{background:var(--bg3);color:var(--text)}
-.nav-item.active{background:var(--accent);color:#fff}
-.nav-item svg{width:20px;height:20px;flex-shrink:0}
-.content{margin-left:var(--sidebar-w);flex:1;padding:32px;max-width:1200px;width:100%;overflow-y:auto}
-@media(max-width:768px){
-.sidebar{top:auto;bottom:0;left:0;right:0;width:100%;height:64px;flex-direction:row;padding:8px;justify-content:space-around;border-right:none;border-top:1px solid var(--border)}
-.nav-item{flex-direction:column;gap:4px;font-size:10px;padding:8px}
-.nav-item span{display:none}
-.content{margin-left:0;margin-bottom:64px;padding:20px}
-}
+.nav-item.active{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.nav-item.active svg{stroke:var(--accent)}
+.nav-item svg{width:17px;height:17px;flex-shrink:0;stroke:var(--text3);transition:stroke 150ms}
+.nav-item:hover svg{stroke:var(--text2)}
+.nav-spacer{flex:1}
+.nav-footer{padding:8px 10px;border-top:1px solid var(--border);margin-top:auto;font-size:11px;color:var(--text3);text-align:center}
+
+/* Content */
+.content{margin-left:var(--sidebar-w);flex:1;padding:28px 32px;max-width:1400px;width:100%;overflow-y:auto}
+
+/* Page header */
+.page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;gap:16px}
+.page-title{font-size:20px;font-weight:700;color:var(--text);letter-spacing:-.3px}
+.page-subtitle{font-size:13px;color:var(--text3);margin-top:2px}
+.page-actions{display:flex;align-items:center;gap:10px}
 
 /* Cards */
-.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:24px}
-.card-title{font-size:14px;font-weight:600;color:var(--text2);margin-bottom:16px;text-transform:uppercase;letter-spacing:.5px}
-.card-value{font-size:32px;font-weight:600;color:var(--text);margin-bottom:4px}
-.card-sub{font-size:13px;color:var(--text3)}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;margin-bottom:20px;box-shadow:var(--shadow-sm);transition:box-shadow 200ms,border-color 200ms}
+.card:hover{box-shadow:var(--shadow)}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.card-title{font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.6px}
+.card-value{font-size:28px;font-weight:700;color:var(--text);letter-spacing:-.5px;line-height:1.2}
+.card-sub{font-size:12px;color:var(--text3);margin-top:4px}
+
+/* Stat grid */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:20px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:flex;align-items:center;gap:14px}
+.stat-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.stat-icon svg{width:20px;height:20px;stroke-width:2}
+.stat-icon.blue{background:var(--accent-light)}.stat-icon.blue svg{stroke:var(--accent)}
+.stat-icon.green{background:var(--success-light)}.stat-icon.green svg{stroke:var(--success)}
+.stat-icon.yellow{background:var(--warning-light)}.stat-icon.yellow svg{stroke:var(--warning)}
+.stat-icon.red{background:var(--danger-light)}.stat-icon.red svg{stroke:var(--danger)}
+.stat-info{flex:1;min-width:0}
+.stat-value{font-size:18px;font-weight:700;color:var(--text);letter-spacing:-.3px}
+.stat-label{font-size:11px;color:var(--text3);font-weight:500}
 
 /* Buttons */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:all 150ms ease;border:none;background:var(--accent);color:#fff}
-.btn:hover{background:var(--accent-hover)}
-.btn:active{transform:scale(0.98)}
-.btn.secondary{background:var(--bg3);color:var(--text)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 18px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;cursor:pointer;transition:all 150ms ease;border:none;font-family:inherit;white-space:nowrap}
+.btn:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
+.btn:active{transform:translateY(0);box-shadow:none}
+.btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent-hover));color:#fff}
+.btn.primary:hover{background:linear-gradient(135deg,var(--accent-hover),var(--accent))}
+.btn.secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
+.btn.secondary:hover{background:var(--bg4);border-color:var(--border2)}
 .btn.danger{background:var(--danger);color:#fff}
+.btn.danger:hover{background:#dc2626}
 .btn.success{background:var(--success);color:#fff}
+.btn.success:hover{background:#059669}
+.btn.ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}
+.btn.ghost:hover{background:var(--bg3);color:var(--text)}
 .btn.sm{padding:6px 12px;font-size:12px}
-.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.xs{padding:4px 10px;font-size:11px}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none!important;box-shadow:none!important}
 .btn-group{display:flex;gap:8px;flex-wrap:wrap}
 
 /* Forms */
-.form-group{margin-bottom:16px}
-.form-label{display:block;font-size:13px;font-weight:500;color:var(--text2);margin-bottom:6px}
-.form-input{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;transition:border-color 150ms ease}
-.form-input:focus{outline:none;border-color:var(--accent)}
-.form-select{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;cursor:pointer}
+.form-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.form-group{flex:1;min-width:160px;margin-bottom:0}
+.form-group.narrow{min-width:120px}
+.form-label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px}
+.form-input{width:100%;padding:9px 13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-size:13px;transition:border-color 150ms,box-shadow 150ms;font-family:inherit}
+.form-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
+.form-input::placeholder{color:var(--text3)}
+.form-select{width:100%;padding:9px 13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-size:13px;cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
+.form-select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
 
 /* Tables */
+.table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow-sm)}
 .table{width:100%;border-collapse:collapse}
-.table th{text-align:left;padding:12px 16px;font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
-.table td{padding:12px 16px;font-size:14px;border-bottom:1px solid var(--border);vertical-align:middle}
-.table tr:hover td{background:var(--bg3)}
+.table th{text-align:left;padding:11px 16px;font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;background:var(--bg3);border-bottom:1px solid var(--border);white-space:nowrap}
+.table td{padding:11px 16px;font-size:13px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text2)}
+.table tr:last-child td{border-bottom:none}
+.table tbody tr{transition:background 100ms}
+.table tbody tr:hover td{background:var(--bg3)}
 .table .truncate{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.table .mono{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text)}
+.cell-clickable{cursor:pointer}
 
-/* Status indicators */
-.badge{display:inline-block;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:500}
-.badge.success{background:rgba(34,197,94,.15);color:var(--success)}
-.badge.warning{background:rgba(234,179,8,.15);color:var(--warning)}
-.badge.danger{background:rgba(239,68,68,.15);color:var(--danger)}
-.badge.info{background:rgba(59,130,246,.15);color:var(--accent)}
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600}
+.badge.success{background:var(--success-light);color:var(--success)}
+.badge.warning{background:var(--warning-light);color:var(--warning)}
+.badge.danger{background:var(--danger-light);color:var(--danger)}
+.badge.info{background:var(--accent-light);color:var(--accent)}
+.badge.neutral{background:var(--bg3);color:var(--text3)}
 
-/* Latency colors */
-.latency-good{color:var(--success)}
-.latency-medium{color:var(--warning)}
+/* Latency */
+.latency-good{color:var(--success);font-weight:600}
+.latency-medium{color:var(--warning);font-weight:600}
 .latency-bad{color:var(--danger)}
 .latency-timeout{color:var(--text3)}
 
-/* Active profile border */
-.profile-active{border-left:3px solid var(--accent);padding-left:12px}
-
 /* Toast */
-.toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:1000;display:none;animation:slideIn 150ms ease}
-.toast.show{display:block}
-.toast.success{border-left:3px solid var(--success)}
-.toast.error{border-left:3px solid var(--danger)}
+.toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:1000;display:none;animation:slideIn 200ms ease;max-width:360px;font-size:13px;font-weight:500}
+.toast.show{display:flex;align-items:center;gap:10px}
+.toast.success{border-left:4px solid var(--success)}
+.toast.error{border-left:4px solid var(--danger)}
+.toast.warning{border-left:4px solid var(--warning)}
 @keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
 
 /* Modal */
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:200}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:200;backdrop-filter:blur(2px)}
 .modal.show{display:flex}
-.modal-content{background:var(--bg2);border-radius:12px;padding:24px;max-width:400px;width:90%}
+.modal-content{background:var(--bg2);border-radius:var(--radius-lg);padding:24px;max-width:420px;width:90%;box-shadow:var(--shadow-lg);border:1px solid var(--border)}
+.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.modal-title{font-size:16px;font-weight:600}
+.modal-close{width:28px;height:28px;border-radius:var(--radius-sm);border:none;background:var(--bg3);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 150ms}
+.modal-close:hover{background:var(--bg4)}
+.modal-close svg{width:14px;height:14px;stroke:var(--text2)}
+.modal-body{color:var(--text2);font-size:14px;margin-bottom:24px;line-height:1.6}
+.modal-footer{display:flex;gap:8px;justify-content:flex-end}
 
 /* Loading */
-.loading{text-align:center;padding:40px;color:var(--text3)}
-.spinner{display:inline-block;width:24px;height:24px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin-right:12px}
-@keyframes spin{to{transform:rotate(360deg)}
+.loading{display:flex;align-items:center;justify-content:center;padding:48px;color:var(--text3);gap:12px;font-size:13px}
+.spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
-/* Empty state */
-.empty-state{text-align:center;padding:60px 20px;color:var(--text3)}
-.empty-state svg{width:48px;height:48px;margin-bottom:16px;opacity:.5}
-
-/* Stats bar */
-.stats-bar{display:flex;gap:24px;padding:16px 0;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap}
-.stat-item{display:flex;align-items:center;gap:8px}
-.stat-value{font-weight:600;font-size:16px}
-.stat-label{font-size:13px;color:var(--text3)}
+/* Empty */
+.empty-state{text-align:center;padding:56px 20px;color:var(--text3)}
+.empty-state svg{width:44px;height:44px;margin-bottom:12px;opacity:.4}
+.empty-state p{font-size:13px}
+.empty-action{margin-top:12px}
 
 /* Pagination */
-.pagination{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:20px}
-.page-btn{padding:8px 14px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);cursor:pointer;font-size:13px}
-.page-btn:hover{background:var(--bg3)}
+.pagination{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-top:1px solid var(--border);background:var(--bg3);flex-wrap:wrap;gap:8px}
+.pagination-info{font-size:12px;color:var(--text3)}
+.pagination-controls{display:flex;align-items:center;gap:4px}
+.page-btn{width:32px;height:32px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg2);color:var(--text2);cursor:pointer;font-size:12px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;transition:all 150ms}
+.page-btn:hover:not(:disabled){background:var(--bg3);border-color:var(--border2)}
 .page-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
-.page-info{font-size:13px;color:var(--text3)}
+.page-btn:disabled{opacity:.4;cursor:not-allowed}
+.page-btn.nav{font-size:10px}
 
 /* Search */
-.search-bar{max-width:300px;margin-left:auto}
-.search-input{width:100%;padding:8px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px}
+.search-wrap{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.search-input{width:100%;max-width:280px;padding:8px 12px 8px 36px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-size:13px;transition:border-color 150ms;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:12px center}
 .search-input:focus{outline:none;border-color:var(--accent)}
 
-/* View containers */
+/* Info grid */
+.info-grid{}
+.info-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);gap:16px}
+.info-row:last-child{border-bottom:none}
+.info-key{font-size:12px;color:var(--text3);font-weight:500}
+.info-val{font-size:13px;font-weight:500;color:var(--text);font-family:'JetBrains Mono',monospace}
+
+/* View */
 .view{display:none}
 .view.active{display:block}
 
-/* Flex utilities */
-.flex{display:flex}
-.flex-col{flex-direction:column}
-.items-center{align-items:center}
-.justify-between{justify-content:space-between}
-.gap-8{gap:8px}
-.gap-16{gap:16px}
-.mt-16{margin-top:16px}
-.mb-16{margin-bottom:16px}
-.w-full{width:100%}
-.text-center{text-align:center}
+/* Utils */
+.text-sm{font-size:12px}.text-xs{font-size:11px}
+.text-muted{color:var(--text3)}.text-success{color:var(--success)}.text-danger{color:var(--danger)}
+.flex{display:flex}.flex-col{flex-direction:column}
+.items-center{align-items:center}.items-start{align-items:flex-start}
+.justify-between{justify-content:space-between}.justify-end{justify-content:flex-end}
+.gap-4{gap:4px}.gap-6{gap:6px}.gap-8{gap:8px}.gap-12{gap:12px}.gap-16{gap:16px}
+.mt-8{margin-top:8px}.mt-12{margin-top:12px}.mt-16{margin-top:16px}
+.mb-8{margin-bottom:8px}.mb-12{margin-bottom:12px}.mb-16{margin-bottom:16px}
+.ml-auto{margin-left:auto}.w-full{width:100%}
+.hidden{display:none!important}
+
+/* Responsive */
+@media(max-width:768px){
+.sidebar{top:auto;bottom:0;left:0;right:0;width:100%;height:64px;flex-direction:row;padding:6px 4px;justify-content:space-around;border-right:none;border-top:1px solid var(--border);align-items:center}
+.nav-group{margin-bottom:0;display:flex;flex-direction:row;gap:2px}
+.nav-group-label{display:none}
+.nav-item{flex-direction:column;gap:2px;font-size:9px;padding:4px 8px;min-width:48px;align-items:center;justify-content:center}
+.nav-item span{display:none}
+.nav-footer{display:none}
+.content{margin-left:0;margin-bottom:64px;padding:16px}
+.page-header{flex-direction:column;align-items:flex-start;gap:12px}
+.stat-grid{grid-template-columns:1fr 1fr}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;max-height:50vh;overflow-y:auto}
+}
+
+/* Keyboard hint */
+.kbd{display:inline-flex;align-items:center;padding:2px 6px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text3);margin-left:8px;vertical-align:middle}
+
+/* Search no results */
+.search-no-results{padding:24px;text-align:center;color:var(--text3);font-size:13px;border-top:1px solid var(--border)}
+
+/* Row hover cursor */
+.table tbody tr{cursor:default}
+.table tbody tr.row-action{cursor:pointer}
+
+/* Selected row highlight */
+.table tbody tr.row-selected td{background:var(--accent-light)}
+
+/* Proxy name in table */
+.proxy-name{font-weight:500}
+
+/* Conn metadata */
+.conn-meta{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2)}
+.conn-badge{margin-top:2px}
 </style>
 </head>
 <body>
@@ -157,263 +263,427 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
       <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
     </div>
     <h1>Control Tower</h1>
+    <span class="subtitle">Proxy Management</span>
     <div class="status-dot" id="headerStatus" title="Service Status"></div>
   </header>
 
   <main class="main">
     <nav class="sidebar">
-      <div class="nav-item active" data-view="dashboard">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
-        <span>Dashboard</span>
+      <div class="nav-group">
+        <div class="nav-group-label">Status</div>
+        <div class="nav-item active" data-view="dashboard">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+          <span>Dashboard</span>
+        </div>
       </div>
-      <div class="nav-item" data-view="proxies">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg>
-        <span>Proxies</span>
+      <div class="nav-group">
+        <div class="nav-group-label">Proxy</div>
+        <div class="nav-item" data-view="proxies">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg>
+          <span>Proxies</span>
+        </div>
       </div>
-      <div class="nav-item" data-view="profiles">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-        <span>Profiles</span>
+      <div class="nav-group">
+        <div class="nav-group-label">Config</div>
+        <div class="nav-item" data-view="profiles">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <span>Profiles</span>
+        </div>
+        <div class="nav-item" data-view="rules">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+          <span>Rules</span>
+        </div>
       </div>
-      <div class="nav-item" data-view="rules">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
-        <span>Rules</span>
+      <div class="nav-group">
+        <div class="nav-group-label">Monitor</div>
+        <div class="nav-item" data-view="connections">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <span>Connections</span>
+        </div>
       </div>
-      <div class="nav-item" data-view="connections">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-        <span>Connections</span>
+      <div class="nav-group">
+        <div class="nav-group-label">System</div>
+        <div class="nav-item" data-view="settings">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          <span>Settings</span>
+        </div>
       </div>
-      <div class="nav-item" data-view="settings">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-        <span>Settings</span>
-      </div>
+      <div class="nav-spacer"></div>
+      <div class="nav-footer">Control Tower v0.1</div>
     </nav>
 
     <div class="content">
-      <!-- Dashboard View -->
+
+      <!-- Dashboard -->
       <div class="view active" id="view-dashboard">
+        <div class="page-header">
+          <div><div class="page-title">Dashboard</div><div class="page-subtitle">System overview and quick controls</div></div>
+          <div class="page-actions">
+            <button class="btn ghost sm" onclick="loadDashboard()">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="dash-nodes">-</div><div class="stat-label">Proxy Nodes</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon green"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="dash-connections">-</div><div class="stat-label">Active Connections</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon yellow"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="dash-mode">-</div><div class="stat-label">Current Mode</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon green"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="dash-proxy" style="font-size:13px;font-family:'JetBrains Mono',monospace">-</div><div class="stat-label">Current Proxy</div></div>
+          </div>
+        </div>
+
         <div class="card">
-          <div class="card-title">Service Status</div>
+          <div class="card-header">
+            <div class="card-title">Service Control</div>
+            <span class="badge" id="dash-status-badge"><span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span></span>
+          </div>
           <div class="flex items-center gap-16">
             <div>
               <div class="card-value" id="dash-status">Loading...</div>
               <div class="card-sub" id="dash-uptime"></div>
             </div>
             <div class="btn-group" style="margin-left:auto">
-              <button class="btn success" id="btn-start" onclick="startService()">Start</button>
-              <button class="btn danger" id="btn-stop" onclick="stopService()">Stop</button>
+              <button class="btn success" id="btn-start" onclick="startService()">Start Service</button>
+              <button class="btn danger" id="btn-stop" onclick="stopService()">Stop Service</button>
             </div>
           </div>
         </div>
 
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:24px">
-          <div class="card">
-            <div class="card-title">Current Mode</div>
-            <div class="card-value" id="dash-mode">Loading...</div>
-            <div class="btn-group mt-16">
-              <button class="btn secondary sm" onclick="setMode('rule')">Rule</button>
-              <button class="btn secondary sm" onclick="setMode('global')">Global</button>
-              <button class="btn secondary sm" onclick="setMode('direct')">Direct</button>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">Current Proxy</div>
-            <div class="card-value mono" id="dash-proxy" style="font-size:18px">Loading...</div>
-            <div class="card-sub mt-16">Click Proxies to select</div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">Quick Stats</div>
-            <div class="flex flex-col gap-8">
-              <div><span class="text2">Online Nodes:</span> <span id="dash-nodes" class="mono">-</span></div>
-              <div><span class="text2">Connections:</span> <span id="dash-connections" class="mono">-</span></div>
-            </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Switch Mode</div></div>
+          <div class="btn-group">
+            <button class="btn secondary" id="btn-mode-rule" onclick="setMode('rule')">Rule</button>
+            <button class="btn secondary" id="btn-mode-global" onclick="setMode('global')">Global</button>
+            <button class="btn secondary" id="btn-mode-direct" onclick="setMode('direct')">Direct</button>
           </div>
         </div>
       </div>
 
-      <!-- Proxies View -->
+      <!-- Proxies -->
       <div class="view" id="view-proxies">
-        <div class="flex justify-between items-center mb-16">
-          <h2>Proxy Nodes</h2>
-          <div class="search-bar">
-            <input type="text" class="search-input" id="proxy-search" placeholder="Search proxies..." oninput="filterProxies()">
+        <div class="page-header">
+          <div><div class="page-title">Proxy Nodes</div><div class="page-subtitle">Select and manage proxy providers</div></div>
+          <div class="page-actions">
+            <button class="btn ghost sm" onclick="testAllLatency()" id="btn-test-all">
+              <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              Test All
+            </button>
+            <button class="btn ghost sm" onclick="loadProxies()">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              Refresh
+            </button>
           </div>
         </div>
-        <div class="card" style="padding:0;overflow:hidden">
-          <div id="proxy-loading" class="loading"><div class="spinner"></div>Loading proxies...</div>
+
+        <div id="proxy-selected-card" class="card" style="margin-bottom:16px;display:none">
+          <div class="card-header"><div class="card-title">Currently Selected</div></div>
+          <div class="card-body">
+            <div style="display:flex;align-items:center;gap:16px">
+              <div>
+                <div id="proxy-sel-name" class="mono" style="font-size:15px;font-weight:600"></div>
+                <div style="display:flex;gap:8px;margin-top:4px">
+                  <span id="proxy-sel-type" class="badge" style="background:#818cf8;color:#fff;font-size:11px"></span>
+                  <span id="proxy-sel-latency" class="badge" style="font-size:11px"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="search-wrap">
+          <input type="text" class="search-input" id="proxy-search" placeholder="Search proxies by name..." oninput="filterProxies()">
+          <span class="text-sm text-muted" id="proxy-count"></span>
+        </div>
+
+        <div class="table-wrap">
+          <div id="proxy-loading" class="loading"><div class="spinner"></div>Loading proxy nodes...</div>
           <table class="table" id="proxy-table" style="display:none">
-            <thead><tr><th>Name</th><th>Type</th><th>Latency</th><th>Status</th></tr></thead>
+            <thead><tr><th style="width:40px">#</th><th>Name</th><th>Type</th><th>Latency</th><th>Status</th><th style="width:120px">Action</th></tr></thead>
             <tbody id="proxy-list"></tbody>
           </table>
           <div id="proxy-empty" class="empty-state" style="display:none">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg>
-            <p>No proxies found</p>
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg>
+            <p>No proxy nodes found</p>
+          </div>
+          <div id="proxy-pagination" class="pagination" style="display:none">
+            <div class="pagination-info" id="proxy-pagination-info"></div>
+            <div class="pagination-controls" id="proxy-pagination-controls"></div>
           </div>
         </div>
       </div>
 
-      <!-- Profiles View -->
+      <!-- Profiles -->
       <div class="view" id="view-profiles">
-        <h2 class="mb-16">Profiles</h2>
+        <div class="page-header">
+          <div><div class="page-title">Profiles <span class="text-sm text-muted" id="profiles-total-count" style="font-weight:400"></span></div><div class="page-subtitle">Manage subscription profiles</div></div>
+        </div>
+
         <div class="card">
-          <div class="card-title">Add Profile</div>
-          <form onsubmit="addProfile(event)" class="flex gap-8" style="align-items:flex-end">
-            <div class="form-group" style="flex:1;margin-bottom:0">
-              <label class="form-label">URL</label>
+          <div class="card-header"><div class="card-title">Add New Profile</div></div>
+          <form onsubmit="addProfile(event)" class="form-row">
+            <div class="form-group" style="flex:2;margin-bottom:0">
+              <label class="form-label">Subscription URL</label>
               <input type="url" class="form-input" id="profile-url" placeholder="https://example.com/profile.yaml" required>
             </div>
             <div class="form-group" style="flex:1;margin-bottom:0">
-              <label class="form-label">Name (optional)</label>
+              <label class="form-label">Profile Name (optional)</label>
               <input type="text" class="form-input" id="profile-name" placeholder="My Profile">
             </div>
-            <button type="submit" class="btn">Add</button>
+            <div style="margin-bottom:0;padding-top:22px">
+              <button type="submit" class="btn primary">Add Profile</button>
+            </div>
           </form>
         </div>
-        <div class="card" style="padding:0;overflow:hidden">
+
+        <div class="table-wrap">
           <div id="profiles-loading" class="loading"><div class="spinner"></div>Loading profiles...</div>
           <table class="table" id="profiles-table" style="display:none">
-            <thead><tr><th>Name</th><th>URL</th><th>Status</th><th>Operations</th></tr></thead>
+            <thead><tr><th>Name</th><th>Subscription URL</th><th>Status</th><th>Cron</th><th style="width:200px">Actions</th></tr></thead>
             <tbody id="profiles-list"></tbody>
           </table>
           <div id="profiles-empty" class="empty-state" style="display:none">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
             <p>No profiles found</p>
+            <div class="empty-action text-sm text-muted">Add a subscription URL above to get started</div>
+          </div>
+          <div id="profiles-pagination" class="pagination" style="display:none">
+            <div class="pagination-info" id="profiles-pagination-info"></div>
+            <div class="pagination-controls" id="profiles-pagination-controls"></div>
           </div>
         </div>
       </div>
 
-      <!-- Rules View -->
+      <!-- Rules -->
       <div class="view" id="view-rules">
-        <h2 class="mb-16">Rules</h2>
-        <div class="card">
-          <div class="card-title">Add Rule</div>
-          <form onsubmit="addRule(event)" class="flex gap-8" style="align-items:flex-end">
-            <div class="form-group" style="margin-bottom:0">
-              <label class="form-label">Type</label>
-              <select class="form-select" id="rule-type" style="width:auto;min-width:120px">
-                <option value="DOMAIN">DOMAIN</option>
-                <option value="DOMAIN-SUFFIX">DOMAIN-SUFFIX</option>
-                <option value="DOMAIN-KEYWORD">DOMAIN-KEYWORD</option>
-                <option value="GEOIP">GEOIP</option>
-                <option value="IP-CIDR">IP-CIDR</option>
-                <option value="IP-CIDR6">IP-CIDR6</option>
-                <option value="PROCESS-NAME">PROCESS-NAME</option>
-                <option value="RULE-SET">RULE-SET</option>
-              </select>
-            </div>
-            <div class="form-group" style="flex:1;margin-bottom:0">
-              <label class="form-label">Value</label>
-              <input type="text" class="form-input" id="rule-value" placeholder="example.com" required>
-            </div>
-            <div class="form-group" style="flex:1;margin-bottom:0">
-              <label class="form-label">Proxy</label>
-              <input type="text" class="form-input" id="rule-proxy" placeholder="Proxy name or DIRECT" required>
-            </div>
-            <button type="submit" class="btn">Add</button>
-          </form>
+        <div class="page-header">
+          <div><div class="page-title">Rules <span class="text-sm text-muted" id="rules-total-count" style="font-weight:400"></span></div><div class="page-subtitle">Configure routing rules</div></div>
+          <div class="page-actions">
+            <button class="btn ghost sm" onclick="loadRules()">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              Refresh
+            </button>
+          </div>
         </div>
-        <div class="card" style="padding:0;overflow:hidden">
+
+        <div style="margin-bottom:12px">
+          <input type="text" id="rules-search" class="search-input" placeholder="Filter rules..." oninput="renderRules()">
+        </div>
+
+        <div class="table-wrap">
           <div id="rules-loading" class="loading"><div class="spinner"></div>Loading rules...</div>
           <table class="table" id="rules-table" style="display:none">
-            <thead><tr><th style="width:60px">#</th><th>Type</th><th>Value</th><th>Proxy</th><th style="width:80px">Op</th></tr></thead>
+            <thead><tr><th style="width:60px">#</th><th>Type</th><th>Value</th><th>Proxy</th></tr></thead>
             <tbody id="rules-list"></tbody>
           </table>
           <div id="rules-empty" class="empty-state" style="display:none">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
-            <p>No rules found</p>
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+            <p>No rules configured</p>
+            <div class="empty-action text-sm text-muted">Rules are managed via profile subscriptions</div>
+          </div>
+          <div id="rules-pagination" class="pagination" style="display:none">
+            <div class="pagination-info" id="rules-pagination-info"></div>
+            <div class="pagination-controls" id="rules-pagination-controls"></div>
           </div>
         </div>
-        <div id="rules-pagination" class="pagination" style="display:none"></div>
       </div>
 
-      <!-- Connections View -->
+      <!-- Connections -->
       <div class="view" id="view-connections">
-        <h2 class="mb-16">Connections</h2>
-        <div class="card">
-          <div class="stats-bar" id="conn-stats">
-            <div class="stat-item"><span class="stat-label">Total:</span><span class="stat-value" id="conn-total">0</span></div>
-            <div class="stat-item"><span class="stat-label">Upload:</span><span class="stat-value mono" id="conn-upload">0 B/s</span></div>
-            <div class="stat-item"><span class="stat-label">Download:</span><span class="stat-value mono" id="conn-download">0 B/s</span></div>
-            <div class="stat-item" style="margin-left:auto"><span class="stat-label">Refresh in:</span><span class="stat-value" id="conn-countdown">5s</span></div>
+        <div class="page-header">
+          <div><div class="page-title">Connections</div><div class="page-subtitle">Real-time network activity monitor</div></div>
+          <div class="page-actions">
+            <button class="btn ghost sm" id="btn-pause-conn" onclick="toggleConnPause()">
+              <svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              Pause
+            </button>
+            <button class="btn ghost sm" onclick="loadConnections()">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              Refresh
+            </button>
           </div>
         </div>
-        <div class="card" style="padding:0;overflow:hidden">
+
+        <div class="stat-grid" style="margin-bottom:20px">
+          <div class="stat-card">
+            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="conn-total">0</div><div class="stat-label">Total Connections</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon green"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="conn-upload">0 B/s</div><div class="stat-label">Upload Rate</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon yellow"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="conn-download">0 B/s</div><div class="stat-label">Download Rate</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon red"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="conn-countdown-text" style="font-size:14px">5s</div><div class="stat-label">Next Refresh</div></div>
+          </div>
+        </div>
+
+        <div class="table-wrap">
           <div id="conn-loading" class="loading"><div class="spinner"></div>Loading connections...</div>
           <table class="table" id="conn-table" style="display:none">
-            <thead><tr><th style="width:50px">#</th><th>Source</th><th>Target</th><th>Proxy</th><th style="width:90px">Upload</th><th style="width:90px">Download</th><th style="width:70px">Duration</th><th style="width:70px">Op</th></tr></thead>
+            <thead><tr><th style="width:50px">#</th><th>Source</th><th>Target</th><th>Proxy</th><th style="width:80px">Upload</th><th style="width:80px">Download</th><th style="width:70px">Duration</th><th style="width:70px">Action</th></tr></thead>
             <tbody id="conn-list"></tbody>
           </table>
           <div id="conn-empty" class="empty-state" style="display:none">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
             <p>No active connections</p>
+          </div>
+          <div id="conn-pagination" class="pagination" style="display:none">
+            <div class="pagination-info" id="conn-pagination-info"></div>
+            <div class="pagination-controls" id="conn-pagination-controls"></div>
           </div>
         </div>
       </div>
 
-      <!-- Settings View -->
+      <!-- Settings -->
       <div class="view" id="view-settings">
-        <h2 class="mb-16">Settings</h2>
-        <div style="display:grid;gap:24px;max-width:600px">
+        <div class="page-header">
+          <div><div class="page-title">Settings</div><div class="page-subtitle">Service configuration and system info</div></div>
+        </div>
+
+        <div style="max-width:640px">
           <div class="card">
-            <div class="card-title">Service Operations</div>
+            <div class="card-header"><div class="card-title">Service Operations</div></div>
             <div class="btn-group">
-              <button class="btn" onclick="restartService()">Restart Service</button>
-              <button class="btn danger" onclick="stopService()">Stop Service</button>
+              <button class="btn primary" onclick="restartService()">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Restart Service
+              </button>
+              <button class="btn danger" onclick="stopService()">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"/></svg>
+                Stop Service
+              </button>
             </div>
           </div>
+
           <div class="card">
-            <div class="card-title">Port Information</div>
-            <div class="flex flex-col gap-8">
-              <div class="flex justify-between"><span class="text2">HTTP Port</span><span class="mono" id="port-http">7890</span></div>
-              <div class="flex justify-between"><span class="text2">SOCKS5 Port</span><span class="mono" id="port-socks5">7891</span></div>
-              <div class="flex justify-between"><span class="text2">API Port</span><span class="mono" id="port-api">9090</span></div>
+            <div class="card-header"><div class="card-title">Port Information</div></div>
+            <div class="info-grid">
+              <div class="info-row"><span class="info-key">HTTP Port</span><span class="info-val" id="port-http">7890</span></div>
+              <div class="info-row"><span class="info-key">SOCKS5 Port</span><span class="info-val" id="port-socks5">7891</span></div>
+              <div class="info-row"><span class="info-key">API Port</span><span class="info-val" id="port-api">9090</span></div>
             </div>
           </div>
+
           <div class="card">
-            <div class="card-title">About</div>
-            <div class="flex flex-col gap-8">
-              <div class="flex justify-between"><span class="text2">Version</span><span class="mono">0.1.0</span></div>
-              <div class="flex justify-between"><span class="text2">Build</span><span class="mono">release</span></div>
+            <div class="card-header"><div class="card-title">About</div></div>
+            <div class="info-grid">
+              <div class="info-row"><span class="info-key">Version</span><span class="info-val" style="font-family:'JetBrains Mono',monospace">0.1.0</span></div>
+              <div class="info-row"><span class="info-key">Build</span><span class="info-val">release</span></div>
             </div>
           </div>
         </div>
       </div>
+
     </div>
   </main>
 </div>
 
-<!-- Toast -->
 <div class="toast" id="toast"></div>
 
-<!-- Delete Confirmation Modal -->
 <div class="modal" id="deleteModal">
   <div class="modal-content">
-    <h3 style="margin-bottom:16px">Confirm Delete</h3>
-    <p id="deleteModalText" style="color:var(--text2);margin-bottom:24px">Are you sure you want to delete this item?</p>
-    <div class="btn-group" style="justify-content:flex-end">
+    <div class="modal-header">
+      <h3 class="modal-title">Confirm Delete</h3>
+      <button class="modal-close" onclick="closeDeleteModal()" title="Close (ESC)">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="deleteModalText">Are you sure you want to delete this item?</div>
+    <div class="modal-footer">
       <button class="btn secondary" onclick="closeDeleteModal()">Cancel</button>
       <button class="btn danger" id="deleteModalBtn">Delete</button>
     </div>
   </div>
 </div>
 
+<div class="modal" id="cronModal">
+  <div class="modal-content" style="max-width:380px">
+    <div class="modal-header">
+      <h3 class="modal-title">Edit Update Schedule</h3>
+      <button class="modal-close" onclick="closeCronModal()" title="Close (ESC)">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p class="text-sm text-muted" style="margin-bottom:16px">Set how often this profile updates automatically (in minutes). Leave empty to disable.</p>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="number" id="cronMinutes" min="1" max="10080" placeholder="e.g. 60" style="width:120px">
+        <span class="text-muted text-sm">minutes</span>
+      </div>
+      <p class="text-sm text-muted" style="margin-top:8px">Valid range: 1–10080 (max 1 week)</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn secondary" onclick="closeCronModal()">Cancel</button>
+      <button class="btn" id="cronModalSaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
-// State
-let currentView = 'dashboard';
+const PROXY_PAGE_SIZE = 50;
+const PROFILE_PAGE_SIZE = 50;
+const CONN_PAGE_SIZE = 50;
+const LS_PROXY_LATENCIES = 'ct_proxy_latencies';
+const LS_PROXY_FILTER = 'ct_proxy_filter';
+
 let proxies = [];
 let filteredProxies = [];
+let proxyPage = 1;
+let proxyData = null; // full proxies response for selected proxy card
 let profiles = [];
+let profilePage = 1;
+let profilePageSize = PROFILE_PAGE_SIZE;
 let currentProfileUid = null;
 let rules = [];
 let rulesPage = 1;
 const rulesPerPage = 50;
 let connections = [];
+let connPage = 1;
+const connPageSize = CONN_PAGE_SIZE;
 let connRefreshInterval = null;
 let connCountdown = 5;
 let connPaused = false;
+let currentMode = '';
 
-// API helper
+function saveProxyLatencies() {
+  const m = {};
+  proxies.forEach(p => { if (p.latency !== null) m[p.name] = p.latency; });
+  try { localStorage.setItem(LS_PROXY_LATENCIES, JSON.stringify(m)); } catch (_) {}
+}
+
+function loadProxyLatencies() {
+  try {
+    const s = localStorage.getItem(LS_PROXY_LATENCIES);
+    return s ? JSON.parse(s) : {};
+  } catch (_) { return {}; }
+}
+
+function saveProxyFilter(q) {
+  try { localStorage.setItem(LS_PROXY_FILTER, q); } catch (_) {}
+}
+
+function loadProxyFilter() {
+  try { return localStorage.getItem(LS_PROXY_FILTER) || ''; } catch (_) { return ''; }
+}
+
 async function api(method, path, body) {
   const opts = { method, headers: {'Content-Type': 'application/json'} };
   if (body) opts.body = JSON.stringify(body);
@@ -423,327 +693,369 @@ async function api(method, path, body) {
   return json.data;
 }
 
-// Toast
 function showToast(msg, type = 'success') {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.className = `toast ${type} show`;
-  setTimeout(() => t.classList.remove('show'), 3000);
+  setTimeout(() => t.classList.remove('show'), 3500);
 }
 
-// Navigation
 document.querySelectorAll('.nav-item').forEach(el => {
-  el.addEventListener('click', () => {
-    const view = el.dataset.view;
-    switchView(view);
-  });
+  el.addEventListener('click', () => { switchView(el.dataset.view); });
 });
 
 function switchView(view) {
-  currentView = view;
-  document.querySelectorAll('.nav-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.view === view);
-  });
-  document.querySelectorAll('.view').forEach(el => {
-    el.classList.toggle('active', el.id === `view-${view}`);
-  });
-
-  // Load data for view
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.view === view));
+  document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === `view-${view}`));
+  stopConnections();
   if (view === 'dashboard') loadDashboard();
-  else if (view === 'proxies') loadProxies();
+  else if (view === 'proxies') { loadProxyLatencies(); loadProxies(); }
   else if (view === 'profiles') loadProfiles();
   else if (view === 'rules') loadRules();
   else if (view === 'connections') startConnections();
-  else stopConnections();
 }
 
-// Format bytes
 function formatBytes(b) {
   if (b === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const k = 1024, sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(b) / Math.log(k));
   return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
-// Format duration
 function formatDuration(s) {
   if (s < 60) return s + 's';
   if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
   return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function truncate(s, len) { return (s && s.length > len) ? s.slice(0, len) + '...' : (s || '-'); }
+
 // Dashboard
 async function loadDashboard() {
   try {
     const status = await api('GET', '/api/status');
-    const mode = await api('GET', '/api/mode');
-
-    document.getElementById('headerStatus').className = 'status-dot' + (status.running ? '' : ' stopped');
+    const dot = document.getElementById('headerStatus');
+    dot.className = 'status-dot' + (status.running ? ' running' : ' stopped');
+    dot.title = status.running ? 'Service Running' : 'Service Stopped';
+    const sb = document.getElementById('dash-status-badge');
+    sb.className = status.running ? 'badge success' : 'badge danger';
+    sb.textContent = status.running ? 'Running' : 'Stopped';
     document.getElementById('dash-status').textContent = status.running ? 'Running' : 'Stopped';
-    document.getElementById('dash-uptime').textContent = status.running && status.uptime_secs
-      ? 'Uptime: ' + formatDuration(status.uptime_secs)
-      : '';
-    document.getElementById('dash-mode').textContent = mode ? mode.toUpperCase() : 'Unknown';
-
+    document.getElementById('dash-uptime').textContent = status.running && status.uptime_secs ? 'Uptime: ' + formatDuration(status.uptime_secs) : '';
     document.getElementById('btn-start').disabled = status.running;
     document.getElementById('btn-stop').disabled = !status.running;
 
-    // Get proxy info from proxies
-    try {
-      const proxyData = await api('GET', '/api/proxies');
-      const proxyNames = Object.keys(proxyData.proxies || {});
-      const globalProxy = proxyData.proxies?.GLOBAL;
-      const currentProxy = globalProxy?.now || '-';
-      document.getElementById('dash-proxy').textContent = currentProxy;
-
-      // Count online nodes (proxies that are not DIRECT or REJECT)
-      const onlineNodes = proxyNames.filter(n => !['GLOBAL', 'DIRECT', 'REJECT', 'FALLBACK'].includes(n)).length;
-      document.getElementById('dash-nodes').textContent = onlineNodes;
-    } catch (e) {
+    if (!status.running) {
+      // Service is stopped: skip Mihomo API calls, show defaults
+      document.getElementById('dash-mode').textContent = '-';
       document.getElementById('dash-proxy').textContent = '-';
       document.getElementById('dash-nodes').textContent = '-';
+      document.getElementById('dash-connections').textContent = '0';
+      // Don't clear currentMode; preserve last known mode so button stays highlighted
+      ['rule','global','direct'].forEach(m => {
+        const btn = document.getElementById('btn-mode-' + m);
+        if (btn) btn.className = 'btn ' + (m === currentMode ? 'primary' : 'secondary');
+      });
+      return;
     }
 
-    // Get connections count
-    try {
-      const connData = await api('GET', '/api/connections');
-      const count = (connData.connections || []).length;
-      document.getElementById('dash-connections').textContent = count;
-    } catch (e) {
-      document.getElementById('dash-connections').textContent = '-';
+    // Service is running: fetch Mihomo data
+    let mode = '';
+    try { mode = await api('GET', '/api/mode'); } catch (_) {}
+    document.getElementById('dash-mode').textContent = mode ? mode.toUpperCase() : (currentMode ? currentMode.toUpperCase() : '-');
+    if (mode) {
+      currentMode = mode;
+      ['rule','global','direct'].forEach(m => {
+        const btn = document.getElementById('btn-mode-' + m);
+        if (btn) btn.className = 'btn ' + (m === currentMode ? 'primary' : 'secondary');
+      });
     }
-  } catch (e) {
-    showToast('Failed to load dashboard: ' + e.message, 'error');
-  }
+
+    try {
+      const pd = await api('GET', '/api/proxies');
+      const names = Object.keys(pd.proxies || {});
+      const cur = pd.proxies?.GLOBAL?.now || '-';
+      document.getElementById('dash-proxy').textContent = cur;
+      document.getElementById('dash-nodes').textContent = names.filter(n => !['GLOBAL','DIRECT','REJECT','FALLBACK'].includes(n)).length;
+    } catch (_) { document.getElementById('dash-proxy').textContent = '-'; document.getElementById('dash-nodes').textContent = '-'; }
+    try {
+      const cd = await api('GET', '/api/connections');
+      document.getElementById('dash-connections').textContent = (cd.connections || []).length;
+    } catch (_) { document.getElementById('dash-connections').textContent = '-'; }
+  } catch (e) { showToast('Failed to load dashboard: ' + e.message, 'error'); }
 }
 
 async function startService() {
-  try {
-    await api('POST', '/api/service/start');
-    showToast('Service started');
-    loadDashboard();
-  } catch (e) {
-    showToast('Failed to start: ' + e.message, 'error');
-  }
+  try { await api('POST', '/api/service/start'); showToast('Service started'); setTimeout(() => location.reload(), 1500); }
+  catch (e) { showToast('Failed to start: ' + e.message, 'error'); }
 }
 
 async function stopService() {
-  try {
-    await api('POST', '/api/service/stop');
-    showToast('Service stopped');
-    loadDashboard();
-  } catch (e) {
-    showToast('Failed to stop: ' + e.message, 'error');
-  }
+  try { await api('POST', '/api/service/stop'); showToast('Service stopped'); setTimeout(() => location.reload(), 1500); }
+  catch (e) { showToast('Failed to stop: ' + e.message, 'error'); }
 }
 
 async function setMode(mode) {
   try {
     await api('POST', '/api/mode', { mode });
     showToast('Mode set to ' + mode);
-    loadDashboard();
-  } catch (e) {
-    showToast('Failed to set mode: ' + e.message, 'error');
-  }
+    // Update currentMode, button styles, and dashboard card immediately
+    currentMode = mode;
+    const dashMode = document.getElementById('dash-mode');
+    if (dashMode) dashMode.textContent = mode.toUpperCase();
+    ['rule','global','direct'].forEach(m => {
+      const btn = document.getElementById('btn-mode-' + m);
+      if (btn) btn.className = 'btn ' + (m === currentMode ? 'primary' : 'secondary');
+    });
+  } catch (e) { showToast('Failed to set mode: ' + e.message, 'error'); }
 }
 
 // Proxies
 async function loadProxies() {
-  const loading = document.getElementById('proxy-loading');
-  const table = document.getElementById('proxy-table');
-  const empty = document.getElementById('proxy-empty');
-
-  loading.style.display = 'block';
-  table.style.display = 'none';
-  empty.style.display = 'none';
-
+  const l = document.getElementById('proxy-loading'), t = document.getElementById('proxy-table'), e = document.getElementById('proxy-empty');
+  l.style.display = 'flex'; t.style.display = 'none'; e.style.display = 'none';
+  document.getElementById('proxy-pagination').style.display = 'none';
+  document.getElementById('proxy-selected-card').style.display = 'none';
   try {
     const data = await api('GET', '/api/proxies');
     proxies = [];
-
-    // Parse Mihomo proxy format
-    const proxyList = data.proxies || {};
-    const globalNow = proxyList.GLOBAL?.now || '';
-
-    for (const [name, info] of Object.entries(proxyList)) {
-      if (['GLOBAL', 'DIRECT', 'REJECT', 'FALLBACK'].includes(name)) continue;
-      proxies.push({
-        name,
-        type: info.type || 'unknown',
-        latency: null,
-        selected: name === globalNow
-      });
+    proxyData = data; // store full response for selected proxy card
+    const pl = data.proxies || {}, globalNow = pl.GLOBAL?.now || '';
+    // Restore latencies from localStorage
+    const savedLatencies = loadProxyLatencies();
+    let idx = 0;
+    for (const [name, info] of Object.entries(pl)) {
+      if (['GLOBAL','DIRECT','REJECT','FALLBACK'].includes(name)) continue;
+      proxies.push({ idx: idx++, name, type: info.type || 'unknown', latency: savedLatencies[name] ?? null, udp: info.udp || false, tfo: info.tfo || false, selected: name === globalNow });
     }
-
-    // Get latency for each proxy
-    const latencyPromises = proxies.map(async (p) => {
-      try {
-        const delayData = await api('GET', `/api/proxies/${encodeURIComponent(p.name)}/delay?timeout=5000`);
-        p.latency = delayData.delay;
-      } catch (e) {
-        p.latency = null;
-      }
-    });
-
-    await Promise.allSettled(latencyPromises);
-
-    // Sort by latency (null at end)
-    proxies.sort((a, b) => {
-      if (a.latency === null && b.latency === null) return a.name.localeCompare(b.name);
-      if (a.latency === null) return 1;
-      if (b.latency === null) return -1;
-      return a.latency - b.latency;
-    });
-
-    filteredProxies = [...proxies];
+    // Restore filter from localStorage
+    const savedFilter = loadProxyFilter();
+    document.getElementById('proxy-search').value = savedFilter;
+    filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(savedFilter.toLowerCase()));
+    proxyPage = 1;
+    // Update selected proxy card
+    if (globalNow && pl[globalNow]) {
+      const sel = pl[globalNow];
+      document.getElementById('proxy-sel-name').textContent = globalNow;
+      document.getElementById('proxy-sel-type').textContent = (sel.type || '').toUpperCase();
+      const lat = savedLatencies[globalNow] ?? null;
+      document.getElementById('proxy-sel-latency').textContent = lat !== null ? lat + 'ms' : 'Timeout';
+      document.getElementById('proxy-sel-latency').className = 'badge ' + (lat !== null ? (lat < 100 ? 'success' : lat < 300 ? 'warning' : 'danger') : '');
+      document.getElementById('proxy-selected-card').style.display = 'block';
+    }
     renderProxies();
-  } catch (e) {
-    loading.style.display = 'none';
-    empty.style.display = 'block';
-    showToast('Failed to load proxies: ' + e.message, 'error');
-  }
+  } catch (err) { l.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load proxies'; }
 }
 
 function filterProxies() {
-  const q = document.getElementById('proxy-search').value.toLowerCase();
-  filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(q));
+  const q = document.getElementById('proxy-search').value;
+  saveProxyFilter(q);
+  filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(q.toLowerCase()));
+  proxyPage = 1;
   renderProxies();
 }
 
 function renderProxies() {
-  const loading = document.getElementById('proxy-loading');
-  const table = document.getElementById('proxy-table');
-  const empty = document.getElementById('proxy-empty');
-
+  const l = document.getElementById('proxy-loading'), t = document.getElementById('proxy-table'), e = document.getElementById('proxy-empty'), pg = document.getElementById('proxy-pagination');
   if (filteredProxies.length === 0) {
-    loading.style.display = 'none';
-    table.style.display = 'none';
-    empty.style.display = 'block';
+    l.style.display = 'none'; t.style.display = 'none'; pg.style.display = 'none';
+    e.style.display = 'block';
+    const searchQ = document.getElementById('proxy-search').value;
+    if (searchQ && proxies.length > 0) {
+      e.querySelector('p').textContent = `No proxies match "${searchQ}"`;
+    } else {
+      e.querySelector('p').textContent = 'No proxy nodes found';
+    }
     return;
   }
-
-  loading.style.display = 'none';
-  table.style.display = 'table';
-  empty.style.display = 'none';
-
-  const tbody = document.getElementById('proxy-list');
-  tbody.innerHTML = filteredProxies.map((p, i) => {
-    const latencyClass = p.latency === null ? 'latency-timeout'
-      : p.latency < 100 ? 'latency-good'
-      : p.latency < 300 ? 'latency-medium'
-      : 'latency-bad';
-    const latencyText = p.latency === null ? 'Timeout' : p.latency + 'ms';
-    const selectedBadge = p.selected ? '<span class="badge info">Selected</span>' : '';
-
-    return `<tr onclick="selectProxy('${escapeHtml(p.name)}')" style="cursor:pointer">
-      <td><span class="mono">${escapeHtml(p.name)}</span></td>
+  l.style.display = 'none'; t.style.display = 'table'; e.style.display = 'none';
+  const totalPages = Math.max(1, Math.ceil(filteredProxies.length / PROXY_PAGE_SIZE));
+  if (proxyPage > totalPages) proxyPage = totalPages;
+  const start = (proxyPage - 1) * PROXY_PAGE_SIZE;
+  const items = filteredProxies.slice(start, start + PROXY_PAGE_SIZE);
+  document.getElementById('proxy-count').textContent = `${filteredProxies.length} of ${proxies.length} nodes`;
+  document.getElementById('proxy-list').innerHTML = items.map((p) => {
+    const lc = p.latency === null ? 'latency-timeout' : p.latency < 100 ? 'latency-good' : p.latency < 300 ? 'latency-medium' : 'latency-bad';
+    const lt = (p.latency !== null && typeof p.latency === 'number') ? p.latency + 'ms' : 'Timeout';
+    // Status: show UDP/TFO badges if enabled
+    const statusBadges = (p.udp ? '<span class="badge" style="background:#0ea5e9;color:#fff;font-size:10px;margin-right:2px">UDP</span>' : '') +
+                         (p.tfo ? '<span class="badge" style="background:#8b5cf6;color:#fff;font-size:10px">TFO</span>' : '');
+    const selBadge = p.selected ? '<span class="badge info">Selected</span>' : '';
+    const statusContent = statusBadges || selBadge || '';
+    const name = escapeHtml(p.name);
+    const selBtnClass = p.selected ? 'btn xs secondary disabled' : 'btn xs primary';
+    const selBtnTxt = p.selected ? '✓' : '◉';
+    return `<tr class="cell-clickable" onclick="selectProxy('${escapeHtml(p.name)}')" title="Click to select ${name}">
+      <td class="text-muted" style="font-size:12px;text-align:center">${p.idx + 1}</td>
+      <td><span class="mono">${name}</span></td>
       <td>${escapeHtml(p.type)}</td>
-      <td class="${latencyClass} mono">${latencyText}</td>
-      <td>${selectedBadge}</td>
+      <td class="${lc} mono">${lt}</td>
+      <td>${statusContent}</td>
+      <td>
+        <button class="btn xs secondary" onclick="event.stopPropagation();testProxy(${p.idx})" title="Test latency" style="width:28px;padding:0;text-align:center">⚡</button>
+        <button class="${selBtnClass}" onclick="event.stopPropagation();selectProxy('${escapeHtml(p.name)}')" title="${p.selected ? 'Selected' : 'Select ' + name}" style="width:28px;padding:0;text-align:center">${selBtnTxt}</button>
+      </td>
     </tr>`;
   }).join('');
+  pg.style.display = 'flex';
+  document.getElementById('proxy-pagination-info').textContent = `Showing ${start + 1}-${Math.min(start + PROXY_PAGE_SIZE, filteredProxies.length)} of ${filteredProxies.length}`;
+  document.getElementById('proxy-pagination-controls').innerHTML =
+    `<button class="page-btn nav" onclick="goProxyPage(${proxyPage - 1})" ${proxyPage === 1 ? 'disabled' : ''}>‹</button>` +
+    (proxyPage > 1 ? `<button class="page-btn" onclick="goProxyPage(${proxyPage - 1})">${proxyPage - 1}</button>` : '') +
+    `<button class="page-btn active">${proxyPage}</button>` +
+    (proxyPage < totalPages ? `<button class="page-btn" onclick="goProxyPage(${proxyPage + 1})">${proxyPage + 1}</button>` : '') +
+    `<button class="page-btn nav" onclick="goProxyPage(${proxyPage + 1})" ${proxyPage >= totalPages ? 'disabled' : ''}>›</button>`;
 }
+
+function goProxyPage(p) { proxyPage = p; renderProxies(); }
 
 async function selectProxy(name) {
   try {
     await api('POST', '/api/proxies/select', { name });
     showToast(`Selected: ${name}`);
-    loadProxies();
+    // Update proxies list with new selection, preserving current page
+    const pl = proxyData?.proxies || {};
+    const globalNow = name; // we just selected this
+    proxies.forEach(p => p.selected = p.name === globalNow);
+    filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(document.getElementById('proxy-search').value.toLowerCase()));
+    // Update selected proxy card
+    const selProxy = proxies.find(p => p.name === globalNow);
+    if (selProxy) {
+      document.getElementById('proxy-sel-name').textContent = globalNow;
+      document.getElementById('proxy-sel-type').textContent = (selProxy.type || '').toUpperCase();
+      const lat = selProxy.latency;
+      const latEl = document.getElementById('proxy-sel-latency');
+      if (lat !== null && lat !== undefined) {
+        latEl.textContent = lat + 'ms';
+        latEl.className = 'badge ' + (lat < 100 ? 'success' : lat < 300 ? 'warning' : 'danger');
+      } else {
+        latEl.textContent = 'Timeout';
+        latEl.className = 'badge danger';
+      }
+      document.getElementById('proxy-selected-card').style.display = 'block';
+    }
+    renderProxies();
     loadDashboard();
+  } catch (e) { showToast('Failed to select proxy: ' + e.message, 'error'); }
+}
+
+// Test latency for a single proxy (by global index to avoid emoji URL encoding issues)
+async function testProxy(idx) {
+  try {
+    const d = await api('POST', '/api/proxies/delay', { name: String(idx), timeout: 5000 });
+    const latency = (d && typeof d.delay === 'number') ? d.delay : null;
+    // Update in proxies array by index
+    if (proxies[idx]) proxies[idx].latency = latency;
+    if (filteredProxies[idx]) filteredProxies[idx].latency = latency;
+    saveProxyLatencies();
+    // Update selected card if this is the selected proxy
+    const selName = proxyData?.proxies?.GLOBAL?.now;
+    if (proxies[idx] && proxies[idx].name === selName) {
+      const latEl = document.getElementById('proxy-sel-latency');
+      if (latency !== null) {
+        latEl.textContent = latency + 'ms';
+        latEl.className = 'badge ' + (latency < 100 ? 'success' : latency < 300 ? 'warning' : 'danger');
+      } else {
+        latEl.textContent = 'Timeout';
+        latEl.className = 'badge danger';
+      }
+    }
+    showToast(latency !== null ? `Latency: ${latency}ms` : 'Timeout');
+    renderProxies();
   } catch (e) {
-    showToast('Failed to select proxy: ' + e.message, 'error');
+    // On failure, ensure latency is null (not leftover stale value)
+    if (proxies[idx]) proxies[idx].latency = null;
+    if (filteredProxies[idx]) filteredProxies[idx].latency = null;
+    saveProxyLatencies();
+    showToast(`Timeout`, 'error');
+    renderProxies();
   }
 }
 
-function escapeHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+// Test latency for all filtered proxies
+async function testAllLatency() {
+  const btn = document.getElementById('btn-test-all');
+  btn.disabled = true;
+  btn.textContent = 'Testing...';
+  try {
+    const tasks = filteredProxies.map(async (p) => {
+      try {
+        const d = await api('POST', '/api/proxies/delay', { name: String(p.idx), timeout: 5000 });
+        p.latency = (d && typeof d.delay === 'number') ? d.delay : null;
+      } catch (_) { p.latency = null; }
+    });
+    await Promise.allSettled(tasks);
+    saveProxyLatencies();
+    // Re-sort by latency
+    proxies.sort((a, b) => {
+      if (a.latency === null && b.latency === null) return a.name.localeCompare(b.name);
+      if (a.latency === null) return 1; if (b.latency === null) return -1;
+      return a.latency - b.latency;
+    });
+    filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(document.getElementById('proxy-search').value.toLowerCase()));
+    showToast('Latency test completed');
+    renderProxies();
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> Test All';
+  }
 }
 
 // Profiles
 async function loadProfiles() {
-  const loading = document.getElementById('profiles-loading');
-  const table = document.getElementById('profiles-table');
-  const empty = document.getElementById('profiles-empty');
-
-  loading.style.display = 'block';
-  table.style.display = 'none';
-  empty.style.display = 'none';
-
+  const l = document.getElementById('profiles-loading'), t = document.getElementById('profiles-table'), e = document.getElementById('profiles-empty');
+  l.style.display = 'flex'; t.style.display = 'none'; e.style.display = 'none';
+  document.getElementById('profiles-pagination').style.display = 'none';
   try {
     const data = await api('GET', '/api/profiles');
-    profiles = data || [];
+    profiles = data?.items || [];
+    currentProfileUid = data?.current || null;
+    profilePage = 1;
     renderProfiles();
-  } catch (e) {
-    loading.style.display = 'none';
-    empty.style.display = 'block';
-    showToast('Failed to load profiles: ' + e.message, 'error');
-  }
+  } catch (_) { l.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load profiles'; }
 }
 
 function renderProfiles() {
-  const loading = document.getElementById('profiles-loading');
-  const table = document.getElementById('profiles-table');
-  const empty = document.getElementById('profiles-empty');
-
-  if (profiles.length === 0) {
-    loading.style.display = 'none';
-    table.style.display = 'none';
-    empty.style.display = 'block';
-    return;
-  }
-
-  loading.style.display = 'none';
-  table.style.display = 'table';
-  empty.style.display = 'none';
-
-  // Get current profile from config
-  api('GET', '/api/config').then(config => {
-    currentProfileUid = config?.current_profile || null;
-    renderProfileRows();
-  }).catch(() => {
-    currentProfileUid = null;
-    renderProfileRows();
-  });
-}
-
-function renderProfileRows() {
-  const tbody = document.getElementById('profiles-list');
-  tbody.innerHTML = profiles.map(p => {
+  const l = document.getElementById('profiles-loading'), t = document.getElementById('profiles-table'), e = document.getElementById('profiles-empty'), pg = document.getElementById('profiles-pagination');
+  if (profiles.length === 0) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; pg.style.display = 'none'; document.getElementById('profiles-total-count').textContent = ''; return; }
+  l.style.display = 'none'; t.style.display = 'table'; e.style.display = 'none';
+  const totalPages = Math.max(1, Math.ceil(profiles.length / profilePageSize));
+  if (profilePage > totalPages) profilePage = totalPages;
+  const start = (profilePage - 1) * profilePageSize;
+  const items = profiles.slice(start, start + profilePageSize);
+  document.getElementById('profiles-list').innerHTML = items.map(p => {
     const isActive = p.uid === currentProfileUid;
-    const status = isActive
-      ? '<span class="badge success">Active</span>'
-      : '<span class="badge">Inactive</span>';
-    const activeClass = isActive ? 'profile-active' : '';
-
-    return `<tr class="${activeClass}">
-      <td>${escapeHtml(p.name || 'Unnamed')}</td>
-      <td class="truncate" title="${escapeHtml(p.url || '')}">${escapeHtml(p.url || '-')}</td>
-      <td>${status}</td>
-      <td>
-        <div class="btn-group" style="gap:4px">
-          ${!isActive ? `<button class="btn sm success" onclick="activateProfile('${p.uid}')">Activate</button>` : ''}
-          <button class="btn sm danger" onclick="deleteProfile('${p.uid}')">Delete</button>
-        </div>
-      </td>
+    const st = isActive ? '<span class="badge success">Active</span>' : '<span class="badge neutral">Inactive</span>';
+    return `<tr>
+      <td><span style="font-weight:500">${escapeHtml(p.name || 'Unnamed')}</span></td>
+      <td><span class="mono truncate" style="max-width:280px;display:block" title="${escapeHtml(p.url || '')}">${escapeHtml(p.url || '-')}</span></td>
+      <td>${st}</td>
+      <td>${isActive && p.cron ? `<span class="mono text-sm">${escapeHtml(p.cron)} min</span>` : '<span class="text-muted text-sm">-</span>'}</td>
+      <td><div class="btn-group" style="gap:6px">${isActive ? `<button class="btn xs" onclick="openCronModal('${p.uid.replace(/'/g, "\\'")}','${escapeHtml(p.cron || '')}')" title="Edit update schedule">Edit</button>` : ''}${!isActive ? `<button class="btn xs success" onclick="activateProfile('${p.uid.replace(/'/g, "\\'")}')" title="Activate this profile">Activate</button>` : ''}<button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${p.uid}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
     </tr>`;
   }).join('');
+  pg.style.display = 'flex';
+  document.getElementById('profiles-pagination-info').textContent = `Showing ${start + 1}-${Math.min(start + profilePageSize, profiles.length)} of ${profiles.length}`;
+  document.getElementById('profiles-total-count').textContent = profiles.length > 0 ? `(${profiles.length})` : '';
+  document.getElementById('profiles-pagination-controls').innerHTML =
+    `<button class="page-btn nav" onclick="goProfilePage(${profilePage - 1})" ${profilePage === 1 ? 'disabled' : ''}>‹</button>` +
+    (profilePage > 1 ? `<button class="page-btn" onclick="goProfilePage(${profilePage - 1})">${profilePage - 1}</button>` : '') +
+    `<button class="page-btn active">${profilePage}</button>` +
+    (profilePage < totalPages ? `<button class="page-btn" onclick="goProfilePage(${profilePage + 1})">${profilePage + 1}</button>` : '') +
+    `<button class="page-btn nav" onclick="goProfilePage(${profilePage + 1})" ${profilePage >= totalPages ? 'disabled' : ''}>›</button>`;
 }
+
+function goProfilePage(p) { profilePage = p; renderProfiles(); }
 
 async function addProfile(e) {
   e.preventDefault();
-  const url = document.getElementById('profile-url').value;
-  const name = document.getElementById('profile-name').value;
-
-  try {
-    await api('POST', '/api/profiles', { url, name: name || undefined });
-    showToast('Profile added');
-    document.getElementById('profile-url').value = '';
-    document.getElementById('profile-name').value = '';
-    loadProfiles();
-  } catch (e) {
-    showToast('Failed to add profile: ' + e.message, 'error');
-  }
+  const url = document.getElementById('profile-url').value, name = document.getElementById('profile-name').value;
+  try { await api('POST', '/api/profiles', { url, name: name || undefined }); showToast('Profile added'); document.getElementById('profile-url').value = ''; document.getElementById('profile-name').value = ''; loadProfiles(); }
+  catch (e) { showToast('Failed to add: ' + e.message, 'error'); }
 }
 
 async function activateProfile(uid) {
@@ -751,257 +1063,190 @@ async function activateProfile(uid) {
     await api('POST', `/api/profiles/${uid}/activate`);
     showToast('Profile activated');
     loadProfiles();
-  } catch (e) {
-    showToast('Failed to activate profile: ' + e.message, 'error');
+    // Refresh proxies and rules since new profile may have different nodes and rules
+    if (document.getElementById('proxies-view')) loadProxies();
+    if (document.getElementById('rules-view')) loadRules();
+    loadDashboard();
   }
+  catch (e) { showToast('Failed to activate: ' + e.message, 'error'); }
 }
 
-let deleteTarget = null;
-let deleteType = null;
+// Profiles
+function deleteProfile(uid) { document.getElementById('deleteModalText').textContent = 'Are you sure you want to delete this profile? This action cannot be undone.'; document.getElementById('deleteModalBtn').dataset.target = uid; document.getElementById('deleteModal').classList.add('show'); }
 
-function deleteProfile(uid) {
-  deleteTarget = uid;
-  deleteType = 'profile';
-  document.getElementById('deleteModalText').textContent = 'Are you sure you want to delete this profile?';
-  document.getElementById('deleteModal').classList.add('show');
-}
 
 document.getElementById('deleteModalBtn').addEventListener('click', async () => {
-  if (!deleteTarget) return;
+  const target = document.getElementById('deleteModalBtn').dataset.target;
+  if (!target) return;
   closeDeleteModal();
-
-  if (deleteType === 'profile') {
-    try {
-      await api('DELETE', `/api/profiles/${deleteTarget}`);
-      showToast('Profile deleted');
-      loadProfiles();
-    } catch (e) {
-      showToast('Failed to delete: ' + e.message, 'error');
-    }
-  }
+  try { await api('DELETE', `/api/profiles/${target}`); showToast('Profile deleted'); loadProfiles(); }
+  catch (e) { showToast('Failed to delete: ' + e.message, 'error'); }
 });
 
-function closeDeleteModal() {
-  document.getElementById('deleteModal').classList.remove('show');
-  deleteTarget = null;
-  deleteType = null;
+function closeDeleteModal() { document.getElementById('deleteModal').classList.remove('show'); document.getElementById('deleteModalBtn').dataset.target = ''; }
+
+let cronEditUid = '';
+function openCronModal(uid, currentCron) {
+  cronEditUid = uid;
+  console.log('openCronModal uid:', uid, 'currentCron:', currentCron);
+  document.getElementById('cronMinutes').value = currentCron || '';
+  document.getElementById('cronModal').classList.add('show');
+  document.getElementById('cronMinutes').focus();
 }
+function closeCronModal() { document.getElementById('cronModal').classList.remove('show'); cronEditUid = ''; }
+
+document.getElementById('cronModalSaveBtn').addEventListener('click', async () => {
+  if (!cronEditUid) { console.error('cronEditUid is empty'); return; }
+  const val = document.getElementById('cronMinutes').value.trim();
+  const cron = val ? String(val) : '';
+  console.log('PATCH /api/profiles/' + cronEditUid, { cron: cron || null });
+  closeCronModal();
+  try {
+    const res = await fetch('/api/profiles/' + cronEditUid, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ cron: cron || null }) });
+    console.log('PATCH status:', res.status, 'body:', await res.text());
+    const json = await res.json();
+    if (json.code !== 0) throw new Error(json.message);
+    showToast('Update schedule saved');
+    loadProfiles();
+  } catch (e) { console.error('cron save error:', e); showToast('Failed: ' + e.message, 'error'); }
+});
+
+document.getElementById('cronMinutes').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cronModalSaveBtn').click(); });
 
 // Rules
 async function loadRules() {
-  const loading = document.getElementById('rules-loading');
-  const table = document.getElementById('rules-table');
-  const empty = document.getElementById('rules-empty');
-
-  loading.style.display = 'block';
-  table.style.display = 'none';
-  empty.style.display = 'none';
-
-  try {
-    const data = await api('GET', '/api/rules');
-    rules = data || [];
-    renderRules();
-  } catch (e) {
-    rules = [];
-    loading.style.display = 'none';
-    empty.style.display = 'block';
-    document.getElementById('rules-empty').querySelector('p').textContent = 'Failed to load rules';
-  }
+  const l = document.getElementById('rules-loading'), t = document.getElementById('rules-table'), e = document.getElementById('rules-empty');
+  l.style.display = 'flex'; t.style.display = 'none'; e.style.display = 'none';
+  document.getElementById('rules-pagination').style.display = 'none';
+  try { rules = (await api('GET', '/api/rules')) || []; rulesPage = 1; renderRules(); }
+  catch (_) { rules = []; l.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load rules'; }
 }
 
 function renderRules() {
-  const loading = document.getElementById('rules-loading');
-  const table = document.getElementById('rules-table');
-  const empty = document.getElementById('rules-empty');
-  const pagination = document.getElementById('rules-pagination');
-
-  if (rules.length === 0) {
-    loading.style.display = 'none';
-    table.style.display = 'none';
-    empty.style.display = 'block';
-    pagination.style.display = 'none';
-    return;
-  }
-
-  loading.style.display = 'none';
-  table.style.display = 'table';
-  empty.style.display = 'none';
-
-  const totalPages = Math.ceil(rules.length / rulesPerPage);
-  const start = (rulesPage - 1) * rulesPerPage;
-  // Reverse for display: newest rule first (idx 1)
-  const pageRules = [...rules].reverse().slice(start, start + rulesPerPage);
-  // originalIdx maps display position back to rules[] index for delete API
-  const pageOriginalIdx = pageRules.map((_, i) => rules.length - (start + i));
-
-  const tbody = document.getElementById('rules-list');
-  tbody.innerHTML = pageRules.map((r, i) => {
-    const idx = start + i + 1;
-    // Rules are "TYPE,VALUE,PROXY" strings
+  const l = document.getElementById('rules-loading'), t = document.getElementById('rules-table'), e = document.getElementById('rules-empty'), pg = document.getElementById('rules-pagination');
+  const q = document.getElementById('rules-search').value.toLowerCase();
+  const filtered = q ? rules.filter(r => {
     const parts = typeof r === 'string' ? r.split(',') : [];
-    const ruleType = parts[0] || '';
-    const ruleValue = parts.slice(1, -1).join(',');
-    const ruleProxy = parts[parts.length - 1] || '';
-    return `<tr>
-      <td class="mono">${idx}</td>
-      <td>${escapeHtml(ruleType)}</td>
-      <td class="truncate" style="max-width:300px" title="${escapeHtml(ruleValue)}">${escapeHtml(ruleValue)}</td>
-      <td>${escapeHtml(ruleProxy)}</td>
-      <td><button class="btn sm danger" onclick="deleteRule(${pageOriginalIdx[i] + 1})">X</button></td>
-    </tr>`;
+    return parts.join(',').toLowerCase().includes(q);
+  }) : rules;
+  if (rules.length === 0) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; pg.style.display = 'none'; document.getElementById('rules-total-count').textContent = ''; return; }
+  l.style.display = 'none'; t.style.display = 'table'; e.style.display = 'none';
+  const totalPages = Math.max(1, Math.ceil(filtered.length / rulesPerPage));
+  if (rulesPage > totalPages) rulesPage = totalPages;
+  const start = (rulesPage - 1) * rulesPerPage;
+  const pageRules = [...filtered].reverse().slice(start, start + rulesPerPage);
+  const pageOrigIdx = pageRules.map((_, i) => {
+    const reversedIdx = filtered.length - 1 - (start + i);
+    const ruleItem = rules.indexOf(filtered[reversedIdx]);
+    return ruleItem >= 0 ? ruleItem + 1 : reversedIdx + 1;
+  });
+  document.getElementById('rules-list').innerHTML = pageRules.map((r, i) => {
+    const idx = start + i + 1, parts = typeof r === 'string' ? r.split(',') : [];
+    const rt = parts[0] || '', rv = parts.slice(1, -1).join(','), rp = parts[parts.length - 1] || '';
+    const rb = rt === 'RULE-SET' ? 'info' : 'neutral';
+    return `<tr><td class="mono text-muted">${idx}</td><td><span class="badge ${rb}">${escapeHtml(rt)}</span></td><td><span class="truncate" style="max-width:300px;display:block" title="${escapeHtml(rv)}">${escapeHtml(rv)}</span></td><td><span class="mono">${escapeHtml(rp)}</span></td></tr>`;
   }).join('');
-
-  // Pagination
-  if (totalPages > 1) {
-    pagination.style.display = 'flex';
-    pagination.innerHTML = `
-      <button class="page-btn" onclick="changeRulesPage(${rulesPage - 1})" ${rulesPage === 1 ? 'disabled' : ''}>Prev</button>
-      <span class="page-info">Page ${rulesPage} of ${totalPages}</span>
-      <button class="page-btn" onclick="changeRulesPage(${rulesPage + 1})" ${rulesPage === totalPages ? 'disabled' : ''}>Next</button>
-    `;
-  } else {
-    pagination.style.display = 'none';
-  }
+  pg.style.display = 'flex';
+  document.getElementById('rules-pagination-info').textContent = `Showing ${start + 1}-${Math.min(start + rulesPerPage, filtered.length)} of ${filtered.length} rules`;
+  document.getElementById('rules-total-count').textContent = filtered.length > 0 ? `(${filtered.length})` : '';
+  document.getElementById('rules-pagination-controls').innerHTML =
+    `<button class="page-btn nav" onclick="goRulesPage(${rulesPage - 1})" ${rulesPage === 1 ? 'disabled' : ''}>‹</button>` +
+    (rulesPage > 1 ? `<button class="page-btn" onclick="goRulesPage(${rulesPage - 1})">${rulesPage - 1}</button>` : '') +
+    `<button class="page-btn active">${rulesPage}</button>` +
+    (rulesPage < totalPages ? `<button class="page-btn" onclick="goRulesPage(${rulesPage + 1})">${rulesPage + 1}</button>` : '') +
+    `<button class="page-btn nav" onclick="goRulesPage(${rulesPage + 1})" ${rulesPage >= totalPages ? 'disabled' : ''}>›</button>`;
 }
 
-function changeRulesPage(p) {
-  rulesPage = p;
-  renderRules();
-}
-
-async function addRule(e) {
-  e.preventDefault();
-  const ruleType = document.getElementById('rule-type').value;
-  const value = document.getElementById('rule-value').value;
-  const proxy = document.getElementById('rule-proxy').value;
-  try {
-    await api('POST', '/api/rules', { type: ruleType, value, proxy });
-    showToast('Rule added');
-    document.getElementById('rule-value').value = '';
-    document.getElementById('rule-proxy').value = '';
-    loadRules();
-  } catch (err) {
-    showToast('Failed to add rule: ' + err.message, 'error');
-  }
-}
-
-async function deleteRule(idx) {
-  try {
-    await api('DELETE', `/api/rules/${idx}`);
-    showToast('Rule removed');
-    loadRules();
-  } catch (err) {
-    showToast('Failed to remove rule: ' + err.message, 'error');
-  }
-}
+// Rules (view-only, no add/delete)
 
 // Connections
 function startConnections() {
-  connPaused = false;
-  connCountdown = 5;
+  connPaused = false; connCountdown = 5;
+  document.getElementById('btn-pause-conn').innerHTML = '<svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
   loadConnections();
   if (connRefreshInterval) clearInterval(connRefreshInterval);
   connRefreshInterval = setInterval(() => {
     if (!connPaused) {
       connCountdown--;
-      if (connCountdown <= 0) {
-        connCountdown = 5;
-        loadConnections();
-      }
-      document.getElementById('conn-countdown').textContent = connCountdown + 's';
+      if (connCountdown <= 0) { connCountdown = 5; loadConnections(); }
+      document.getElementById('conn-countdown-text').textContent = connCountdown + 's';
     }
   }, 1000);
 }
 
-function stopConnections() {
-  if (connRefreshInterval) {
-    clearInterval(connRefreshInterval);
-    connRefreshInterval = null;
-  }
+function stopConnections() { if (connRefreshInterval) { clearInterval(connRefreshInterval); connRefreshInterval = null; } }
+
+function toggleConnPause() {
+  connPaused = !connPaused;
+  const btn = document.getElementById('btn-pause-conn');
+  btn.innerHTML = connPaused
+    ? '<svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.102v3.68a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l3.197-2.132V9.102"/></svg> Resume'
+    : '<svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
+  if (!connPaused) connCountdown = 5;
 }
 
 async function loadConnections() {
-  const loading = document.getElementById('conn-loading');
-  const table = document.getElementById('conn-table');
-  const empty = document.getElementById('conn-empty');
-
+  const l = document.getElementById('conn-loading'), t = document.getElementById('conn-table'), e = document.getElementById('conn-empty'), pg = document.getElementById('conn-pagination');
   try {
     const data = await api('GET', '/api/connections');
     connections = data.connections || [];
-
-    // Calculate totals
-    let uploadTotal = 0, downloadTotal = 0;
-    connections.forEach(c => {
-      uploadTotal += c.upload || 0;
-      downloadTotal += c.download || 0;
-    });
-
+    let up = 0, dn = 0;
+    connections.forEach(c => { up += c.upload || 0; dn += c.download || 0; });
     document.getElementById('conn-total').textContent = connections.length;
-    document.getElementById('conn-upload').textContent = formatBytes(uploadTotal) + '/s';
-    document.getElementById('conn-download').textContent = formatBytes(downloadTotal) + '/s';
-
-    if (connections.length === 0) {
-      loading.style.display = 'none';
-      table.style.display = 'none';
-      empty.style.display = 'block';
-      return;
-    }
-
-    loading.style.display = 'none';
-    table.style.display = 'table';
-    empty.style.display = 'none';
-
-    const tbody = document.getElementById('conn-list');
-    tbody.innerHTML = connections.map((c, i) => `
-      <tr onmouseenter="connPaused=true" onmouseleave="connPaused=false">
-        <td class="mono">${i + 1}</td>
-        <td class="mono" title="${escapeHtml(c.metadata?.source || '')}">${escapeHtml(truncate(c.metadata?.source || '-', 20))}</td>
-        <td class="mono" title="${escapeHtml(c.metadata?.target || '')}">${escapeHtml(truncate(c.metadata?.target || '-', 25))}</td>
-        <td>${escapeHtml(c.metadata?.proxy || '-')}</td>
-        <td class="mono">${formatBytes(c.upload || 0)}</td>
-        <td class="mono">${formatBytes(c.download || 0)}</td>
-        <td class="mono">${formatDuration(c.duration || 0)}</td>
-        <td><button class="btn sm danger" onclick="closeConnection('${escapeHtml(c.id)}')">X</button></td>
-      </tr>
-    `).join('');
-  } catch (e) {
-    loading.style.display = 'none';
-    table.style.display = 'none';
-    empty.style.display = 'block';
-    empty.querySelector('p').textContent = 'Failed to load connections';
-  }
+    document.getElementById('conn-upload').textContent = formatBytes(up) + '/s';
+    document.getElementById('conn-download').textContent = formatBytes(dn) + '/s';
+    if (connections.length === 0) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; pg.style.display = 'none'; return; }
+    l.style.display = 'none'; t.style.display = 'table'; e.style.display = 'none';
+    const totalPages = Math.max(1, Math.ceil(connections.length / connPageSize));
+    if (connPage > totalPages) connPage = totalPages;
+    const start = (connPage - 1) * connPageSize;
+    const items = connections.slice(start, start + connPageSize);
+    document.getElementById('conn-list').innerHTML = items.map((c, i) => {
+      const meta = c.metadata || {};
+      const src = (meta.sourceIP || '-') + (meta.sourcePort ? ':' + meta.sourcePort : '');
+      const dst = meta.host || ((meta.destinationIP || '-') + (meta.destinationPort ? ':' + meta.destinationPort : ''));
+      const proxyChain = c.chains && c.chains.length > 0 ? c.chains[c.chains.length - 1] : (meta.inboundName || '-');
+      const dur = c.start ? Math.round((Date.now() - new Date(c.start).getTime()) / 1000) : 0;
+      return `<tr onmouseenter="connPaused=true" onmouseleave="connPaused=false">
+        <td class="mono text-muted">${start + i + 1}</td>
+        <td><div class="conn-meta" title="${escapeHtml(src)}">${escapeHtml(truncate(src, 24))}</div></td>
+        <td><div class="conn-meta" title="${escapeHtml(dst)}">${escapeHtml(truncate(dst, 28))}</div></td>
+        <td><div class="conn-badge"><span class="badge neutral">${escapeHtml(truncate(proxyChain, 20))}</span></div></td>
+        <td class="mono" style="color:var(--success)">${formatBytes(c.upload || 0)}</td>
+        <td class="mono" style="color:var(--warning)">${formatBytes(c.download || 0)}</td>
+        <td class="mono text-muted">${formatDuration(dur)}</td>
+        <td><button class="btn xs danger" onclick="closeConnection('${escapeHtml(c.id)}')" title="Close this connection">Close</button></td>
+      </tr>`;
+    }).join('');
+    pg.style.display = 'flex';
+    document.getElementById('conn-pagination-info').textContent = `Showing ${start + 1}-${Math.min(start + connPageSize, connections.length)} of ${connections.length}`;
+    document.getElementById('conn-pagination-controls').innerHTML =
+      `<button class="page-btn nav" onclick="goConnPage(${connPage - 1})" ${connPage === 1 ? 'disabled' : ''}>‹</button>` +
+      (connPage > 1 ? `<button class="page-btn" onclick="goConnPage(${connPage - 1})">${connPage - 1}</button>` : '') +
+      `<button class="page-btn active">${connPage}</button>` +
+      (connPage < totalPages ? `<button class="page-btn" onclick="goConnPage(${connPage + 1})">${connPage + 1}</button>` : '') +
+      `<button class="page-btn nav" onclick="goConnPage(${connPage + 1})" ${connPage >= totalPages ? 'disabled' : ''}>›</button>`;
+  } catch (_) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load connections'; }
 }
 
-function truncate(s, len) {
-  return s && s.length > len ? s.slice(0, len) + '...' : s;
-}
+function goConnPage(p) { connPage = p; loadConnections(); }
 
 async function closeConnection(id) {
-  try {
-    await api('DELETE', `/api/connections/${encodeURIComponent(id)}`);
-    showToast('Connection closed');
-    loadConnections();
-  } catch (e) {
-    showToast('Failed to close connection: ' + e.message, 'error');
-  }
+  try { await api('DELETE', `/api/connections/${encodeURIComponent(id)}`); showToast('Connection closed'); loadConnections(); }
+  catch (e) { showToast('Failed to close: ' + e.message, 'error'); }
 }
 
 // Settings
 async function restartService() {
-  try {
-    await api('POST', '/api/service/stop');
-    await new Promise(r => setTimeout(r, 1000));
-    await api('POST', '/api/service/start');
-    showToast('Service restarted');
-    loadDashboard();
-  } catch (e) {
-    showToast('Failed to restart: ' + e.message, 'error');
-  }
+  try { showToast('Restarting service...', 'warning'); await api('POST', '/api/service/stop'); await new Promise(r => setTimeout(r, 1500)); await api('POST', '/api/service/start'); showToast('Service restarted'); loadDashboard(); }
+  catch (e) { showToast('Failed to restart: ' + e.message, 'error'); }
 }
 
-// Initialize
-document.addEventListener('DOMContentLoaded', () => {
-  loadDashboard();
+document.addEventListener('DOMContentLoaded', () => { loadDashboard(); });
+
+// ESC key closes modal
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeDeleteModal(); closeCronModal(); }
 });
 </script>
 </body>

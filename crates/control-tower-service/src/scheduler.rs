@@ -88,6 +88,31 @@ impl ProfileCronJob {
     }
 }
 
+/// Reload cron jobs from profiles.yaml content string
+#[allow(dead_code)]
+pub fn reload_cron_jobs_from_yaml(content: &str) {
+    #[derive(serde::Deserialize)]
+    struct ProfilesYaml {
+        items: Vec<ProfileItem>,
+    }
+    #[derive(serde::Deserialize)]
+    struct ProfileItem {
+        uid: String,
+        url: Option<String>,
+        cron: Option<String>,
+    }
+
+    if let Ok(yaml) = serde_yaml_ng::from_str::<ProfilesYaml>(content) {
+        for item in yaml.items {
+            if let Some(cron_str) = item.cron {
+                if let Some(schedule) = Schedule::parse(&cron_str) {
+                    tracing::info!("Cron job [{}]: {} — {}", item.uid, cron_str, schedule.description());
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

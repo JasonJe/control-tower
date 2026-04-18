@@ -446,9 +446,9 @@ impl ServiceState {
             }
         }
 
-        // Auto-restore saved mode if exists
+        // Auto-restore saved mode if exists (skip_restart to avoid loop)
         if let Some(mode) = self.load_mode() {
-            if let Err(e) = self.set_mode(&mode) {
+            if let Err(e) = self.set_mode(&mode, true) {
                 tracing::warn!("Failed to restore mode {}: {}", mode, e);
             } else {
                 tracing::info!("Restored mode: {}", mode);
@@ -502,23 +502,127 @@ impl ServiceState {
         settings.mode
     }
 
-    /// Set mode via Clash API PATCH /configs
-    fn set_mode(&self, mode: &str) -> Result<(), String> {
+    /// Set mode: update config.yaml + optionally restart Mihomo
+    /// If `skip_restart` is true, only hot-patches Mihomo without restarting
+    /// (used during startup restoration to avoid restart loops)
+    fn set_mode(&self, mode: &str, skip_restart: bool) -> Result<(), String> {
+        // Step 1: Update config.yaml with new mode
+        if let Err(e) = self.update_config_mode(mode) {
+            return Err(format!("Failed to update config.yaml: {}", e));
+        }
+
+        // Step 2: Persist mode to settings.yaml
+        if let Err(e) = self.save_mode(mode) {
+            tracing::warn!("Failed to save mode to settings.yaml: {}", e);
+        }
+
+        // Step 3: Hot-patch Mihomo for immediate effect
         let client = reqwest::blocking::Client::new();
         let url = "http://127.0.0.1:9090/configs";
-
-        let response = client
+        let _ = client
             .patch(url)
             .json(&serde_json::json!({ "mode": mode }))
             .timeout(std::time::Duration::from_secs(5))
-            .send()
-            .map_err(|e| format!("Failed to set mode: {}", e))?;
+            .send();
 
-        if !response.status().is_success() {
-            return Err(format!("Failed to set mode: {}", response.status()));
+        // Step 4: Restart only if not skipped (skip during startup restoration)
+        if !skip_restart {
+            if let Err(e) = self.restart_mihomo() {
+                return Err(format!("Failed to restart Mihomo: {}", e));
+            }
         }
 
         Ok(())
+    }
+
+    /// Save mode to settings.yaml
+    fn save_mode(&self, mode: &str) -> Result<(), String> {
+        let exe_dir = std::env::current_exe()
+            .map_err(|e| format!("Failed to get exe path: {}", e))?
+            .parent()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| "Failed to get exe parent".to_string())?;
+
+        let settings_path = exe_dir.join("settings.yaml");
+
+        #[derive(serde::Deserialize, serde::Serialize)]
+        #[allow(dead_code)]
+        struct Settings {
+            #[serde(default)]
+            mode: Option<String>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            selected_proxy: Option<String>,
+        }
+
+        let content = if settings_path.exists() {
+            std::fs::read_to_string(&settings_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        let mut settings: Settings = serde_yaml_ng::from_str(&content).unwrap_or(Settings {
+            mode: None,
+            selected_proxy: None,
+        });
+        settings.mode = Some(mode.to_string());
+
+        let yaml_str = serde_yaml_ng::to_string(&settings)
+            .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+        std::fs::write(&settings_path, yaml_str)
+            .map_err(|e| format!("Failed to write settings.yaml: {}", e))?;
+
+        tracing::info!("Mode saved to settings.yaml: {}", mode);
+        Ok(())
+    }
+
+    /// Update mode in config.yaml directly
+    fn update_config_mode(&self, mode: &str) -> Result<(), String> {
+        let exe_dir = std::env::current_exe()
+            .map_err(|e| format!("Failed to get exe path: {}", e))?
+            .parent()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| "Failed to get exe parent".to_string())?;
+
+        let config_path = exe_dir.join("config.yaml");
+        if !config_path.exists() {
+            return Err("config.yaml not found".to_string());
+        }
+
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read config.yaml: {}", e))?;
+
+        let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)
+            .map_err(|e| format!("Failed to parse config.yaml: {}", e))?;
+
+        if let Some(map) = yaml.as_mapping_mut() {
+            map.insert("mode".into(), mode.into());
+        }
+
+        let new_content = serde_yaml_ng::to_string(&yaml)
+            .map_err(|e| format!("Failed to serialize config.yaml: {}", e))?;
+
+        std::fs::write(&config_path, new_content)
+            .map_err(|e| format!("Failed to write config.yaml: {}", e))?;
+
+        tracing::info!("Mode updated in config.yaml: {}", mode);
+        Ok(())
+    }
+
+    /// Restart Mihomo with the current active config
+    pub fn restart_mihomo(&self) -> Result<(), String> {
+        // Get the last config path
+        let config_path = match self.last_config_path.read().clone() {
+            Some(path) => path,
+            None => {
+                return Err("No config path available — start service first".to_string());
+            }
+        };
+
+        // Stop Mihomo (ignore errors if not running)
+        let _ = self.stop();
+
+        // Start Mihomo with the config
+        self.start(&config_path)
     }
 
     /// Select a proxy via Clash API
@@ -703,7 +807,7 @@ pub fn handle_command_with_state(state: &ServiceState, cmd: IpcCommand) -> IpcRe
         }
         IpcCommand::SetMode { mode } => {
             tracing::info!("SetMode command: {}", mode);
-            match state.set_mode(&mode) {
+            match state.set_mode(&mode, false) {
                 Ok(()) => IpcResponse::success(),
                 Err(e) => IpcResponse::error(e),
             }

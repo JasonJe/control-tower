@@ -71,8 +71,20 @@ pub struct ProxyDelayRequest {
     pub timeout: u64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ProxyDelayPostRequest {
+    pub name: String,
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
+}
+
 fn default_timeout() -> u64 {
     5000
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateProfileRequest {
+    pub cron: Option<String>,
 }
 
 // ============ Helper Functions ============
@@ -118,11 +130,10 @@ fn get_control_tower_paths() -> control_tower_service_core::ControlTowerPaths {
 }
 
 /// Parse profiles.yaml into a JSON-friendly structure
-fn parse_profiles_yaml(content: &str) -> Vec<serde_json::Value> {
+fn parse_profiles_yaml_full(content: &str) -> serde_json::Value {
     #[derive(serde::Deserialize)]
     #[allow(dead_code)]
     struct ProfilesYaml {
-        #[serde(skip)]
         current: Option<String>,
         items: Vec<ProfileItem>,
     }
@@ -140,21 +151,30 @@ fn parse_profiles_yaml(content: &str) -> Vec<serde_json::Value> {
     }
 
     match serde_yaml_ng::from_str::<ProfilesYaml>(content) {
-        Ok(yaml) => yaml
-            .items
-            .into_iter()
-            .map(|item| {
-                serde_json::json!({
-                    "uid": item.uid,
-                    "name": item.name,
-                    "file": item.file,
-                    "url": item.url,
-                    "cron": item.cron,
-                    "updated_at": item.updated_at,
+        Ok(yaml) => {
+            let items: Vec<serde_json::Value> = yaml
+                .items
+                .into_iter()
+                .map(|item| {
+                    serde_json::json!({
+                        "uid": item.uid,
+                        "name": item.name,
+                        "file": item.file,
+                        "url": item.url,
+                        "cron": item.cron,
+                        "updated_at": item.updated_at,
+                    })
                 })
+                .collect();
+            serde_json::json!({
+                "items": items,
+                "current": yaml.current
             })
-            .collect(),
-        Err(_) => Vec::new(),
+        }
+        Err(_) => serde_json::json!({
+            "items": Vec::<serde_json::Value>::new(),
+            "current": serde_json::Value::Null
+        }),
     }
 }
 
@@ -231,7 +251,7 @@ pub async fn set_mode(
 
     let mode = body.mode.clone();
     let state = state.clone();
-    match task::spawn_blocking(move || state.set_mode(&mode)).await {
+    match task::spawn_blocking(move || state.set_mode(&mode, false)).await {
         Ok(Ok(())) => HttpResponse::Ok().json(ApiResponse::<()>::success(())),
         Ok(Err(e)) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e)),
         Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),
@@ -368,13 +388,16 @@ pub async fn get_profiles() -> HttpResponse {
     let profiles_path = &paths.profiles_path;
 
     if !profiles_path.exists() {
-        return HttpResponse::Ok().json(ApiResponse::success(Vec::<serde_json::Value>::new()));
+        return HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
+            "items": Vec::<serde_json::Value>::new(),
+            "current": serde_json::Value::Null
+        })));
     }
 
     match std::fs::read_to_string(profiles_path) {
         Ok(content) => {
-            let profiles = parse_profiles_yaml(&content);
-            HttpResponse::Ok().json(ApiResponse::success(profiles))
+            let result = parse_profiles_yaml_full(&content);
+            HttpResponse::Ok().json(ApiResponse::success(result))
         }
         Err(e) => HttpResponse::InternalServerError()
             .json(ApiResponse::<()>::error(format!("Failed to read profiles.yaml: {}", e))),
@@ -463,7 +486,7 @@ pub async fn add_profile(
     #[derive(serde::Deserialize, serde::Serialize)]
     #[allow(dead_code)]
     struct ProfilesYaml {
-        #[serde(skip)]
+        #[serde(default)]
         current: Option<String>,
         items: Vec<ProfileItem>,
     }
@@ -509,6 +532,7 @@ pub async fn add_profile(
 
 /// PUT /api/profiles/{id}/activate - Activate a profile
 pub async fn activate_profile(
+    state: web::Data<Arc<ServiceState>>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let uid = path.into_inner();
@@ -524,6 +548,35 @@ pub async fn activate_profile(
         return HttpResponse::NotFound().json(ApiResponse::<()>::error(format!("Profile {} not found", uid)));
     }
 
+    // Validate profile content before activation
+    let profile_content = match std::fs::read_to_string(&profile_file) {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::BadRequest()
+                .json(ApiResponse::<()>::error(format!("Failed to read profile file: {}", e)))
+        }
+    };
+
+    // Parse and validate the profile YAML has required fields
+    let yaml: serde_yaml_ng::Value = match serde_yaml_ng::from_str(&profile_content) {
+        Ok(y) => y,
+        Err(e) => {
+            return HttpResponse::BadRequest()
+                .json(ApiResponse::<()>::error(format!("Invalid YAML in profile: {}", e)))
+        }
+    };
+
+    // Check for required fields: proxies, mixed-port, or proxy-providers
+    let has_proxies = yaml.get("proxies").is_some();
+    let has_mixed_port = yaml.get("mixed-port").is_some();
+    let has_proxy_providers = yaml.get("proxy-providers").is_some();
+    let has_proxy_groups = yaml.get("proxy-groups").is_some();
+
+    if !has_proxies && !has_mixed_port && !has_proxy_providers && !has_proxy_groups {
+        return HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error("Profile does not contain valid proxy configuration (missing: proxies, mixed-port, proxy-providers, or proxy-groups)".to_string()));
+    }
+
     // Read and update profiles.yaml
     let content = match std::fs::read_to_string(profiles_path) {
         Ok(c) => c,
@@ -536,7 +589,7 @@ pub async fn activate_profile(
     #[derive(serde::Deserialize, serde::Serialize)]
     #[allow(dead_code)]
     struct ProfilesYaml {
-        #[serde(skip)]
+        #[serde(default)]
         current: Option<String>,
         items: Vec<ProfileItem>,
     }
@@ -577,6 +630,101 @@ pub async fn activate_profile(
             .json(ApiResponse::<()>::error(format!("Failed to activate profile: {}", e)));
     }
 
+    // Restart Mihomo to load new config
+    let state = state.clone();
+    match task::spawn_blocking(move || state.restart_mihomo()).await {
+        Ok(Ok(())) => HttpResponse::Ok().json(ApiResponse::<()>::success(())),
+        Ok(Err(e)) => HttpResponse::InternalServerError()
+            .json(ApiResponse::<()>::error(format!("Failed to restart Mihomo: {}", e))),
+        Err(e) => HttpResponse::InternalServerError()
+            .json(ApiResponse::<()>::error(format!("Failed to restart Mihomo: {}", e.to_string()))),
+    }
+}
+
+/// PATCH /api/profiles/{id} - Update cron schedule for a profile (only active profile)
+pub async fn update_profile(
+    path: web::Path<String>,
+    body: web::Json<UpdateProfileRequest>,
+) -> HttpResponse {
+    let uid = path.into_inner();
+    let paths = get_control_tower_paths();
+    let profiles_path = &paths.profiles_path;
+
+    if !profiles_path.exists() {
+        return HttpResponse::NotFound().json(ApiResponse::<()>::error("profiles.yaml not found"));
+    }
+
+    // Read profiles.yaml
+    let content = match std::fs::read_to_string(profiles_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to read profiles.yaml: {}", e)))
+        }
+    };
+
+    #[derive(serde::Deserialize, serde::Serialize)]
+    #[allow(dead_code)]
+    struct ProfilesYaml {
+        #[serde(default)]
+        current: Option<String>,
+        items: Vec<ProfileItem>,
+    }
+
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct ProfileItem {
+        uid: String,
+        name: Option<String>,
+        #[serde(rename = "file")]
+        file: Option<String>,
+        url: Option<String>,
+        cron: Option<String>,
+        #[serde(rename = "updated_at")]
+        updated_at: Option<i64>,
+    }
+
+    let mut yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
+        Ok(y) => y,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to parse profiles.yaml: {}", e)))
+        }
+    };
+
+    // Only allow updating the active profile
+    if yaml.current.as_ref() != Some(&uid) {
+        return HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error("Only the active profile can be updated".to_string()));
+    }
+
+    // Find and update the profile item
+    let item = yaml.items.iter_mut().find(|i| i.uid == uid);
+    let item = match item {
+        Some(i) => i,
+        None => {
+            return HttpResponse::NotFound()
+                .json(ApiResponse::<()>::error(format!("Profile {} not found", uid)))
+        }
+    };
+
+    // Validate cron if provided
+    if let Some(ref cron_str) = body.cron {
+        if !cron_str.trim().is_empty() {
+            if cron_str.trim().parse::<u32>().is_err() || cron_str.trim().parse::<u32>().ok().map(|n| n < 1).unwrap_or(true) {
+                return HttpResponse::BadRequest()
+                    .json(ApiResponse::<()>::error("Cron must be a positive integer (minutes)".to_string()));
+            }
+        }
+        item.cron = if cron_str.trim().is_empty() { None } else { Some(cron_str.trim().to_string()) };
+    }
+
+    // Write back profiles.yaml
+    if let Err(e) = std::fs::write(profiles_path, serde_yaml_ng::to_string(&yaml).unwrap_or_default()) {
+        return HttpResponse::InternalServerError()
+            .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
+    }
+
+    tracing::info!("Profile {} cron updated", uid);
     HttpResponse::Ok().json(ApiResponse::<()>::success(()))
 }
 
@@ -605,7 +753,7 @@ pub async fn delete_profile(
     #[derive(serde::Deserialize, serde::Serialize)]
     #[allow(dead_code)]
     struct ProfilesYaml {
-        #[serde(skip)]
+        #[serde(default)]
         current: Option<String>,
         items: Vec<ProfileItem>,
     }
@@ -727,4 +875,159 @@ pub async fn proxy_delay(
         Err(e) => HttpResponse::InternalServerError()
             .json(ApiResponse::<()>::error(format!("Failed to check proxy delay: {}", e))),
     }
+}
+
+/// POST /api/proxies/delay - Get proxy delay (JSON body)
+pub async fn proxy_delay_post(
+    _state: web::Data<Arc<ServiceState>>,
+    body: web::Json<ProxyDelayPostRequest>,
+) -> HttpResponse {
+    let name_or_idx = &body.name;
+    let timeout_ms = body.timeout;
+
+    // Build a single HTTP client for all requests
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(timeout_ms + 2000))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to create HTTP client: {}", e)))
+        }
+    };
+
+    // Step 1: Resolve name (index -> proxy name) and get current GLOBAL selection
+    let proxies_url = "http://127.0.0.1:9090/proxies";
+    let proxies_response = match client.get(proxies_url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to fetch proxies: {}", e)))
+        }
+    };
+
+    if !proxies_response.status().is_success() {
+        return HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error(format!("Failed to get proxies: {}", proxies_response.status())));
+    }
+
+    let proxies_data: serde_json::Value = match proxies_response.json().await {
+        Ok(d) => d,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to parse proxies response: {}", e)))
+        }
+    };
+
+    // Get GLOBAL.now (current selection) to restore later
+    let original_proxy: String = proxies_data
+        .get("proxies")
+        .and_then(|p| p.get("GLOBAL"))
+        .and_then(|g| g.get("now"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("DIRECT")
+        .to_string();
+
+    // Get GLOBAL.all for index resolution
+    let global_all = match proxies_data
+        .get("proxies")
+        .and_then(|p| p.get("GLOBAL"))
+        .and_then(|g| g.get("all"))
+        .and_then(|a| a.as_array())
+    {
+        Some(a) => a,
+        None => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error("GLOBAL.all not found".to_string()))
+        }
+    };
+
+    // Resolve proxy name from index or use directly
+    let target_proxy = if name_or_idx.chars().all(|c| c.is_ascii_digit()) {
+        let idx: usize = match name_or_idx.parse() {
+            Ok(i) => i,
+            Err(_) => {
+                return HttpResponse::BadRequest()
+                    .json(ApiResponse::<()>::error(format!("Invalid index: {}", name_or_idx)))
+            }
+        };
+        if idx == 0 || idx > global_all.len() {
+            return HttpResponse::BadRequest()
+                .json(ApiResponse::<()>::error(format!("Index {} out of range (1-{})", idx, global_all.len())));
+        }
+        global_all[idx - 1].as_str().unwrap_or(name_or_idx).to_string()
+    } else {
+        name_or_idx.clone()
+    };
+
+    tracing::debug!("Latency test: target={}, original={}", target_proxy, original_proxy);
+
+    // Step 2: Temporarily select the target proxy
+    let select_url = "http://127.0.0.1:9090/proxies/GLOBAL";
+    let select_response = match client
+        .put(select_url)
+        .json(&serde_json::json!({ "name": target_proxy }))
+        .timeout(std::time::Duration::from_millis(5000))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to select proxy: {}", e)))
+        }
+    };
+
+    if !select_response.status().is_success() {
+        return HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error(format!("Failed to select proxy {}: {}", target_proxy, select_response.status())));
+    }
+
+    // Step 3: Measure HTTP delay through the selected proxy
+    let test_url = "http://cp.cloudflare.com/generate_204";
+    let start = std::time::Instant::now();
+
+    let http_response = match client
+        .get(test_url)
+        .timeout(std::time::Duration::from_millis(timeout_ms))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            // Restore original proxy on error
+            let _ = client
+                .put(select_url)
+                .json(&serde_json::json!({ "name": original_proxy }))
+                .timeout(std::time::Duration::from_millis(5000))
+                .send()
+                .await;
+            return HttpResponse::Ok()
+                .json(ApiResponse::success(serde_json::json!({ "delay": null, "error": e.to_string() })));
+        }
+    };
+
+    let elapsed_ms = start.elapsed().as_millis() as i64;
+
+    // Step 4: Restore original GLOBAL selection
+    if original_proxy != target_proxy {
+        let _ = client
+            .put(select_url)
+            .json(&serde_json::json!({ "name": original_proxy }))
+            .timeout(std::time::Duration::from_millis(5000))
+            .send()
+            .await;
+    }
+
+    // Check if HTTP response is successful (200 or 204)
+    let delay = if http_response.status().is_success() || http_response.status().as_u16() == 204 {
+        elapsed_ms
+    } else {
+        return HttpResponse::Ok()
+            .json(ApiResponse::success(serde_json::json!({ "delay": null, "error": format!("HTTP {}", http_response.status()) })));
+    };
+
+    tracing::debug!("Latency test result: {}ms for {}", delay, target_proxy);
+    HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "delay": delay })))
 }

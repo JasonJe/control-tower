@@ -270,7 +270,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 <div class="app">
   <header class="header">
     <div class="logo">
-      <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22V10M8 22h8M9 22l1.5-12h3L15 22"/><path d="M12 2v3M7 5l2 2M17 5l-2 2M5 9l3 1M16 9l-3 1"/><circle cx="12" cy="4" r="1.5"/></svg>
     </div>
     <h1>Control Tower</h1>
     <span class="subtitle">Proxy Management</span>

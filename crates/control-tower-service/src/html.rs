@@ -6,6 +6,7 @@ pub const INDEX_HTML: &str = r#"<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Control Tower</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='10' y='10' width='4' height='12' rx='0.5' fill='%236366f1'/%3E%3Crect x='6' y='6' width='12' height='4' rx='1' fill='%236366f1'/%3E%3Ccircle cx='12' cy='3.5' r='2.5' fill='%236366f1'/%3E%3Crect x='7.5' y='7.5' width='2' height='1.5' rx='0.3' fill='white'/%3E%3Crect x='14.5' y='7.5' width='2' height='1.5' rx='0.3' fill='white'/%3E%3C/svg%3E">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -44,7 +45,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .app{display:flex;flex-direction:column;height:100vh}
 .header{position:fixed;top:0;left:0;right:0;height:var(--header-h);background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;z-index:100;gap:14px;box-shadow:var(--shadow-sm)}
 .header .logo{width:34px;height:34px;background:linear-gradient(135deg,var(--accent),var(--accent-hover));border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.header .logo svg{width:18px;height:18px;fill:#fff}
+.header .logo svg{width:18px;height:18px}
 .header h1{font-size:15px;font-weight:600;letter-spacing:-.2px}
 .header .subtitle{font-size:12px;color:var(--text3);margin-left:4px;font-weight:400}
 .status-dot{width:8px;height:8px;border-radius:50%;background:var(--success);margin-left:auto;transition:background 200ms;flex-shrink:0}
@@ -270,7 +271,13 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 <div class="app">
   <header class="header">
     <div class="logo">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22V10M8 22h8M9 22l1.5-12h3L15 22"/><path d="M12 2v3M7 5l2 2M17 5l-2 2M5 9l3 1M16 9l-3 1"/><circle cx="12" cy="4" r="1.5"/></svg>
+      <svg viewBox="0 0 24 24" fill="white">
+        <rect x="10" y="10" width="4" height="12" rx="0.5"/>
+        <rect x="6" y="6" width="12" height="4" rx="1"/>
+        <circle cx="12" cy="3.5" r="2.5"/>
+        <rect x="7.5" y="7.5" width="2" height="1.5" rx="0.3"/>
+        <rect x="14.5" y="7.5" width="2" height="1.5" rx="0.3"/>
+      </svg>
     </div>
     <h1>Control Tower</h1>
     <span class="subtitle">Proxy Management</span>

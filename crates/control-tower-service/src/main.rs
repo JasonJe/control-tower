@@ -1636,6 +1636,22 @@ mod tests {
         assert!(json.contains("100"));
     }
 
+    #[test]
+    fn test_ipc_command_set_mode_serialization() {
+        let cmd = IpcCommand::SetMode { mode: "rule".to_string() };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"cmd\":\"SetMode\""));
+        assert!(json.contains("rule"));
+    }
+
+    #[test]
+    fn test_ipc_command_select_proxy_serialization() {
+        let cmd = IpcCommand::SelectProxy { name: "香港 101".to_string() };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"cmd\":\"SelectProxy\""));
+        assert!(json.contains("香港 101"));
+    }
+
     // ============ Response Tests ============
 
     #[test]

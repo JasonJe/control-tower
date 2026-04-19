@@ -554,6 +554,14 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
             <div class="stat-icon red"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
             <div class="stat-info"><div class="stat-value" id="conn-countdown-text" style="font-size:14px">5s</div><div class="stat-label">Next Refresh</div></div>
           </div>
+          <div class="stat-card">
+            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="conn-cumulative-upload">0 B</div><div class="stat-label">Cumulative Upload</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon yellow"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="conn-cumulative-download">0 B</div><div class="stat-label">Cumulative Download</div></div>
+          </div>
         </div>
 
         <div class="table-wrap">
@@ -779,7 +787,7 @@ function switchView(view) {
 
 function formatBytes(b) {
   if (b === 0) return '0 B';
-  const k = 1024, sizes = ['B', 'KB', 'MB', 'GB'];
+  const k = 1024, sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(b) / Math.log(k));
   return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
@@ -1284,6 +1292,10 @@ async function loadConnections() {
     document.getElementById('conn-total').textContent = connections.length;
     document.getElementById('conn-upload').textContent = formatBytes(up) + '/s';
     document.getElementById('conn-download').textContent = formatBytes(dn) + '/s';
+    let totalUpload = 0, totalDownload = 0;
+    connections.forEach(c => { totalUpload += c.upload || 0; totalDownload += c.download || 0; });
+    document.getElementById('conn-cumulative-upload').textContent = formatBytes(totalUpload);
+    document.getElementById('conn-cumulative-download').textContent = formatBytes(totalDownload);
     if (connections.length === 0) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; pg.style.display = 'none'; return; }
     l.style.display = 'none'; t.style.display = 'table'; e.style.display = 'none';
     const totalPages = Math.max(1, Math.ceil(connections.length / connPageSize));

@@ -29,6 +29,7 @@ pub async fn start_http_server(port: u16, state: Arc<ServiceState>) -> std::io::
                     .route("/profiles/{id}", web::delete().to(api::delete_profile))
                     .route("/profiles/{id}", web::patch().to(api::update_profile))
                     .route("/profiles/{id}/activate", web::post().to(api::activate_profile))
+                    .route("/profiles/{id}/refresh", web::post().to(api::refresh_profile))
                     .route("/mode", web::get().to(api::get_mode))
                     .route("/mode", web::post().to(api::set_mode))
                     .route("/proxies", web::get().to(api::get_proxies))

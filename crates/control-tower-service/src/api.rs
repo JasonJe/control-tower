@@ -115,6 +115,23 @@ fn find_settings_path() -> Option<PathBuf> {
         .map(|p| p.join("settings.yaml"))
 }
 
+/// Get Mihomo HTTP proxy port from settings.yaml, defaulting to 7890
+fn get_mihomo_http_port() -> u16 {
+    #[derive(serde::Deserialize)]
+    struct Settings {
+        #[serde(rename = "http_port", default)]
+        http_port: Option<u16>,
+    }
+    if let Some(path) = find_settings_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(settings) = serde_yaml_ng::from_str::<Settings>(&content) {
+                return settings.http_port.unwrap_or(7890);
+            }
+        }
+    }
+    7890
+}
+
 /// Get ControlTowerPaths from settings
 fn get_control_tower_paths() -> control_tower_service_core::ControlTowerPaths {
     let settings_path = find_settings_path().unwrap_or_else(|| PathBuf::from("settings.yaml"));
@@ -732,6 +749,162 @@ pub async fn update_profile(
     state.load_cron_jobs();
 
     HttpResponse::Ok().json(ApiResponse::<()>::success(()))
+}
+
+#[derive(serde::Deserialize)]
+pub struct RefreshRequest {
+    pub use_proxy: Option<bool>,
+}
+
+/// POST /api/profiles/{id}/refresh - Manually refresh a subscription profile
+pub async fn refresh_profile(
+    path: web::Path<String>,
+    body: Option<web::Json<RefreshRequest>>,
+) -> HttpResponse {
+    let uid = path.into_inner();
+    let paths = get_control_tower_paths();
+    let profiles_path = &paths.profiles_path;
+    let profiles_dir = paths.config_dir.join("profiles");
+    let profile_file = profiles_dir.join(format!("{}.yaml", uid));
+
+    // Read profiles.yaml to get URL
+    let content = match std::fs::read_to_string(profiles_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to read profiles.yaml: {}", e)))
+        }
+    };
+
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct ProfilesYaml {
+        current: Option<String>,
+        items: Vec<ProfileItem>,
+    }
+
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct ProfileItem {
+        uid: String,
+        url: Option<String>,
+    }
+
+    let yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
+        Ok(y) => y,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to parse profiles.yaml: {}", e)))
+        }
+    };
+
+    let url = match yaml.items.iter().find(|i| i.uid == uid) {
+        Some(item) => item.url.clone(),
+        None => {
+            return HttpResponse::NotFound()
+                .json(ApiResponse::<()>::error("Profile not found".to_string()))
+        }
+    };
+
+    let url = match url {
+        Some(u) => u,
+        None => {
+            return HttpResponse::BadRequest()
+                .json(ApiResponse::<()>::error("Profile has no subscription URL".to_string()))
+        }
+    };
+
+    if !profile_file.exists() {
+        return HttpResponse::NotFound()
+            .json(ApiResponse::<()>::error("Profile file not found".to_string()));
+    }
+
+    // Download new content in a blocking task
+    let uid_clone = uid.clone();
+    let profile_file_clone = profile_file.clone();
+    let profiles_path_clone = profiles_path.clone();
+    let use_proxy = body.as_ref().map(|b| b.use_proxy.unwrap_or(false)).unwrap_or(false);
+    let http_port = get_mihomo_http_port();
+
+    let result = tokio::task::spawn_blocking(move || {
+        // Download subscription (optionally through Mihomo proxy)
+        let client = if use_proxy {
+            // Route through Mihomo HTTP proxy
+            let proxy_url = format!("http://127.0.0.1:{}", http_port);
+            let proxy = reqwest::Proxy::http(proxy_url)
+                .map_err(|e| anyhow::anyhow!("Failed to create proxy: {}", e))?;
+            reqwest::blocking::Client::builder()
+                .proxy(proxy)
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?
+        } else {
+            reqwest::blocking::Client::new()
+        };
+
+        let response = client
+            .get(&url)
+            .header("User-Agent", "clash-verge/v2.4.7")
+            .send()
+            .map_err(|e| anyhow::anyhow!("Failed to download: {}", e))?;
+
+        if !response.status().is_success() {
+            anyhow::bail!("Download failed: {}", response.status());
+        }
+
+        let new_content = response
+            .text()
+            .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
+
+        // Update profile file
+        std::fs::write(&profile_file_clone, &new_content)?;
+
+        // Update updated_at in profiles.yaml
+        #[derive(serde::Deserialize, serde::Serialize)]
+        struct ProfilesYaml {
+            current: Option<String>,
+            items: Vec<ProfileItem2>,
+        }
+
+        #[derive(serde::Deserialize, serde::Serialize)]
+        struct ProfileItem2 {
+            uid: String,
+            name: Option<String>,
+            #[serde(rename = "file")]
+            file: Option<String>,
+            url: Option<String>,
+            cron: Option<String>,
+            #[serde(rename = "updated_at")]
+            updated_at: Option<i64>,
+        }
+
+        let content = std::fs::read_to_string(&profiles_path_clone)?;
+        let mut yaml: ProfilesYaml = serde_yaml_ng::from_str(&content)?;
+
+        let now = chrono::Utc::now().timestamp();
+        for item in &mut yaml.items {
+            if item.uid == uid_clone {
+                item.updated_at = Some(now);
+                break;
+            }
+        }
+
+        let new_content = serde_yaml_ng::to_string(&yaml)?;
+        std::fs::write(&profiles_path_clone, new_content)?;
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => {
+            tracing::info!("Profile {} refreshed manually (use_proxy={})", uid, use_proxy);
+            HttpResponse::Ok().json(ApiResponse::success(()))
+        }
+        Ok(Err(e)) => {
+            tracing::error!("Failed to refresh profile {}: {}", uid, e);
+            HttpResponse::BadRequest().json(ApiResponse::<()>::error(e.to_string()))
+        }
+        Err(e) => HttpResponse::InternalServerError()
+            .json(ApiResponse::<()>::error(format!("Task error: {}", e))),
+    }
 }
 
 /// DELETE /api/profiles/{id} - Delete a profile

@@ -81,6 +81,7 @@ impl ActiveConfigStore {
             "dns",
             "socks-port",
             "http-port",
+            "external-controller",
         ];
         let mut overrides = serde_yaml_ng::Mapping::new();
         for key in keys {

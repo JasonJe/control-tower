@@ -360,6 +360,22 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
             <div class="stat-icon green"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg></div>
             <div class="stat-info"><div class="stat-value" id="dash-proxy" style="font-size:13px;font-family:'JetBrains Mono',monospace">-</div><div class="stat-label">Current Proxy</div></div>
           </div>
+          <div class="stat-card">
+            <div class="stat-icon red"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="dash-upload-rate" style="color:var(--success)">-</div><div class="stat-label">↑ Upload Rate</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon yellow"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="dash-download-rate" style="color:var(--warning)">-</div><div class="stat-label">↓ Download Rate</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h10a4 4 0 000-8H7a4 4 0 00-4 4z"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="dash-cumulative-upload">-</div><div class="stat-label">↑ Cumulative Upload</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h10a4 4 0 000-8H7a4 4 0 00-4 4z"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="dash-cumulative-download">-</div><div class="stat-label">↓ Cumulative Download</div></div>
+          </div>
         </div>
 
         <div class="card">
@@ -526,6 +542,13 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
         <div class="page-header">
           <div><div class="page-title">Connections</div><div class="page-subtitle">Real-time network activity monitor</div></div>
           <div class="page-actions">
+            <select id="conn-refresh-interval" class="form-select" style="width:auto;font-size:12px;margin-right:8px" onchange="onConnRefreshChange()">
+              <option value="3000">3s</option>
+              <option value="5000" selected>5s</option>
+              <option value="10000">10s</option>
+              <option value="30000">30s</option>
+              <option value="0">Manual</option>
+            </select>
             <button class="btn ghost sm" id="btn-pause-conn" onclick="toggleConnPause()">
               <svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
               Pause
@@ -549,10 +572,6 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           <div class="stat-card">
             <div class="stat-icon yellow"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
             <div class="stat-info"><div class="stat-value mono text-sm" id="conn-download">0 B/s</div><div class="stat-label">Download Rate</div></div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon red"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
-            <div class="stat-info"><div class="stat-value" id="conn-countdown-text" style="font-size:14px">5s</div><div class="stat-label">Next Refresh</div></div>
           </div>
           <div class="stat-card">
             <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
@@ -587,7 +606,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           <div><div class="page-title">Settings</div><div class="page-subtitle">Service configuration and system info</div></div>
         </div>
 
-        <div style="max-width:640px">
+        <div style="max-width:960px">
           <div class="card">
             <div class="card-header"><div class="card-title">Service Operations</div></div>
             <div class="btn-group">
@@ -679,7 +698,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
                 </button>
               </div>
             </div>
-            <div id="logs-content" class="logs-content" style="max-height:300px;overflow-y:auto;background:#0f172a;color:#e2e8f0;font-family:'JetBrains Mono',monospace;font-size:11px;padding:8px;border-radius:6px;line-height:1.6"></div>
+            <div id="logs-content" class="logs-content" style="max-height:420px;overflow-y:auto;background:#0f172a;color:#e2e8f0;font-family:'JetBrains Mono',monospace;font-size:11px;padding:8px;border-radius:6px;line-height:1.6"></div>
           </div>
         </div>
       </div>
@@ -750,8 +769,7 @@ const rulesPerPage = 50;
 let connections = [];
 let connPage = 1;
 const connPageSize = CONN_PAGE_SIZE;
-let connRefreshInterval = null;
-let connCountdown = 5;
+let connRefreshTimer = null;
 let connPaused = false;
 let currentMode = '';
 
@@ -800,12 +818,15 @@ function switchView(view) {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.view === view));
   document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === `view-${view}`));
   stopConnections();
+  // Always stop dashboard auto-refresh when switching away
+  if (dashRefreshTimer) { clearInterval(dashRefreshTimer); dashRefreshTimer = null; }
+
   if (view === 'dashboard') loadDashboard();
   else if (view === 'proxies') { loadProxyLatencies(); loadProxies(); }
   else if (view === 'profiles') loadProfiles();
   else if (view === 'rules') loadRules();
   else if (view === 'connections') startConnections();
-  else if (view === 'settings') loadSettings();
+  else if (view === 'settings') { loadSettings(); loadLogs(); onLogRefreshChange(); }
 }
 
 function formatBytes(b) {
@@ -874,11 +895,17 @@ async function loadDashboard() {
       document.getElementById('dash-proxy').textContent = '-';
       document.getElementById('dash-nodes').textContent = '-';
       document.getElementById('dash-connections').textContent = '0';
+      document.getElementById('dash-upload-rate').textContent = '-';
+      document.getElementById('dash-download-rate').textContent = '-';
+      document.getElementById('dash-cumulative-upload').textContent = '-';
+      document.getElementById('dash-cumulative-download').textContent = '-';
       // Don't clear currentMode; preserve last known mode so button stays highlighted
       ['rule','global','direct'].forEach(m => {
         const btn = document.getElementById('btn-mode-' + m);
         if (btn) btn.className = 'btn ' + (m === currentMode ? 'primary' : 'secondary');
       });
+      // Stop auto-refresh when service is not running
+      if (dashRefreshTimer) { clearInterval(dashRefreshTimer); dashRefreshTimer = null; }
       return;
     }
 
@@ -903,8 +930,24 @@ async function loadDashboard() {
     } catch (_) { document.getElementById('dash-proxy').textContent = '-'; document.getElementById('dash-nodes').textContent = '-'; }
     try {
       const cd = await api('GET', '/api/connections');
-      document.getElementById('dash-connections').textContent = (cd.connections || []).length;
-    } catch (_) { document.getElementById('dash-connections').textContent = '-'; }
+      const conns = cd.connections || [];
+      document.getElementById('dash-connections').textContent = conns.length;
+      let upRate = 0, dnRate = 0;
+      conns.forEach(c => { upRate += c.upload || 0; dnRate += c.download || 0; });
+      document.getElementById('dash-upload-rate').textContent = formatBytes(upRate) + '/s';
+      document.getElementById('dash-download-rate').textContent = formatBytes(dnRate) + '/s';
+      document.getElementById('dash-cumulative-upload').textContent = formatBytes(cd.uploadTotal || 0);
+      document.getElementById('dash-cumulative-download').textContent = formatBytes(cd.downloadTotal || 0);
+    } catch (_) {
+      document.getElementById('dash-connections').textContent = '0';
+      document.getElementById('dash-upload-rate').textContent = '-';
+      document.getElementById('dash-download-rate').textContent = '-';
+      document.getElementById('dash-cumulative-upload').textContent = '-';
+      document.getElementById('dash-cumulative-download').textContent = '-';
+    }
+    // Auto-refresh every 5 seconds
+    if (dashRefreshTimer) { clearInterval(dashRefreshTimer); }
+    dashRefreshTimer = setInterval(loadDashboard, 5000);
   } catch (e) { showToast('Failed to load dashboard: ' + e.message, 'error'); }
 }
 
@@ -1154,7 +1197,7 @@ function renderProfiles() {
       <td><span class="mono truncate" style="max-width:280px;display:block" title="${escapeHtml(p.url || '')}">${escapeHtml(p.url || '-')}</span></td>
       <td>${st}</td>
       <td>${isActive && p.cron ? `<span class="mono text-sm">${escapeHtml(p.cron)} min</span>` : '<span class="text-muted text-sm">-</span>'}</td>
-      <td class="mono text-sm">${formatTimestamp(p.updated_at)}</td>
+      <td><span class="mono text-sm">${formatTimestamp(p.updated_at)}</span>${isActive ? `<button class="btn xs" onclick="refreshProfile('${p.uid.replace(/'/g, "\\'")}', false)" title="Refresh direct">↻D</button><button class="btn xs primary" onclick="refreshProfile('${p.uid.replace(/'/g, "\\'")}', true)" title="Refresh via proxy">↻P</button>` : ''}</td>
       <td><div class="btn-group" style="gap:6px">${isActive ? `<button class="btn xs" onclick="openCronModal('${p.uid.replace(/'/g, "\\'")}','${escapeHtml(p.cron || '')}')" title="Edit update schedule">Edit</button>` : ''}${!isActive ? `<button class="btn xs success" id="btn-activate-${p.uid.replace(/'/g, "")}" onclick="activateProfile('${p.uid.replace(/'/g, "\\'")}', this)" title="Activate this profile">Activate</button>` : ''}<button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${p.uid}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
     </tr>`;
   }).join('');
@@ -1191,6 +1234,14 @@ async function activateProfile(uid, btn) {
   }
   catch (e) { showToast('Failed to activate: ' + e.message, 'error'); }
   finally { if (b) { b.disabled = false; b.textContent = 'Activate'; } }
+}
+
+async function refreshProfile(uid, useProxy) {
+  try {
+    await api('POST', `/api/profiles/${uid}/refresh`, { use_proxy: useProxy });
+    showToast('Profile refreshed');
+    loadProfiles();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
 }
 
 // Profiles
@@ -1281,20 +1332,13 @@ function renderRules() {
 
 // Connections
 function startConnections() {
-  connPaused = false; connCountdown = 5;
+  connPaused = false;
   document.getElementById('btn-pause-conn').innerHTML = '<svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
   loadConnections();
-  if (connRefreshInterval) clearInterval(connRefreshInterval);
-  connRefreshInterval = setInterval(() => {
-    if (!connPaused) {
-      connCountdown--;
-      if (connCountdown <= 0) { connCountdown = 5; loadConnections(); }
-      document.getElementById('conn-countdown-text').textContent = connCountdown + 's';
-    }
-  }, 1000);
+  onConnRefreshChange();
 }
 
-function stopConnections() { if (connRefreshInterval) { clearInterval(connRefreshInterval); connRefreshInterval = null; } }
+function stopConnections() { if (connRefreshTimer) { clearInterval(connRefreshTimer); connRefreshTimer = null; } }
 
 function toggleConnPause() {
   connPaused = !connPaused;
@@ -1302,7 +1346,13 @@ function toggleConnPause() {
   btn.innerHTML = connPaused
     ? '<svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.102v3.68a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l3.197-2.132V9.102"/></svg> Resume'
     : '<svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
-  if (!connPaused) connCountdown = 5;
+}
+
+function onConnRefreshChange() {
+  const intervalEl = document.getElementById('conn-refresh-interval');
+  const interval = intervalEl ? parseInt(intervalEl.value) : 5000;
+  if (connRefreshTimer) { clearInterval(connRefreshTimer); connRefreshTimer = null; }
+  if (interval > 0) { connRefreshTimer = setInterval(loadConnections, interval); }
 }
 
 async function loadConnections() {
@@ -1315,10 +1365,8 @@ async function loadConnections() {
     document.getElementById('conn-total').textContent = connections.length;
     document.getElementById('conn-upload').textContent = formatBytes(up) + '/s';
     document.getElementById('conn-download').textContent = formatBytes(dn) + '/s';
-    let totalUpload = 0, totalDownload = 0;
-    connections.forEach(c => { totalUpload += c.upload || 0; totalDownload += c.download || 0; });
-    document.getElementById('conn-cumulative-upload').textContent = formatBytes(totalUpload);
-    document.getElementById('conn-cumulative-download').textContent = formatBytes(totalDownload);
+    document.getElementById('conn-cumulative-upload').textContent = formatBytes(data.uploadTotal || 0);
+    document.getElementById('conn-cumulative-download').textContent = formatBytes(data.downloadTotal || 0);
     if (connections.length === 0) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; pg.style.display = 'none'; return; }
     l.style.display = 'none'; t.style.display = 'table'; e.style.display = 'none';
     const totalPages = Math.max(1, Math.ceil(connections.length / connPageSize));
@@ -1449,6 +1497,7 @@ async function savePorts() {
 }
 
 let logRefreshTimer = null;
+let dashRefreshTimer = null;
 
 function loadLogs() {
   const source = document.getElementById('log-source').value;
@@ -1468,15 +1517,6 @@ function onLogRefreshChange() {
   if (logRefreshTimer) { clearInterval(logRefreshTimer); logRefreshTimer = null; }
   if (interval > 0) { logRefreshTimer = setInterval(loadLogs, interval); }
 }
-
-// Load logs when switching to settings tab
-const observer = new MutationObserver(() => {
-  if (document.getElementById('view-settings')?.style.display !== 'none') {
-    loadLogs();
-    onLogRefreshChange();
-  }
-});
-document.querySelectorAll('.view').forEach(v => observer.observe(v, { attributes: true, attributeFilter: ['style'] }));
 
 document.addEventListener('DOMContentLoaded', () => { loadDashboard(); });
 

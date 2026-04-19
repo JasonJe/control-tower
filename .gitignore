@@ -1,5 +1,8 @@
 .claude
 .gitignore
+CLAUDE.md
+worktrees/
+.gitignore
 
 target/
 .worktrees/

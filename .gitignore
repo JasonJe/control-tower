@@ -3,6 +3,7 @@
 CLAUDE.md
 worktrees/
 .gitignore
+docs/
 
 target/
 .worktrees/

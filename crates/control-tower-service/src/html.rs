@@ -80,6 +80,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .card:hover{box-shadow:var(--shadow)}
 .card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
 .card-title{font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.6px}
+.card-actions{display:flex;gap:8px;align-items:center}
 .card-value{font-size:28px;font-weight:700;color:var(--text);letter-spacing:-.5px;line-height:1.2}
 .card-sub{font-size:12px;color:var(--text3);margin-top:4px}
 .dash-hint{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--accent-light);border:1px solid var(--accent);border-radius:var(--radius);margin-bottom:14px;font-size:13px;color:var(--text)}
@@ -121,11 +122,19 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .form-group{flex:1;min-width:160px;margin-bottom:0}
 .form-group.narrow{min-width:120px}
 .form-label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px}
+.form-grid{display:flex;flex-direction:column;gap:12px}
 .form-input{width:100%;padding:9px 13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-size:13px;transition:border-color 150ms,box-shadow 150ms;font-family:inherit}
 .form-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
 .form-input::placeholder{color:var(--text3)}
 .form-select{width:100%;padding:9px 13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-size:13px;cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
 .form-select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
+
+/* Port settings form */
+.port-grid{display:flex;flex-direction:column;gap:10px}
+.port-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.port-label{font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap;min-width:80px}
+.port-input{width:100px;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-size:13px;text-align:right;transition:border-color 150ms,box-shadow 150ms}
+.port-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
 
 /* Tables */
 .table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow-sm)}
@@ -579,11 +588,51 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           </div>
 
           <div class="card">
-            <div class="card-header"><div class="card-title">Port Information</div></div>
-            <div class="info-grid">
-              <div class="info-row"><span class="info-key">HTTP Port</span><span class="info-val" id="port-http">7890</span></div>
-              <div class="info-row"><span class="info-key">SOCKS5 Port</span><span class="info-val" id="port-socks5">7891</span></div>
-              <div class="info-row"><span class="info-key">API Port</span><span class="info-val" id="port-api">9090</span></div>
+            <div class="card-header">
+              <div class="card-title">Mihomo Ports</div>
+              <div class="card-actions">
+                <button class="btn primary sm" id="savePortsBtn" onclick="savePorts()" style="display:none">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                  Save
+                </button>
+                <button class="btn secondary sm" id="cancelPortsBtn" onclick="cancelEditPorts()" style="display:none">Cancel</button>
+                <button class="btn sm" id="editPortsBtn" onclick="editPorts()">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                  Edit
+                </button>
+              </div>
+            </div>
+            <div id="ports-display">
+              <div class="info-grid">
+                <div class="info-row">
+                  <span class="info-key">HTTP Port</span>
+                  <span class="info-val" id="port-http-display">-</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-key">SOCKS5 Port</span>
+                  <span class="info-val" id="port-socks5-display">-</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-key">API Port</span>
+                  <span class="info-val" id="port-api-display">-</span>
+                </div>
+              </div>
+            </div>
+            <div id="ports-edit" style="display:none">
+              <div class="port-grid">
+                <div class="port-row">
+                  <label class="port-label">HTTP Port</label>
+                  <input type="number" id="port-http" class="port-input" min="1" max="65535">
+                </div>
+                <div class="port-row">
+                  <label class="port-label">SOCKS5 Port</label>
+                  <input type="number" id="port-socks5" class="port-input" min="1" max="65535">
+                </div>
+                <div class="port-row">
+                  <label class="port-label">API Port</label>
+                  <input type="number" id="port-api" class="port-input" min="1" max="65535">
+                </div>
+              </div>
             </div>
           </div>
 
@@ -718,6 +767,7 @@ function switchView(view) {
   else if (view === 'profiles') loadProfiles();
   else if (view === 'rules') loadRules();
   else if (view === 'connections') startConnections();
+  else if (view === 'settings') loadSettings();
 }
 
 function formatBytes(b) {
@@ -1264,6 +1314,88 @@ async function closeConnection(id) {
 async function restartService() {
   try { showToast('Restarting service...', 'warning'); await api('POST', '/api/service/stop'); await new Promise(r => setTimeout(r, 1500)); await api('POST', '/api/service/start'); showToast('Service restarted'); loadDashboard(); }
   catch (e) { showToast('Failed to restart: ' + e.message, 'error'); }
+}
+
+async function loadSettings() {
+  try {
+    const resp = await api('GET', '/api/settings');
+    if (resp) {
+      const http = resp.http_port || 7890;
+      const socks = resp.socks_port || 7891;
+      const apip = resp.api_port || 9090;
+      // Update display spans
+      document.getElementById('port-http-display').textContent = http;
+      document.getElementById('port-socks5-display').textContent = socks;
+      document.getElementById('port-api-display').textContent = apip;
+      // Update input values (hidden until edit)
+      document.getElementById('port-http').value = http;
+      document.getElementById('port-socks5').value = socks;
+      document.getElementById('port-api').value = apip;
+    }
+  } catch (e) {
+    showToast('Failed to load settings: ' + e.message, 'error');
+  }
+}
+
+function editPorts() {
+  // Switch to edit mode: show inputs, hide displays
+  document.getElementById('ports-display').style.display = 'none';
+  document.getElementById('ports-edit').style.display = 'block';
+  // Toggle buttons
+  document.getElementById('editPortsBtn').style.display = 'none';
+  document.getElementById('savePortsBtn').style.display = '';
+  document.getElementById('cancelPortsBtn').style.display = '';
+}
+
+function cancelEditPorts() {
+  // Switch to display mode: show displays, hide inputs
+  document.getElementById('ports-display').style.display = 'block';
+  document.getElementById('ports-edit').style.display = 'none';
+  // Toggle buttons
+  document.getElementById('editPortsBtn').style.display = '';
+  document.getElementById('savePortsBtn').style.display = 'none';
+  document.getElementById('cancelPortsBtn').style.display = 'none';
+  // Reload to reset input values to current settings
+  loadSettings();
+}
+
+async function savePorts() {
+  const btn = document.getElementById('savePortsBtn');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M12 6v6l4 2"/></svg> Saving...';
+
+  try {
+    const http_port = parseInt(document.getElementById('port-http').value);
+    const socks_port = parseInt(document.getElementById('port-socks5').value);
+    const api_port = parseInt(document.getElementById('port-api').value);
+
+    // Validate ports
+    if (isNaN(http_port) || http_port < 1 || http_port > 65535) {
+      throw new Error('HTTP port must be between 1 and 65535');
+    }
+    if (isNaN(socks_port) || socks_port < 1 || socks_port > 65535) {
+      throw new Error('SOCKS5 port must be between 1 and 65535');
+    }
+    if (isNaN(api_port) || api_port < 1 || api_port > 65535) {
+      throw new Error('API port must be between 1 and 65535');
+    }
+
+    // Save settings and apply port changes (updates config.yaml + restarts Mihomo)
+    await api('PUT', '/api/settings', { http_port, socks_port, api_port });
+    await api('POST', '/api/settings/apply-ports', { http_port, socks_port });
+    showToast('Ports saved and Mihomo restarted', 'success');
+    // Reset to display mode and reload settings
+    loadSettings();
+    cancelEditPorts();
+    // Reset to display mode and reload settings
+    loadSettings();
+    cancelEditPorts();
+  } catch (e) {
+    showToast('Failed to save ports: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => { loadDashboard(); });

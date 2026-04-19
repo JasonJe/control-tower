@@ -840,18 +840,109 @@ pub async fn service_stop(
     }
 }
 
+/// GET /api/settings - Return current settings
+pub async fn get_settings(
+    state: web::Data<Arc<ServiceState>>,
+) -> HttpResponse {
+    let settings = state.get_settings();
+    HttpResponse::Ok().json(ApiResponse::success(settings))
+}
+
+/// Request body for updating settings
+#[derive(Debug, Deserialize)]
+pub struct UpdateSettingsRequest {
+    #[serde(rename = "api_host", default)]
+    pub api_host: Option<String>,
+    #[serde(rename = "api_port", default)]
+    pub api_port: Option<u16>,
+    #[serde(rename = "http_port", default)]
+    pub http_port: Option<u16>,
+    #[serde(rename = "socks_port", default)]
+    pub socks_port: Option<u16>,
+    #[serde(rename = "service_port", default)]
+    pub service_port: Option<u16>,
+    #[serde(rename = "tun_enabled", default)]
+    pub tun_enabled: Option<bool>,
+    #[serde(rename = "log_level", default)]
+    pub log_level: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+/// PUT /api/settings - Update and persist settings
+pub async fn put_settings(
+    state: web::Data<Arc<ServiceState>>,
+    body: web::Json<UpdateSettingsRequest>,
+) -> HttpResponse {
+    // Build SettingsData from request
+    let settings = crate::settings::SettingsData {
+        api_host: body.api_host.clone(),
+        api_port: body.api_port,
+        http_port: body.http_port,
+        socks_port: body.socks_port,
+        service_port: body.service_port,
+        tun_enabled: body.tun_enabled,
+        log_level: body.log_level.clone(),
+        mode: body.mode.clone(),
+    };
+
+    let state = state.clone();
+    match task::spawn_blocking(move || state.save_settings(&settings)).await {
+        Ok(Ok(())) => {
+            tracing::info!("Settings updated via API");
+            HttpResponse::Ok().json(ApiResponse::<()>::success(()))
+        }
+        Ok(Err(e)) => {
+            tracing::error!("Failed to save settings: {}", e);
+            HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e))
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),
+    }
+}
+
+/// POST /api/settings/apply-ports - Apply port settings and restart Mihomo
+#[derive(Debug, Deserialize)]
+pub struct ApplyPortsRequest {
+    #[serde(rename = "http_port")]
+    pub http_port: u16,
+    #[serde(rename = "socks_port")]
+    pub socks_port: u16,
+}
+
+pub async fn apply_port_settings(
+    state: web::Data<Arc<ServiceState>>,
+    body: web::Json<ApplyPortsRequest>,
+) -> HttpResponse {
+    let http_port = body.http_port;
+    let socks_port = body.socks_port;
+
+    let state = state.clone();
+    match task::spawn_blocking(move || state.apply_port_settings(http_port, socks_port)).await {
+        Ok(Ok(())) => {
+            tracing::info!("Port settings applied: http={}, socks={}", http_port, socks_port);
+            HttpResponse::Ok().json(ApiResponse::<()>::success(()))
+        }
+        Ok(Err(e)) => {
+            tracing::error!("Failed to apply port settings: {}", e);
+            HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e))
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),
+    }
+}
+
 /// GET /api/proxies/{name}/delay - Get proxy delay
 pub async fn proxy_delay(
-    _state: web::Data<Arc<ServiceState>>,
+    state: web::Data<Arc<ServiceState>>,
     path: web::Path<String>,
     query: web::Query<ProxyDelayRequest>,
 ) -> HttpResponse {
     let name = path.into_inner();
 
     // Call Mihomo's delay API
+    let api_url = state.get_api_url();
     let url = format!(
-        "http://127.0.0.1:9090/proxies/{}/delay?timeout={}",
-        name, query.timeout
+        "{}/proxies/{}/delay?timeout={}",
+        api_url, name, query.timeout
     );
 
     let client = match reqwest::Client::builder()
@@ -885,11 +976,14 @@ pub async fn proxy_delay(
 
 /// POST /api/proxies/delay - Get proxy delay (JSON body)
 pub async fn proxy_delay_post(
-    _state: web::Data<Arc<ServiceState>>,
+    state: web::Data<Arc<ServiceState>>,
     body: web::Json<ProxyDelayPostRequest>,
 ) -> HttpResponse {
     let name_or_idx = &body.name;
     let timeout_ms = body.timeout;
+
+    // Get the API URL from state
+    let api_url = state.get_api_url();
 
     // Build a single HTTP client for all requests
     let client = match reqwest::Client::builder()
@@ -904,8 +998,8 @@ pub async fn proxy_delay_post(
     };
 
     // Step 1: Resolve name (index -> proxy name) and get current GLOBAL selection
-    let proxies_url = "http://127.0.0.1:9090/proxies";
-    let proxies_response = match client.get(proxies_url).send().await {
+    let proxies_url = format!("{}/proxies", api_url);
+    let proxies_response = match client.get(&proxies_url).send().await {
         Ok(r) => r,
         Err(e) => {
             return HttpResponse::InternalServerError()
@@ -970,9 +1064,9 @@ pub async fn proxy_delay_post(
     tracing::debug!("Latency test: target={}, original={}", target_proxy, original_proxy);
 
     // Step 2: Temporarily select the target proxy
-    let select_url = "http://127.0.0.1:9090/proxies/GLOBAL";
+    let select_url = format!("{}/proxies/GLOBAL", api_url);
     let select_response = match client
-        .put(select_url)
+        .put(&select_url)
         .json(&serde_json::json!({ "name": target_proxy }))
         .timeout(std::time::Duration::from_millis(5000))
         .send()

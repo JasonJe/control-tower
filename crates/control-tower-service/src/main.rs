@@ -7,6 +7,7 @@ mod scheduler;
 mod api;
 mod html;
 mod http_server;
+mod settings;
 
 use serde::{Deserialize, Serialize};
 use std::path::{PathBuf, Path};
@@ -100,6 +101,9 @@ pub struct ServiceStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub circuit_breaker_remaining_secs: Option<u64>,
 }
+
+/// Settings data structure matching settings.yaml
+pub use settings::SettingsData;
 
 /// Default socket path for IPC
 pub fn default_socket_path() -> PathBuf {
@@ -202,6 +206,10 @@ pub struct ServiceState {
     cron_jobs: RwLock<Vec<ProfileCronJob>>,
     /// Last config path used to start Mihomo (used for Restart)
     last_config_path: RwLock<Option<PathBuf>>,
+    /// Mihomo API host (default: 127.0.0.1)
+    api_host: RwLock<String>,
+    /// Mihomo API port (default: 9090)
+    api_port: RwLock<u16>,
 }
 
 impl Default for ServiceState {
@@ -218,7 +226,172 @@ impl ServiceState {
             log_buffer: RwLock::new(VecDeque::with_capacity(MAX_SERVICE_LOG_LINES)),
             cron_jobs: RwLock::new(Vec::new()),
             last_config_path: RwLock::new(None),
+            api_host: RwLock::new("127.0.0.1".to_string()),
+            api_port: RwLock::new(9090),
         }
+    }
+
+    /// Load api_host and api_port from settings.yaml
+    pub fn load_settings(&self) {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let settings_path = exe_dir.join("settings.yaml");
+        if !settings_path.exists() {
+            tracing::info!("settings.yaml not found, using defaults");
+            return;
+        }
+
+        let content = match std::fs::read_to_string(&settings_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Failed to read settings.yaml: {}", e);
+                return;
+            }
+        };
+
+        #[derive(serde::Deserialize)]
+        struct Settings {
+            api_host: Option<String>,
+            api_port: Option<u16>,
+        }
+
+        match serde_yaml_ng::from_str::<Settings>(&content) {
+            Ok(settings) => {
+                if let Some(host) = settings.api_host {
+                    *self.api_host.write() = host;
+                }
+                if let Some(port) = settings.api_port {
+                    *self.api_port.write() = port;
+                }
+                tracing::info!("Loaded settings: api_host={}, api_port={}",
+                    self.api_host.read(), self.api_port.read());
+            }
+            Err(e) => {
+                tracing::warn!("Failed to parse settings.yaml: {}", e);
+            }
+        }
+    }
+
+    /// Get the Mihomo API base URL
+    pub fn get_api_url(&self) -> String {
+        let host = self.api_host.read().clone();
+        let port = *self.api_port.read();
+        format!("http://{}:{}", host, port)
+    }
+
+    /// Ensure settings.yaml exists with default values, create if missing
+    pub fn ensure_settings_file() {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let settings_path = exe_dir.join("settings.yaml");
+
+        if settings_path.exists() {
+            return;
+        }
+
+        // Create default settings.yaml
+        let default_settings = SettingsData {
+            api_host: Some("127.0.0.1".to_string()),
+            api_port: Some(9090),
+            http_port: Some(7890),
+            socks_port: Some(7891),
+            service_port: Some(8080),
+            tun_enabled: Some(false),
+            log_level: Some("info".to_string()),
+            mode: Some("rule".to_string()),
+        };
+
+        let yaml = serde_yaml_ng::to_string(&default_settings)
+            .unwrap_or_else(|e| {
+                tracing::error!("Serialized settings failed: {}", e);
+                "api_host: 127.0.0.1\napi_port: 9090\nhttp_port: 7890\nsocks_port: 7891\nservice_port: 8080\ntun_enabled: false\nlog_level: info\nmode: rule\n".to_string()
+            });
+
+        if let Err(e) = std::fs::write(&settings_path, yaml) {
+            tracing::error!("Failed to create default settings.yaml: {}", e);
+        } else {
+            tracing::info!("Created default settings.yaml");
+        }
+    }
+
+    /// Get all settings from settings.yaml
+    pub fn get_settings(&self) -> SettingsData {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let settings_path = exe_dir.join("settings.yaml");
+        if !settings_path.exists() {
+            return SettingsData::default();
+        }
+
+        let content = match std::fs::read_to_string(&settings_path) {
+            Ok(c) => c,
+            Err(_) => return SettingsData::default(),
+        };
+
+        serde_yaml_ng::from_str(&content).unwrap_or_default()
+    }
+
+    /// Save settings to settings.yaml
+    pub fn save_settings(&self, settings: &SettingsData) -> Result<(), String> {
+        let exe_dir = std::env::current_exe()
+            .map_err(|e| format!("Failed to get exe path: {}", e))?
+            .parent()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| "Failed to get exe parent".to_string())?;
+
+        let settings_path = exe_dir.join("settings.yaml");
+
+        let yaml_str = serde_yaml_ng::to_string(settings)
+            .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+
+        std::fs::write(&settings_path, yaml_str)
+            .map_err(|e| format!("Failed to write settings.yaml: {}", e))?;
+
+        // Reload settings into state
+        self.load_settings();
+
+        tracing::info!("Settings saved to settings.yaml");
+        Ok(())
+    }
+
+    /// Apply port settings: save to settings.yaml, update config.yaml, restart Mihomo
+    pub fn apply_port_settings(&self, http_port: u16, socks_port: u16) -> Result<(), String> {
+        // Step 1: Update config.yaml with new ports
+        self.update_config_ports(http_port, socks_port)?;
+
+        // Step 2: Save to settings.yaml (only port-related fields)
+        let settings = SettingsData {
+            api_host: Some("127.0.0.1".to_string()),
+            api_port: Some(*self.api_port.read()),
+            http_port: Some(http_port),
+            socks_port: Some(socks_port),
+            service_port: Some(8080),
+            tun_enabled: Some(false),
+            log_level: Some("info".to_string()),
+            mode: None,
+        };
+        self.save_settings(&settings)?;
+
+        // Step 3: Restart Mihomo with updated config
+        let config_path = self.last_config_path.read().clone();
+        if config_path.is_some() {
+            self.restart_mihomo()?;
+        } else {
+            // Mihomo not running, just update config - user can start manually or config will be used on next start
+            tracing::info!("Mihomo not running, config updated but not restarted");
+        }
+
+        tracing::info!("Port settings applied");
+        Ok(())
     }
 
     /// Append a log line
@@ -348,10 +521,10 @@ impl ServiceState {
         drop(self.manager.read());
 
         // Clash API endpoint
-        let url = "http://127.0.0.1:9090/proxies";
+        let url = format!("{}/proxies", self.get_api_url());
 
         // Make HTTP request to Clash API
-        let response = reqwest::blocking::get(url)
+        let response = reqwest::blocking::get(&url)
             .map_err(|e| format!("Failed to query Clash API: {}", e))?;
 
         if !response.status().is_success() {
@@ -372,10 +545,10 @@ impl ServiceState {
         drop(self.manager.read());
 
         // Clash API endpoint
-        let url = "http://127.0.0.1:9090/connections";
+        let url = format!("{}/connections", self.get_api_url());
 
         // Make HTTP request to Clash API
-        let response = reqwest::blocking::get(url)
+        let response = reqwest::blocking::get(&url)
             .map_err(|e| format!("Failed to query Clash API: {}", e))?;
 
         if !response.status().is_success() {
@@ -396,7 +569,7 @@ impl ServiceState {
         drop(self.manager.read());
 
         // Clash API endpoint
-        let url = format!("http://127.0.0.1:9090/connections/{}", id);
+        let url = format!("{}/connections/{}", self.get_api_url(), id);
 
         // Create client and send DELETE request
         let client = reqwest::blocking::Client::new();
@@ -518,9 +691,9 @@ impl ServiceState {
 
         // Step 3: Hot-patch Mihomo for immediate effect
         let client = reqwest::blocking::Client::new();
-        let url = "http://127.0.0.1:9090/configs";
+        let url = format!("{}/configs", self.get_api_url());
         let _ = client
-            .patch(url)
+            .patch(&url)
             .json(&serde_json::json!({ "mode": mode }))
             .timeout(std::time::Duration::from_secs(5))
             .send();
@@ -608,6 +781,40 @@ impl ServiceState {
         Ok(())
     }
 
+    /// Update port settings in config.yaml (mixed-port, socks-port, redir-port, tproxy-port)
+    fn update_config_ports(&self, http_port: u16, socks_port: u16) -> Result<(), String> {
+        let exe_dir = std::env::current_exe()
+            .map_err(|e| format!("Failed to get exe path: {}", e))?
+            .parent()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| "Failed to get exe parent".to_string())?;
+
+        let config_path = exe_dir.join("config.yaml");
+        if !config_path.exists() {
+            return Err("config.yaml not found".to_string());
+        }
+
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read config.yaml: {}", e))?;
+
+        let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)
+            .map_err(|e| format!("Failed to parse config.yaml: {}", e))?;
+
+        if let Some(map) = yaml.as_mapping_mut() {
+            map.insert("mixed-port".into(), http_port.into());
+            map.insert("socks-port".into(), socks_port.into());
+        }
+
+        let new_content = serde_yaml_ng::to_string(&yaml)
+            .map_err(|e| format!("Failed to serialize config.yaml: {}", e))?;
+
+        std::fs::write(&config_path, new_content)
+            .map_err(|e| format!("Failed to write config.yaml: {}", e))?;
+
+        tracing::info!("Ports updated in config.yaml: http={}, socks={}", http_port, socks_port);
+        Ok(())
+    }
+
     /// Restart Mihomo with the current active config
     pub fn restart_mihomo(&self) -> Result<(), String> {
         // Get the last config path
@@ -636,7 +843,7 @@ impl ServiceState {
     /// Select a proxy via Clash API
     fn select_proxy(&self, name: &str) -> Result<(), String> {
         let client = reqwest::blocking::Client::new();
-        let url = format!("http://127.0.0.1:9090/proxies/GLOBAL");
+        let url = format!("{}/proxies/GLOBAL", self.get_api_url());
 
         let response = client
             .put(&url)
@@ -2113,6 +2320,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create service state
     let state = Arc::new(ServiceState::new());
+
+    // Ensure settings.yaml exists (create with defaults if missing)
+    ServiceState::ensure_settings_file();
+
+    // Load settings from settings.yaml
+    state.load_settings();
 
     // Only start HTTP server when not in foreground mode (e2e tests use --foreground)
     // This avoids port binding conflicts between test runs

@@ -79,6 +79,8 @@ impl ActiveConfigStore {
             "bind-address",
             "log-level",
             "dns",
+            "socks-port",
+            "http-port",
         ];
         let mut overrides = serde_yaml_ng::Mapping::new();
         for key in keys {

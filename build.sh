@@ -180,85 +180,199 @@ create_dist() {
         cp profiles.yaml "$dist/"
     fi
 
+    # Copy settings.yaml if exists, otherwise create default
+    if [ -f "settings.yaml" ]; then
+        cp settings.yaml "$dist/"
+    else
+        cat > "$dist/settings.yaml" << 'SETTINGS'
+api_host: 127.0.0.1
+api_port: 9090
+http_port: 7890
+socks_port: 7891
+service_port: 8080
+tun_enabled: false
+log_level: info
+mode: rule
+SETTINGS
+    fi
+
     # Download Mihomo and geoip database
     download_mihomo "$dist"
 
-    # Copy service script
-    cat > "$dist/install-service.sh" << 'EOF'
+    # Create install service script
+    cat > "$dist/install-service.sh" << 'INSTALL_EOF'
 #!/bin/bash
-# Control Tower Service Installer
+# ctsvc Installer (systemd service)
 # Run with: sudo ./install-service.sh
 
-echo "Installing Control Tower service..."
+set -e
 
-# Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BINARY="$SCRIPT_DIR/ctsvc"
-CONFIG_DIR="${HOME}/.config/control-tower"
+INSTALL_DIR="/opt/ctsvc"
+BINARY="$INSTALL_DIR/ctsvc"
+SERVICE_NAME="ctsvc"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+
+echo "Installing ${SERVICE_NAME} service to $INSTALL_DIR..."
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
-    echo "Please run as root: sudo $0"
+    echo "ERROR: Please run as root: sudo $0"
     exit 1
 fi
 
-# Create config directory
-mkdir -p "$CONFIG_DIR"
+# Check if binary exists in install source
+if [ ! -f "$SCRIPT_DIR/ctsvc" ]; then
+    echo "ERROR: Binary not found: $SCRIPT_DIR/ctsvc"
+    exit 1
+fi
+
+# Stop existing service if running
+if systemctl is-active --quiet ${SERVICE_NAME} 2>/dev/null; then
+    echo "Stopping existing ${SERVICE_NAME}..."
+    systemctl stop ${SERVICE_NAME} 2>/dev/null || true
+fi
+
+# Create install directory
+echo "Creating install directory..."
+mkdir -p "$INSTALL_DIR"
+
+# Copy files to install directory
+echo "Copying files to $INSTALL_DIR..."
+cp "$SCRIPT_DIR/ctsvc" "$INSTALL_DIR/"
+cp "$SCRIPT_DIR/ctctl" "$INSTALL_DIR/"
+if [ -f "$SCRIPT_DIR/settings.yaml" ]; then
+    cp "$SCRIPT_DIR/settings.yaml" "$INSTALL_DIR/"
+fi
+if [ -d "$SCRIPT_DIR/mihomo" ]; then
+    cp -r "$SCRIPT_DIR/mihomo" "$INSTALL_DIR/"
+fi
+
+# Make binary executable
+chmod +x "$BINARY"
+
+echo "Running pre-installation checks..."
+
+# Check if ctsvc is already running
+if pgrep -x "ctsvc" > /dev/null 2>&1; then
+    echo "WARNING: ctsvc is already running!"
+    echo "Stopping existing instance..."
+    systemctl stop ${SERVICE_NAME} 2>/dev/null || true
+    sleep 1
+fi
+
+# Check if socket file exists (stale from previous run)
+SOCKET_PATH="/tmp/ctsvc.sock"
+if [ -S "$SOCKET_PATH" ]; then
+    echo "Removing stale socket file: $SOCKET_PATH"
+    rm -f "$SOCKET_PATH"
+fi
+
+# Check if service port (8080) is available
+SERVICE_PORT=8080
+if netstat -tuln 2>/dev/null | grep -q ":${SERVICE_PORT} " || ss -tuln 2>/dev/null | grep -q ":${SERVICE_PORT} "; then
+    echo "WARNING: Port ${SERVICE_PORT} is already in use!"
+fi
 
 # Create systemd service file
-cat > /etc/systemd/system/control-tower.service << SERVICE
+cat > "$SERVICE_FILE" << SERVICE
 [Unit]
-Description=Control Tower Service
+Description=ctsvc - Control Tower Service
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=${BINARY} --foreground --socket ${CONFIG_DIR}/ctsvc.sock
+ExecStart="${BINARY}"
 Restart=on-failure
 RestartSec=5
 User=${USER}
+Environment="RUST_LOG=info"
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=false
+PrivateTmp=true
+ReadWritePaths=/opt/ctsvc
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ctsvc
 
 [Install]
 WantedBy=multi-user.target
 SERVICE
 
-# Reload systemd and enable service
+echo "Enabling and starting service..."
 systemctl daemon-reload
-systemctl enable control-tower.service
+systemctl enable ${SERVICE_NAME}
 
-echo ""
-echo "Service installed successfully!"
-echo ""
-echo "To start:   sudo systemctl start control-tower"
-echo "To stop:    sudo systemctl stop control-tower"
-echo "To status:  sudo systemctl status control-tower"
-echo ""
-EOF
+if systemctl start ${SERVICE_NAME}; then
+    echo ""
+    echo "========================================"
+    echo "  ${SERVICE_NAME} installed successfully!"
+    echo "========================================"
+    echo ""
+    echo "Commands:"
+    echo "  Start:    sudo systemctl start ${SERVICE_NAME}"
+    echo "  Stop:     sudo systemctl stop ${SERVICE_NAME}"
+    echo "  Status:   sudo systemctl status ${SERVICE_NAME}"
+    echo "  Logs:     sudo journalctl -u ${SERVICE_NAME} -f"
+    echo ""
+    echo "Web UI: http://127.0.0.1:${SERVICE_PORT}"
+    echo ""
+else
+    echo ""
+    echo "ERROR: Failed to start ${SERVICE_NAME}"
+    echo "Check logs with: sudo journalctl -u ${SERVICE_NAME} -xe"
+    exit 1
+fi
+INSTALL_EOF
 
     chmod +x "$dist/install-service.sh"
 
-    # Create uninstall script
-    cat > "$dist/uninstall-service.sh" << 'EOF'
+    # Create uninstall service script
+    cat > "$dist/uninstall-service.sh" << 'UNINSTALL_EOF'
 #!/bin/bash
-# Control Tower Service Uninstaller
+# ctsvc Uninstaller (systemd service)
 # Run with: sudo ./uninstall-service.sh
 
-echo "Uninstalling Control Tower service..."
+set -e
+
+SERVICE_NAME="ctsvc"
+INSTALL_DIR="/opt/ctsvc"
+
+echo "Uninstalling ${SERVICE_NAME} service..."
 
 if [ "$EUID" -ne 0 ]; then
-    echo "Please run as root: sudo $0"
+    echo "ERROR: Please run as root: sudo $0"
     exit 1
 fi
 
-systemctl stop control-tower.service 2>/dev/null || true
-systemctl disable control-tower.service 2>/dev/null || true
-rm /etc/systemd/system/control-tower.service
-systemctl daemon-reload
+if systemctl is-active --quiet ${SERVICE_NAME} 2>/dev/null; then
+    echo "Stopping ${SERVICE_NAME}..."
+    systemctl stop ${SERVICE_NAME} 2>/dev/null || true
+fi
+
+if systemctl is-enabled --quiet ${SERVICE_NAME} 2>/dev/null; then
+    echo "Disabling ${SERVICE_NAME}..."
+    systemctl disable ${SERVICE_NAME} 2>/dev/null || true
+fi
+
+if [ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]; then
+    echo "Removing systemd service file..."
+    rm -f /etc/systemd/system/${SERVICE_NAME}.service
+    systemctl daemon-reload
+fi
+
+# Remove installed files
+if [ -d "$INSTALL_DIR" ]; then
+    echo "Removing installed files from $INSTALL_DIR..."
+    rm -rf "$INSTALL_DIR"
+fi
 
 echo ""
-echo "Service uninstalled successfully!"
-echo "Config files preserved at ~/.config/control-tower/"
-EOF
+echo "========================================"
+echo "  ${SERVICE_NAME} uninstalled successfully!"
+echo "========================================"
+UNINSTALL_EOF
 
     chmod +x "$dist/uninstall-service.sh"
 

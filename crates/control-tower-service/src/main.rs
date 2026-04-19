@@ -708,7 +708,7 @@ impl ServiceState {
         Ok(())
     }
 
-    /// Save mode to settings.yaml
+    /// Save mode to settings.yaml (preserves all other settings)
     fn save_mode(&self, mode: &str) -> Result<(), String> {
         let exe_dir = std::env::current_exe()
             .map_err(|e| format!("Failed to get exe path: {}", e))?
@@ -718,31 +718,18 @@ impl ServiceState {
 
         let settings_path = exe_dir.join("settings.yaml");
 
-        #[derive(serde::Deserialize, serde::Serialize)]
-        #[allow(dead_code)]
-        struct Settings {
-            #[serde(default)]
-            mode: Option<String>,
-            #[serde(default, skip_serializing_if = "Option::is_none")]
-            selected_proxy: Option<String>,
-        }
-
-        let content = if settings_path.exists() {
-            std::fs::read_to_string(&settings_path).unwrap_or_default()
+        // Read all existing settings to preserve them
+        let mut settings = if settings_path.exists() {
+            match std::fs::read_to_string(&settings_path) {
+                Ok(c) => serde_yaml_ng::from_str(&c).unwrap_or_default(),
+                Err(_) => SettingsData::default(),
+            }
         } else {
-            String::new()
+            SettingsData::default()
         };
-
-        let mut settings: Settings = serde_yaml_ng::from_str(&content).unwrap_or(Settings {
-            mode: None,
-            selected_proxy: None,
-        });
         settings.mode = Some(mode.to_string());
 
-        let yaml_str = serde_yaml_ng::to_string(&settings)
-            .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-        std::fs::write(&settings_path, yaml_str)
-            .map_err(|e| format!("Failed to write settings.yaml: {}", e))?;
+        self.save_settings(&settings)?;
 
         tracing::info!("Mode saved to settings.yaml: {}", mode);
         Ok(())
@@ -2061,7 +2048,7 @@ mod tests {
 // ============ Main Function Implementation ============
 
 use clap::Parser;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
 /// Command line arguments for the service
 #[derive(Parser, Debug)]
@@ -2083,13 +2070,23 @@ struct Args {
 }
 
 /// Global shutdown flag
-static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+static SHUTDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Setup signal handlers using tokio
+/// Setup signal handlers for SIGTERM and SIGINT
 fn setup_signal_handlers() {
-    // Note: In production, use tokio::signal::ctrl_c() or a proper signal crate
-    // For now, we just set a flag that can be checked
     SHUTDOWN.store(false, Ordering::SeqCst);
+
+    // Use low-level register with a closure that sets the flag
+    unsafe {
+        signal_hook::low_level::register(signal_hook::consts::SIGTERM, || {
+            SHUTDOWN.store(true, Ordering::SeqCst);
+        }).ok();
+        signal_hook::low_level::register(signal_hook::consts::SIGINT, || {
+            SHUTDOWN.store(true, Ordering::SeqCst);
+        }).ok();
+    }
+
+    tracing::info!("Signal handlers registered (SIGTERM, SIGINT)");
 }
 
 /// Main server loop
@@ -2313,10 +2310,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Control Tower Service v0.1.0");
     tracing::info!("Log directory: {}", log_dir.display());
 
-    // Determine socket path
+    // Determine socket path and service port
     let socket_path = args.socket.unwrap_or_else(|| paths.socket_path.clone());
+    let service_port = get_service_port();
 
     tracing::info!("Socket path: {}", socket_path.display());
+
+    // ============ Startup Checks ============
+
+    // Check if socket file already exists (another instance may be running)
+    if socket_path.exists() {
+        use std::os::unix::net::UnixStream;
+        if UnixStream::connect(&socket_path).is_ok() {
+            eprintln!("ERROR: ctsvc is already running (socket {} is active)", socket_path.display());
+            eprintln!("Hint: Stop the existing service first with: sudo systemctl stop ctsvc");
+            std::process::exit(1);
+        } else {
+            // Socket file exists but can't connect - stale socket, remove it
+            tracing::warn!("Removing stale socket file: {}", socket_path.display());
+            std::fs::remove_file(&socket_path).ok();
+        }
+    }
+
+    // Check if service port is available (skip in foreground mode)
+    if !args.foreground {
+        use std::net::TcpListener;
+        let addr = format!("0.0.0.0:{}", service_port);
+        match TcpListener::bind(&addr) {
+            Ok(listener) => {
+                drop(listener);
+                tracing::info!("Port {} is available", service_port);
+            }
+            Err(_) => {
+                eprintln!("ERROR: Port {} is already in use", service_port);
+                eprintln!("Hint: Stop the application using this port, or change service_port in settings.yaml");
+                std::process::exit(1);
+            }
+        }
+    }
 
     // Create service state
     let state = Arc::new(ServiceState::new());
@@ -2328,8 +2359,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.load_settings();
 
     // Only start HTTP server when not in foreground mode (e2e tests use --foreground)
-    // This avoids port binding conflicts between test runs
-    let service_port = get_service_port();
     if !args.foreground {
         let http_state = state.clone();
         std::thread::spawn(move || {

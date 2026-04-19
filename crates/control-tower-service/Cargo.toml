@@ -28,6 +28,7 @@ reqwest = { workspace = true }
 actix-web = { workspace = true }
 actix-rt = { workspace = true }
 uuid = { workspace = true }
+signal-hook = "0.3"
 
 [dev-dependencies]
 tokio-test = "0.4"

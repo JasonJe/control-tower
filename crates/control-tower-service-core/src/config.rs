@@ -56,6 +56,9 @@ impl ControlTowerPaths {
 }
 
 /// Service configuration — retained for backwards compatibility
+///
+/// **Deprecated:** Use `ControlTowerPaths` instead.
+#[deprecated(since = "0.2.0", note = "Use ControlTowerPaths instead")]
 #[derive(Debug, Clone)]
 pub struct ServiceConfig {
     /// Configuration directory
@@ -71,6 +74,7 @@ pub struct ServiceConfig {
     pub pid_file: PathBuf,
 }
 
+#[allow(deprecated)]
 impl Default for ServiceConfig {
     fn default() -> Self {
         // Use executable's directory as working directory
@@ -88,6 +92,7 @@ impl Default for ServiceConfig {
     }
 }
 
+#[allow(deprecated)]
 impl ServiceConfig {
     pub fn new() -> Self {
         Self::default()

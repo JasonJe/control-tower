@@ -435,9 +435,9 @@ pub async fn add_profile(
             .json(ApiResponse::<()>::error(format!("Failed to create profiles dir: {}", e)));
     }
 
-    // Generate a unique ID for the profile
-    let uid = uuid::Uuid::new_v4().to_string()[..8].to_string();
-    let profile_file = profiles_dir.join(format!("{}.yaml", uid));
+    // Generate a unique ID for the profile (use full UUID)
+    let uid = uuid::Uuid::new_v4().to_string();
+    let profile_file = profiles_dir.join(format!("{}.yaml", &uid[..8]));
 
     // Download the profile content
     let client = match reqwest::Client::builder()

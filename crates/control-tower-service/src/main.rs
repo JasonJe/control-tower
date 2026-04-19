@@ -369,13 +369,15 @@ impl ServiceState {
         self.update_config_ports(http_port, socks_port)?;
 
         // Step 2: Save to settings.yaml (only port-related fields)
+        // Read current tun_enabled from settings.yaml so we don't overwrite it
+        let tun_enabled = self.load_tun_enabled();
         let settings = SettingsData {
             api_host: Some("127.0.0.1".to_string()),
             api_port: Some(*self.api_port.read()),
             http_port: Some(http_port),
             socks_port: Some(socks_port),
             service_port: Some(8080),
-            tun_enabled: Some(false),
+            tun_enabled,
             log_level: Some("info".to_string()),
             mode: None,
         };
@@ -391,6 +393,182 @@ impl ServiceState {
         }
 
         tracing::info!("Port settings applied");
+        Ok(())
+    }
+
+    /// Read current tun_enabled from settings.yaml
+    fn load_tun_enabled(&self) -> Option<bool> {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let settings_path = exe_dir.join("settings.yaml");
+        if let Ok(content) = std::fs::read_to_string(&settings_path) {
+            #[derive(serde::Deserialize)]
+            struct Settings {
+                #[serde(rename = "tun_enabled", default)]
+                tun_enabled: Option<bool>,
+            }
+            if let Ok(settings) = serde_yaml_ng::from_str::<Settings>(&content) {
+                return settings.tun_enabled;
+            }
+        }
+        None
+    }
+
+    /// Apply TUN settings: update config.yaml tun section and settings.yaml tun_enabled
+    pub fn apply_tun_settings(&self, tun_enabled: bool) -> Result<(), String> {
+        // Step 1: Update config.yaml with tun section
+        self.update_config_tun(tun_enabled)?;
+
+        // Step 2: Save tun_enabled to settings.yaml
+        let http_port = self.load_http_port();
+        let socks_port = self.load_socks_port();
+        let settings = SettingsData {
+            api_host: Some("127.0.0.1".to_string()),
+            api_port: Some(*self.api_port.read()),
+            http_port,
+            socks_port,
+            service_port: Some(8080),
+            tun_enabled: Some(tun_enabled),
+            log_level: Some("info".to_string()),
+            mode: None,
+        };
+        self.save_settings(&settings)?;
+
+        // Step 3: Restart Mihomo with updated config
+        let config_path = self.last_config_path.read().clone();
+        if config_path.is_some() {
+            self.restart_mihomo()?;
+        } else {
+            tracing::info!("Mihomo not running, tun config updated but not restarted");
+        }
+
+        tracing::info!("TUN settings applied: enabled={}", tun_enabled);
+        Ok(())
+    }
+
+    fn load_http_port(&self) -> Option<u16> {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let settings_path = exe_dir.join("settings.yaml");
+        if let Ok(content) = std::fs::read_to_string(&settings_path) {
+            #[derive(serde::Deserialize)]
+            struct Settings {
+                #[serde(rename = "http_port", default)]
+                http_port: Option<u16>,
+            }
+            if let Ok(settings) = serde_yaml_ng::from_str::<Settings>(&content) {
+                return settings.http_port;
+            }
+        }
+        None
+    }
+
+    fn load_socks_port(&self) -> Option<u16> {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let settings_path = exe_dir.join("settings.yaml");
+        if let Ok(content) = std::fs::read_to_string(&settings_path) {
+            #[derive(serde::Deserialize)]
+            struct Settings {
+                #[serde(rename = "socks_port", default)]
+                socks_port: Option<u16>,
+            }
+            if let Ok(settings) = serde_yaml_ng::from_str::<Settings>(&content) {
+                return settings.socks_port;
+            }
+        }
+        None
+    }
+
+    /// Update tun section in config.yaml
+    fn update_config_tun(&self, tun_enabled: bool) -> Result<(), String> {
+        let exe_dir = std::env::current_exe()
+            .map_err(|e| format!("Failed to get exe path: {}", e))?
+            .parent()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| "Failed to get exe parent".to_string())?;
+
+        let config_path = exe_dir.join("config.yaml");
+        if !config_path.exists() {
+            return Err("config.yaml not found".to_string());
+        }
+
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read config.yaml: {}", e))?;
+
+        let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)
+            .map_err(|e| format!("Failed to parse config.yaml: {}", e))?;
+
+        if tun_enabled {
+            // Insert or update tun section
+            let mut tun_map = serde_yaml_ng::Mapping::new();
+            tun_map.insert("enable".into(), true.into());
+            tun_map.insert("stack".into(), "gvisor".into());
+            tun_map.insert("name".into(), "mihomo".into());
+            tun_map.insert("mtu".into(), (9000 as i64).into());
+            tun_map.insert("auto-route".into(), true.into());
+            tun_map.insert("auto-detect-interface".into(), true.into());
+            // DNS hijack: intercept all DNS queries (UDP 53) on the TUN interface
+            // and forward them to Mihomo's DNS server (configured in the dns: section)
+            let dns_hijack: Vec<serde_yaml_ng::Value> = vec![
+                "udp://0.0.0.0:53".into(),
+            ];
+            tun_map.insert("dns-hijack".into(), dns_hijack.into());
+
+            // Also ensure dns section exists and is enabled for TUN to work properly
+            let dns_listen = "0.0.0.0:53";
+            if let Some(map) = yaml.as_mapping_mut() {
+                if !map.contains_key("dns") {
+                    // Create dns section with enhanced-mode fake-ip (standard for TUN)
+                    let mut dns_map = serde_yaml_ng::Mapping::new();
+                    dns_map.insert("enable".into(), true.into());
+                    dns_map.insert("listen".into(), dns_listen.into());
+                    dns_map.insert("enhanced-mode".into(), "fake-ip".into());
+                    dns_map.insert("fake-ip-range".into(), "198.18.0.1/15".into());
+                    dns_map.insert("default-nameserver".into(),
+                        serde_yaml_ng::Sequence::from_iter(
+                            ["223.5.5.5", "119.29.29.29", "114.114.114.114"]
+                                .iter()
+                                .map(|s| (*s).into())
+                        ).into()
+                    );
+                    dns_map.insert("nameserver".into(),
+                        serde_yaml_ng::Sequence::from_iter(
+                            ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"]
+                                .iter()
+                                .map(|s| (*s).into())
+                        ).into()
+                    );
+                    dns_map.insert("fallback".into(),
+                        serde_yaml_ng::Sequence::from_iter(
+                            ["https://1.1.1.1/dns-query", "https://dns.google/dns-query"]
+                                .iter()
+                                .map(|s| (*s).into())
+                        ).into()
+                    );
+                    map.insert("dns".into(), dns_map.into());
+                }
+                map.insert("tun".into(), tun_map.into());
+            }
+        } else {
+            // Remove tun section
+            if let Some(map) = yaml.as_mapping_mut() {
+                map.remove(&serde_yaml_ng::Value::String("tun".into()));
+            }
+        }
+
+        let new_content = serde_yaml_ng::to_string(&yaml)
+            .map_err(|e| format!("Failed to serialize config.yaml: {}", e))?;
+
+        std::fs::write(&config_path, new_content)
+            .map_err(|e| format!("Failed to write config.yaml: {}", e))?;
+
         Ok(())
     }
 

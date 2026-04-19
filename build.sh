@@ -288,6 +288,7 @@ RestartSec=5
 User=${USER}
 Environment="RUST_LOG=info"
 NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_ADMIN
 ProtectSystem=strict
 ProtectHome=false
 PrivateTmp=true

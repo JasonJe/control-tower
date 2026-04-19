@@ -1103,6 +1103,31 @@ pub async fn apply_port_settings(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ApplyTunRequest {
+    pub tun_enabled: bool,
+}
+
+/// POST /api/settings/apply-tun - Enable or disable TUN mode
+pub async fn apply_tun_settings(
+    state: web::Data<Arc<ServiceState>>,
+    body: web::Json<ApplyTunRequest>,
+) -> HttpResponse {
+    let tun_enabled = body.tun_enabled;
+    let state = state.clone();
+    match task::spawn_blocking(move || state.apply_tun_settings(tun_enabled)).await {
+        Ok(Ok(())) => {
+            tracing::info!("TUN settings applied: enabled={}", tun_enabled);
+            HttpResponse::Ok().json(ApiResponse::<()>::success(()))
+        }
+        Ok(Err(e)) => {
+            tracing::error!("Failed to apply TUN settings: {}", e);
+            HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e))
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),
+    }
+}
+
 /// GET /api/proxies/{name}/delay - Get proxy delay
 pub async fn proxy_delay(
     state: web::Data<Arc<ServiceState>>,

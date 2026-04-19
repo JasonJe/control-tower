@@ -64,24 +64,6 @@ async fn get_tun_config() -> Result<Value> {
     Ok(json)
 }
 
-async fn put_config(config: &serde_json::Value) -> Result<()> {
-    let url = format!("http://{}:{}/configs", CLASH_API_HOST, crate::settings::get_api_port());
-    let client = reqwest::Client::new();
-    let response = client
-        .put(&url)
-        .json(config)
-        .timeout(std::time::Duration::from_secs(5))
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to update config: {}", e))?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to update config: {}", response.status());
-    }
-
-    Ok(())
-}
-
 async fn get_tun_status() -> Result<()> {
     let config = get_tun_config().await?;
 
@@ -110,47 +92,39 @@ async fn get_tun_status() -> Result<()> {
 }
 
 async fn enable_tun() -> Result<()> {
-    let mut config = get_tun_config().await?;
+    let url = format!("http://127.0.0.1:{}/api/settings/apply-tun", crate::settings::get_service_port());
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&url)
+        .json(&serde_json::json!({ "tun_enabled": true }))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to call apply-tun: {}", e))?;
 
-    // Get or create tun section
-    let tun = if let Some(v) = config.get_mut("tun") {
-        v
-    } else {
-        let default_tun = serde_json::json!({
-            "enable": true,
-            "stack": "gVisor",
-            "auto-route": true,
-            "auto-detect-interface": true
-        });
-        config.as_object_mut().unwrap().insert("tun".to_string(), default_tun.clone());
-        config.get_mut("tun").unwrap()
-    };
-
-    if let Some(obj) = tun.as_object_mut() {
-        obj.insert("enable".to_string(), serde_json::Value::Bool(true));
-        // Set recommended defaults if not already set
-        obj.entry("stack".to_string()).or_insert(serde_json::Value::String("gVisor".to_string()));
-        obj.entry("auto-route".to_string()).or_insert(serde_json::Value::Bool(true));
-        obj.entry("auto-detect-interface".to_string()).or_insert(serde_json::Value::Bool(true));
+    if !response.status().is_success() {
+        anyhow::bail!("Failed to enable TUN: {}", response.status());
     }
 
-    put_config(&config).await?;
-
-    println!("TUN mode enabled. Use 'ctctl service restart' to apply changes.");
+    println!("TUN mode enabled. Mihomo is restarting with TUN enabled.");
     Ok(())
 }
 
 async fn disable_tun() -> Result<()> {
-    let mut config = get_tun_config().await?;
+    let url = format!("http://127.0.0.1:{}/api/settings/apply-tun", crate::settings::get_service_port());
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&url)
+        .json(&serde_json::json!({ "tun_enabled": false }))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to call apply-tun: {}", e))?;
 
-    if let Some(tun) = config.get_mut("tun") {
-        if let Some(obj) = tun.as_object_mut() {
-            obj.insert("enable".to_string(), serde_json::Value::Bool(false));
-        }
+    if !response.status().is_success() {
+        anyhow::bail!("Failed to disable TUN: {}", response.status());
     }
 
-    put_config(&config).await?;
-
-    println!("TUN mode disabled. Use 'ctctl service restart' to apply changes.");
+    println!("TUN mode disabled. Mihomo is restarting.");
     Ok(())
 }

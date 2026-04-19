@@ -671,6 +671,42 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           </div>
 
           <div class="card">
+            <div class="card-header">
+              <div class="card-title">TUN Mode</div>
+              <div class="card-actions">
+                <button class="btn primary sm" id="saveTunBtn" onclick="saveTun()" style="display:none">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                  Save
+                </button>
+                <button class="btn secondary sm" id="cancelTunBtn" onclick="cancelEditTun()" style="display:none">Cancel</button>
+                <button class="btn sm" id="editTunBtn" onclick="editTun()">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                  Edit
+                </button>
+              </div>
+            </div>
+            <div id="tun-display">
+              <div class="info-grid">
+                <div class="info-row">
+                  <span class="info-key">TUN Enable</span>
+                  <span class="info-val" id="tun-enabled-display">-</span>
+                </div>
+              </div>
+            </div>
+            <div id="tun-edit" style="display:none">
+              <div style="padding:8px 0">
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                  <input type="checkbox" id="tun-enabled-input">
+                  <span>Enable TUN mode (intercepts all system traffic)</span>
+                </label>
+                <div style="margin-top:8px;font-size:12px;color:var(--text3)">
+                  Requires service restart. Enable only if service has CAP_NET_ADMIN capability.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
             <div class="card-header"><div class="card-title">About</div></div>
             <div class="info-grid">
               <div class="info-row"><span class="info-key">Version</span><span class="info-val" style="font-family:'JetBrains Mono',monospace">0.1.0</span></div>
@@ -736,7 +772,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
     <div class="modal-body">
       <p class="text-sm text-muted" style="margin-bottom:16px">Set how often this profile updates automatically (in minutes). Leave empty to disable.</p>
       <div style="display:flex;align-items:center;gap:8px">
-        <input type="number" id="cronMinutes" min="1" max="10080" placeholder="e.g. 60" style="width:120px">
+        <input type="number" id="cronMinutes" class="form-input" min="1" max="10080" placeholder="e.g. 60" style="width:120px">
         <span class="text-muted text-sm">minutes</span>
       </div>
       <p class="text-sm text-muted" style="margin-top:8px">Valid range: 1–10080 (max 1 week)</p>
@@ -1421,14 +1457,18 @@ async function loadSettings() {
       const http = resp.http_port || 7890;
       const socks = resp.socks_port || 7891;
       const apip = resp.api_port || 9090;
+      const tunOn = !!resp.tun_enabled;
       // Update display spans
       document.getElementById('port-http-display').textContent = http;
       document.getElementById('port-socks5-display').textContent = socks;
       document.getElementById('port-api-display').textContent = apip;
+      document.getElementById('tun-enabled-display').textContent = tunOn ? 'ON' : 'OFF';
+      document.getElementById('tun-enabled-display').style.color = tunOn ? 'var(--success)' : 'var(--text2)';
       // Update input values (hidden until edit)
       document.getElementById('port-http').value = http;
       document.getElementById('port-socks5').value = socks;
       document.getElementById('port-api').value = apip;
+      document.getElementById('tun-enabled-input').checked = tunOn;
     }
   } catch (e) {
     showToast('Failed to load settings: ' + e.message, 'error');
@@ -1498,6 +1538,43 @@ async function savePorts() {
 
 let logRefreshTimer = null;
 let dashRefreshTimer = null;
+
+function editTun() {
+  document.getElementById('tun-display').style.display = 'none';
+  document.getElementById('tun-edit').style.display = 'block';
+  document.getElementById('editTunBtn').style.display = 'none';
+  document.getElementById('saveTunBtn').style.display = '';
+  document.getElementById('cancelTunBtn').style.display = '';
+}
+
+function cancelEditTun() {
+  document.getElementById('tun-display').style.display = 'block';
+  document.getElementById('tun-edit').style.display = 'none';
+  document.getElementById('editTunBtn').style.display = '';
+  document.getElementById('saveTunBtn').style.display = 'none';
+  document.getElementById('cancelTunBtn').style.display = 'none';
+  loadSettings();
+}
+
+async function saveTun() {
+  const btn = document.getElementById('saveTunBtn');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = 'Saving...';
+  try {
+    const tun_enabled = document.getElementById('tun-enabled-input').checked;
+    await api('POST', '/api/settings/apply-tun', { tun_enabled });
+    showToast('TUN mode ' + (tun_enabled ? 'enabled' : 'disabled') + ', service restarting...');
+    cancelEditTun();
+    loadSettings();
+    // Reload page after short delay so Mihomo restart takes effect
+    setTimeout(() => location.reload(), 1500);
+  } catch (e) {
+    showToast('Failed to save TUN settings: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+  }
+}
 
 function loadLogs() {
   const source = document.getElementById('log-source').value;

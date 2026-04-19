@@ -472,7 +472,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
         <div class="table-wrap">
           <div id="profiles-loading" class="loading"><div class="spinner"></div>Loading profiles...</div>
           <table class="table" id="profiles-table" style="display:none">
-            <thead><tr><th>Name</th><th>Subscription URL</th><th>Status</th><th>Cron</th><th style="width:200px">Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>Subscription URL</th><th>Status</th><th>Cron</th><th>Last Update</th><th style="width:200px">Actions</th></tr></thead>
             <tbody id="profiles-list"></tbody>
           </table>
           <div id="profiles-empty" class="empty-state" style="display:none">
@@ -782,6 +782,13 @@ function formatBytes(b) {
   const k = 1024, sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(b) / Math.log(k));
   return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function formatTimestamp(unixTs) {
+  if (!unixTs) return '-';
+  const d = new Date(unixTs * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function formatDuration(s) {
@@ -1116,6 +1123,7 @@ function renderProfiles() {
       <td><span class="mono truncate" style="max-width:280px;display:block" title="${escapeHtml(p.url || '')}">${escapeHtml(p.url || '-')}</span></td>
       <td>${st}</td>
       <td>${isActive && p.cron ? `<span class="mono text-sm">${escapeHtml(p.cron)} min</span>` : '<span class="text-muted text-sm">-</span>'}</td>
+      <td class="mono text-sm">${formatTimestamp(p.updated_at)}</td>
       <td><div class="btn-group" style="gap:6px">${isActive ? `<button class="btn xs" onclick="openCronModal('${p.uid.replace(/'/g, "\\'")}','${escapeHtml(p.cron || '')}')" title="Edit update schedule">Edit</button>` : ''}${!isActive ? `<button class="btn xs success" id="btn-activate-${p.uid.replace(/'/g, "")}" onclick="activateProfile('${p.uid.replace(/'/g, "\\'")}', this)" title="Activate this profile">Activate</button>` : ''}<button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${p.uid}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
     </tr>`;
   }).join('');

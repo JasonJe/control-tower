@@ -790,6 +790,11 @@ impl ServiceState {
         if let Some(map) = yaml.as_mapping_mut() {
             map.insert("mixed-port".into(), http_port.into());
             map.insert("socks-port".into(), socks_port.into());
+            // Update external-controller with the new API port
+            let api_host = self.api_host.read().clone();
+            let api_port = *self.api_port.read();
+            let external_controller = format!("{}:{}", api_host, api_port);
+            map.insert("external-controller".into(), external_controller.into());
         }
 
         let new_content = serde_yaml_ng::to_string(&yaml)
@@ -798,7 +803,8 @@ impl ServiceState {
         std::fs::write(&config_path, new_content)
             .map_err(|e| format!("Failed to write config.yaml: {}", e))?;
 
-        tracing::info!("Ports updated in config.yaml: http={}, socks={}", http_port, socks_port);
+        let api_port = *self.api_port.read();
+        tracing::info!("Ports updated in config.yaml: http={}, socks={}, api={}", http_port, socks_port, api_port);
         Ok(())
     }
 

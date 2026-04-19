@@ -658,6 +658,29 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
               <div class="info-row"><span class="info-key">Build</span><span class="info-val">release</span></div>
             </div>
           </div>
+
+          <div class="card" style="margin-top:16px" id="logs-card">
+            <div class="card-header">
+              <div class="card-title">Logs</div>
+              <div class="card-actions">
+                <select id="log-source" class="form-select" style="width:auto;font-size:12px;margin-right:8px" onchange="loadLogs()">
+                  <option value="ctsvc">ctsvc</option>
+                  <option value="mihomo">mihomo</option>
+                </select>
+                <select id="log-refresh-interval" class="form-select" style="width:auto;font-size:12px;margin-right:8px" onchange="onLogRefreshChange()">
+                  <option value="0">Manual</option>
+                  <option value="5000">5s</option>
+                  <option value="10000">10s</option>
+                  <option value="30000" selected>30s</option>
+                  <option value="60000">60s</option>
+                </select>
+                <button class="btn ghost sm" onclick="loadLogs()" title="Refresh logs">
+                  <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                </button>
+              </div>
+            </div>
+            <div id="logs-content" class="logs-content" style="max-height:300px;overflow-y:auto;background:#0f172a;color:#e2e8f0;font-family:'JetBrains Mono',monospace;font-size:11px;padding:8px;border-radius:6px;line-height:1.6"></div>
+          </div>
         </div>
       </div>
 
@@ -1424,6 +1447,36 @@ async function savePorts() {
     btn.innerHTML = originalText;
   }
 }
+
+let logRefreshTimer = null;
+
+function loadLogs() {
+  const source = document.getElementById('log-source').value;
+  const container = document.getElementById('logs-content');
+  fetch(`/api/logs?source=${source}&lines=300`)
+    .then(r => r.json())
+    .then(resp => {
+      if (resp && resp.data && resp.data.items) {
+        container.textContent = resp.data.items.join('\n');
+        container.scrollTop = container.scrollHeight;
+      }
+    }).catch(() => { container.textContent = 'Failed to load logs'; });
+}
+
+function onLogRefreshChange() {
+  const interval = parseInt(document.getElementById('log-refresh-interval').value);
+  if (logRefreshTimer) { clearInterval(logRefreshTimer); logRefreshTimer = null; }
+  if (interval > 0) { logRefreshTimer = setInterval(loadLogs, interval); }
+}
+
+// Load logs when switching to settings tab
+const observer = new MutationObserver(() => {
+  if (document.getElementById('view-settings')?.style.display !== 'none') {
+    loadLogs();
+    onLogRefreshChange();
+  }
+});
+document.querySelectorAll('.view').forEach(v => observer.observe(v, { attributes: true, attributeFilter: ['style'] }));
 
 document.addEventListener('DOMContentLoaded', () => { loadDashboard(); });
 

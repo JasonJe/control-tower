@@ -30,12 +30,63 @@ impl ActiveConfigStore {
         &self.paths.active_config_path
     }
 
-    /// Replace the entire active config content with the contents of a profile file.
+    /// Replace the entire active config content with the contents of a profile file,
+    /// then overlay any user-customized fields from the previous config (mode, port, etc.)
+    /// so that activating a profile does not wipe out manual overrides.
     ///
     /// This is called when a user activates a subscription profile.
     pub fn replace_from_profile(&self, profile_path: &PathBuf) -> Result<()> {
-        let content = std::fs::read_to_string(profile_path)?;
-        self.write_atomically(&content)
+        let new_content = std::fs::read_to_string(profile_path)?;
+
+        // Read existing config to extract user customizations (if any)
+        let user_overrides = if self.paths.active_config_path.exists() {
+            match std::fs::read_to_string(&self.paths.active_config_path) {
+                Ok(c) => Self::extract_user_overrides(&c),
+                Err(_) => serde_yaml_ng::Mapping::new(),
+            }
+        } else {
+            serde_yaml_ng::Mapping::new()
+        };
+
+        // Parse the new profile content
+        let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&new_content)?;
+
+        // Overlay user overrides onto the new config
+        if let Some(map) = yaml.as_mapping_mut() {
+            for (key, val) in user_overrides {
+                map.insert(key, val);
+            }
+        }
+
+        self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)
+    }
+
+    /// Extract fields the user may have manually customized that should survive
+    /// a profile switch: mode, mixed-port, redir-port, tproxy-port, allow-lan, bind-address, dns.
+    fn extract_user_overrides(content: &str) -> serde_yaml_ng::Mapping {
+        let Ok(yaml) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(content) else {
+            return serde_yaml_ng::Mapping::new();
+        };
+        let Some(map) = yaml.as_mapping() else {
+            return serde_yaml_ng::Mapping::new();
+        };
+        let keys = [
+            "mode",
+            "mixed-port",
+            "redir-port",
+            "tproxy-port",
+            "allow-lan",
+            "bind-address",
+            "log-level",
+            "dns",
+        ];
+        let mut overrides = serde_yaml_ng::Mapping::new();
+        for key in keys {
+            if let Some(v) = map.get(key) {
+                overrides.insert(key.into(), v.clone());
+            }
+        }
+        overrides
     }
 
     /// Set the `mode` field in the active config, preserving all other fields.
@@ -187,21 +238,25 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_from_profile_overwrites_previous_file_atomically() {
+    fn test_replace_from_profile_preserves_user_overrides() {
         let (_temp, paths) = make_temp_paths();
         let profile_path = paths.config_dir.join("profiles").join("p1.yaml");
         std::fs::create_dir_all(profile_path.parent().unwrap()).unwrap();
         std::fs::write(&profile_path, "mode: rule\nproxies: []\n").unwrap();
 
-        // Pre-existing content
-        std::fs::write(&paths.active_config_path, "mode: global\nold: content\n").unwrap();
+        // Pre-existing content with user overrides
+        std::fs::write(&paths.active_config_path, "mode: global\nmixed-port: 7890\nold: content\n").unwrap();
 
         let store = ActiveConfigStore::new(paths.clone());
         store.replace_from_profile(&profile_path).unwrap();
 
         let content = std::fs::read_to_string(&paths.active_config_path).unwrap();
-        assert!(content.contains("mode: rule"));
+        // User overrides (mode, mixed-port) should be preserved
+        assert!(content.contains("mode: global"));
+        assert!(content.contains("mixed-port: 7890"));
+        // Profile content (proxies) should be present
         assert!(content.contains("proxies: []"));
+        // Non-override fields from old config should NOT be present
         assert!(!content.contains("old: content"));
         // Ensure no .tmp file left behind
         assert!(!paths.active_config_path.with_extension("yaml.tmp").exists());

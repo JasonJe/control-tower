@@ -631,8 +631,9 @@ pub async fn activate_profile(
     }
 
     // Restart Mihomo to load new config
+    let config_path = paths.active_config_path.clone();
     let state = state.clone();
-    match task::spawn_blocking(move || state.restart_mihomo()).await {
+    match task::spawn_blocking(move || state.restart_with_config(&config_path)).await {
         Ok(Ok(())) => HttpResponse::Ok().json(ApiResponse::<()>::success(())),
         Ok(Err(e)) => HttpResponse::InternalServerError()
             .json(ApiResponse::<()>::error(format!("Failed to restart Mihomo: {}", e))),
@@ -643,6 +644,7 @@ pub async fn activate_profile(
 
 /// PATCH /api/profiles/{id} - Update cron schedule for a profile (only active profile)
 pub async fn update_profile(
+    state: web::Data<Arc<ServiceState>>,
     path: web::Path<String>,
     body: web::Json<UpdateProfileRequest>,
 ) -> HttpResponse {
@@ -725,6 +727,10 @@ pub async fn update_profile(
     }
 
     tracing::info!("Profile {} cron updated", uid);
+
+    // Reload cron jobs so the scheduler picks up the new schedule
+    state.load_cron_jobs();
+
     HttpResponse::Ok().json(ApiResponse::<()>::success(()))
 }
 

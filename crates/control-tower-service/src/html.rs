@@ -82,6 +82,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .card-title{font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.6px}
 .card-value{font-size:28px;font-weight:700;color:var(--text);letter-spacing:-.5px;line-height:1.2}
 .card-sub{font-size:12px;color:var(--text3);margin-top:4px}
+.dash-hint{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--accent-light);border:1px solid var(--accent);border-radius:var(--radius);margin-bottom:14px;font-size:13px;color:var(--text)}
 
 /* Stat grid */
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:20px}
@@ -349,6 +350,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           <div class="card-header">
             <div class="card-title">Service Control</div>
             <span class="badge" id="dash-status-badge"><span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span></span>
+          </div>
+          <div id="dash-no-profile-hint" class="dash-hint" style="display:none">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span id="dash-no-profile-text"></span>
           </div>
           <div class="flex items-center gap-16">
             <div>
@@ -737,7 +742,11 @@ function truncate(s, len) { return (s && s.length > len) ? s.slice(0, len) + '..
 // Dashboard
 async function loadDashboard() {
   try {
-    const status = await api('GET', '/api/status');
+    const [status, profilesData] = await Promise.all([
+      api('GET', '/api/status'),
+      api('GET', '/api/profiles').catch(() => null)
+    ]);
+    const hasActiveProfile = profilesData && profilesData.current;
     const dot = document.getElementById('headerStatus');
     dot.className = 'status-dot' + (status.running ? ' running' : ' stopped');
     dot.title = status.running ? 'Service Running' : 'Service Stopped';
@@ -746,7 +755,22 @@ async function loadDashboard() {
     sb.textContent = status.running ? 'Running' : 'Stopped';
     document.getElementById('dash-status').textContent = status.running ? 'Running' : 'Stopped';
     document.getElementById('dash-uptime').textContent = status.running && status.uptime_secs ? 'Uptime: ' + formatDuration(status.uptime_secs) : '';
-    document.getElementById('btn-start').disabled = status.running;
+
+    // Show hint if service is stopped and no profile is active
+    const hint = document.getElementById('dash-no-profile-hint');
+    hint.style.display = (!status.running && !hasActiveProfile) ? 'flex' : 'none';
+    if (!status.running && !hasActiveProfile) {
+      const txt = document.getElementById('dash-no-profile-text');
+      txt.textContent = 'No profile active. Please ';
+      const a = document.createElement('a');
+      a.href = '#';
+      a.style.color = 'var(--accent)';
+      a.textContent = 'add and activate a subscription';
+      a.onclick = e => { e.preventDefault(); switchView('profiles'); };
+      txt.appendChild(a);
+      txt.appendChild(document.createTextNode(' first.'));
+    }
+    document.getElementById('btn-start').disabled = status.running || !hasActiveProfile;
     document.getElementById('btn-stop').disabled = !status.running;
 
     if (!status.running) {
@@ -1035,7 +1059,7 @@ function renderProfiles() {
       <td><span class="mono truncate" style="max-width:280px;display:block" title="${escapeHtml(p.url || '')}">${escapeHtml(p.url || '-')}</span></td>
       <td>${st}</td>
       <td>${isActive && p.cron ? `<span class="mono text-sm">${escapeHtml(p.cron)} min</span>` : '<span class="text-muted text-sm">-</span>'}</td>
-      <td><div class="btn-group" style="gap:6px">${isActive ? `<button class="btn xs" onclick="openCronModal('${p.uid.replace(/'/g, "\\'")}','${escapeHtml(p.cron || '')}')" title="Edit update schedule">Edit</button>` : ''}${!isActive ? `<button class="btn xs success" onclick="activateProfile('${p.uid.replace(/'/g, "\\'")}')" title="Activate this profile">Activate</button>` : ''}<button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${p.uid}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
+      <td><div class="btn-group" style="gap:6px">${isActive ? `<button class="btn xs" onclick="openCronModal('${p.uid.replace(/'/g, "\\'")}','${escapeHtml(p.cron || '')}')" title="Edit update schedule">Edit</button>` : ''}${!isActive ? `<button class="btn xs success" id="btn-activate-${p.uid.replace(/'/g, "")}" onclick="activateProfile('${p.uid.replace(/'/g, "\\'")}', this)" title="Activate this profile">Activate</button>` : ''}<button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${p.uid}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
     </tr>`;
   }).join('');
   pg.style.display = 'flex';
@@ -1058,17 +1082,19 @@ async function addProfile(e) {
   catch (e) { showToast('Failed to add: ' + e.message, 'error'); }
 }
 
-async function activateProfile(uid) {
+async function activateProfile(uid, btn) {
+  const b = btn || document.getElementById('btn-activate-' + uid.replace(/[^a-zA-Z0-9]/g, ''));
+  if (b) { b.disabled = true; b.textContent = 'Activating...'; }
   try {
     await api('POST', `/api/profiles/${uid}/activate`);
-    showToast('Profile activated');
+    showToast('Profile activated, starting Mihomo...');
     loadProfiles();
-    // Refresh proxies and rules since new profile may have different nodes and rules
     if (document.getElementById('proxies-view')) loadProxies();
     if (document.getElementById('rules-view')) loadRules();
     loadDashboard();
   }
   catch (e) { showToast('Failed to activate: ' + e.message, 'error'); }
+  finally { if (b) { b.disabled = false; b.textContent = 'Activate'; } }
 }
 
 // Profiles
@@ -1088,7 +1114,6 @@ function closeDeleteModal() { document.getElementById('deleteModal').classList.r
 let cronEditUid = '';
 function openCronModal(uid, currentCron) {
   cronEditUid = uid;
-  console.log('openCronModal uid:', uid, 'currentCron:', currentCron);
   document.getElementById('cronMinutes').value = currentCron || '';
   document.getElementById('cronModal').classList.add('show');
   document.getElementById('cronMinutes').focus();
@@ -1099,16 +1124,15 @@ document.getElementById('cronModalSaveBtn').addEventListener('click', async () =
   if (!cronEditUid) { console.error('cronEditUid is empty'); return; }
   const val = document.getElementById('cronMinutes').value.trim();
   const cron = val ? String(val) : '';
-  console.log('PATCH /api/profiles/' + cronEditUid, { cron: cron || null });
+  const uid = cronEditUid;
   closeCronModal();
   try {
-    const res = await fetch('/api/profiles/' + cronEditUid, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ cron: cron || null }) });
-    console.log('PATCH status:', res.status, 'body:', await res.text());
+    const res = await fetch('/api/profiles/' + uid, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ cron: cron || null }) });
     const json = await res.json();
     if (json.code !== 0) throw new Error(json.message);
     showToast('Update schedule saved');
     loadProfiles();
-  } catch (e) { console.error('cron save error:', e); showToast('Failed: ' + e.message, 'error'); }
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
 });
 
 document.getElementById('cronMinutes').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cronModalSaveBtn').click(); });

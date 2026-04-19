@@ -9,7 +9,7 @@ mod html;
 mod http_server;
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::sync::Arc;
 use std::time::Duration;
 use parking_lot::RwLock;
@@ -623,6 +623,14 @@ impl ServiceState {
 
         // Start Mihomo with the config
         self.start(&config_path)
+    }
+
+    /// Restart Mihomo with a specific config path (used after activating a new profile).
+    pub fn restart_with_config(&self, config_path: &Path) -> Result<(), String> {
+        let path_buf = config_path.to_path_buf();
+        *self.last_config_path.write() = Some(path_buf.clone());
+        let _ = self.stop();
+        self.start(&path_buf)
     }
 
     /// Select a proxy via Clash API

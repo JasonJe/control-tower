@@ -236,9 +236,9 @@ pub async fn get_mode(
     state: web::Data<Arc<ServiceState>>,
 ) -> HttpResponse {
     let state = state.clone();
-    match task::spawn_blocking(move || state.get_proxies()).await {
-        Ok(Ok(proxies)) => {
-            let mode = proxies
+    match task::spawn_blocking(move || state.get_configs()).await {
+        Ok(Ok(configs)) => {
+            let mode = configs
                 .get("mode")
                 .and_then(|m| m.as_str())
                 .unwrap_or("rule")

@@ -553,6 +553,13 @@ impl ServiceState {
                         ).into()
                     );
                     map.insert("dns".into(), dns_map.into());
+                } else {
+                    // DNS section exists (from profile) but ensure it's enabled for TUN
+                    if let Some(dns_val) = map.get_mut("dns") {
+                        if let Some(dns_map) = dns_val.as_mapping_mut() {
+                            dns_map.insert("enable".into(), true.into());
+                        }
+                    }
                 }
                 map.insert("tun".into(), tun_map.into());
             }
@@ -715,6 +722,30 @@ impl ServiceState {
             .map_err(|e| format!("Failed to parse Clash response: {}", e))?;
 
         Ok(proxies)
+    }
+
+    /// Get configs from Clash API (includes current mode)
+    pub fn get_configs(&self) -> Result<serde_json::Value, String> {
+        // Drop the read lock before making HTTP request
+        drop(self.manager.read());
+
+        // Clash API endpoint
+        let url = format!("{}/configs", self.get_api_url());
+
+        // Make HTTP request to Clash API
+        let response = reqwest::blocking::get(&url)
+            .map_err(|e| format!("Failed to query Clash API: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Clash API returned error: {}", response.status()));
+        }
+
+        let text = response.text()
+            .map_err(|e| format!("Failed to read response body: {}", e))?;
+        let configs: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| format!("Failed to parse Clash response: {}", e))?;
+
+        Ok(configs)
     }
 
     /// Get connections from Clash API

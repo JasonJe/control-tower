@@ -76,10 +76,19 @@ pub struct ProxyDelayPostRequest {
     pub name: String,
     #[serde(default = "default_timeout")]
     pub timeout: u64,
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 fn default_timeout() -> u64 {
     5000
+}
+
+/// Request for batch delay test
+#[derive(Debug, Deserialize)]
+pub struct ProxyDelayAllRequest {
+    pub timeout: Option<u64>,
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1040,6 +1049,8 @@ pub struct UpdateSettingsRequest {
     pub log_level: Option<String>,
     #[serde(default)]
     pub mode: Option<String>,
+    #[serde(rename = "latency_test_mode", default)]
+    pub latency_test_mode: Option<String>,
 }
 
 /// PUT /api/settings - Update and persist settings
@@ -1057,6 +1068,7 @@ pub async fn put_settings(
         tun_enabled: body.tun_enabled,
         log_level: body.log_level.clone(),
         mode: body.mode.clone(),
+        latency_test_mode: body.latency_test_mode.clone(),
     };
 
     let state = state.clone();
@@ -1179,6 +1191,7 @@ pub async fn proxy_delay_post(
 ) -> HttpResponse {
     let name_or_idx = &body.name;
     let timeout_ms = body.timeout;
+    let mode = body.mode.clone().unwrap_or_else(|| state.get_latency_test_mode());
 
     // Get the API URL from state
     let api_url = state.get_api_url();
@@ -1259,8 +1272,36 @@ pub async fn proxy_delay_post(
         name_or_idx.clone()
     };
 
-    tracing::debug!("Latency test: target={}, original={}", target_proxy, original_proxy);
+    tracing::debug!("Latency test: target={}, mode={}", target_proxy, mode);
 
+    // Ping mode: Use Mihomo's built-in TCP delay test (no proxy switching needed)
+    if mode == "ping" {
+        let ping_url = format!("{}/proxies/{}/delay?timeout={}", api_url, target_proxy, timeout_ms);
+        match client.get(&ping_url).send().await {
+            Ok(response) => {
+                if response.status().is_success() {
+                    match response.json::<serde_json::Value>().await {
+                        Ok(data) => {
+                            let delay = data.get("delay").and_then(|v| v.as_i64()).unwrap_or(-1);
+                            tracing::debug!("Ping test result: {}ms for {}", delay, target_proxy);
+                            let delay_val = if delay >= 0 { serde_json::Value::from(delay) } else { serde_json::Value::Null };
+                            return HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "delay": delay_val })));
+                        }
+                        Err(e) => {
+                            return HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "delay": null, "error": format!("Parse error: {}", e) })));
+                        }
+                    }
+                } else {
+                    return HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "delay": null, "error": format!("Ping failed: {}", response.status()) })));
+                }
+            }
+            Err(e) => {
+                return HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "delay": null, "error": e.to_string() })));
+            }
+        }
+    }
+
+    // HTTP mode: Measure HTTP delay through the selected proxy (original implementation)
     // Step 2: Temporarily select the target proxy
     let select_url = format!("{}/proxies/GLOBAL", api_url);
     let select_response = match client
@@ -1328,6 +1369,168 @@ pub async fn proxy_delay_post(
 
     tracing::debug!("Latency test result: {}ms for {}", delay, target_proxy);
     HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "delay": delay })))
+}
+
+/// POST /api/proxies/delay-all - Batch delay test for all proxies
+pub async fn proxy_delay_all(
+    state: web::Data<Arc<ServiceState>>,
+    body: web::Json<ProxyDelayAllRequest>,
+) -> HttpResponse {
+    let timeout_ms = body.timeout.unwrap_or(5000);
+    let mode = body.mode.clone().unwrap_or_else(|| state.get_latency_test_mode());
+
+    let api_url = state.get_api_url();
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(timeout_ms + 3000))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to create HTTP client: {}", e)))
+        }
+    };
+
+    // Get all proxies
+    let proxies_url = format!("{}/proxies", api_url);
+    let proxies_response = match client.get(&proxies_url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to fetch proxies: {}", e)))
+        }
+    };
+
+    if !proxies_response.status().is_success() {
+        return HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error(format!("Failed to get proxies: {}", proxies_response.status())));
+    }
+
+    let proxies_data: serde_json::Value = match proxies_response.json().await {
+        Ok(d) => d,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to parse proxies response: {}", e)))
+        }
+    };
+
+    let proxies = match proxies_data.get("proxies") {
+        Some(p) => p,
+        None => {
+            return HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "results": [] })));
+        }
+    };
+
+    // Get GLOBAL.all list (skip first 3: DIRECT, REJECT, FALLBACK)
+    let global_all: Vec<String> = proxies
+        .get("GLOBAL")
+        .and_then(|g| g.get("all"))
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .skip(3) // Skip DIRECT, REJECT, FALLBACK
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Test each proxy
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    for proxy_name in &global_all {
+        let delay = if mode == "ping" {
+            // Ping mode: use Mihomo's TCP delay test
+            let ping_url = format!("{}/proxies/{}/delay?timeout={}", api_url, proxy_name, timeout_ms);
+            match client.get(&ping_url).send().await {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        response.json::<serde_json::Value>().await
+                            .ok()
+                            .and_then(|d| d.get("delay").and_then(|v| v.as_i64()))
+                            .unwrap_or(-1)
+                    } else {
+                        -1
+                    }
+                }
+                Err(_) => -1,
+            }
+        } else {
+            // HTTP mode: switch to proxy, test HTTP, restore
+            let select_url = format!("{}/proxies/GLOBAL", api_url);
+
+            // Select proxy
+            if let Err(_) = client
+                .put(&select_url)
+                .json(&serde_json::json!({ "name": proxy_name }))
+                .timeout(std::time::Duration::from_millis(5000))
+                .send()
+                .await
+            {
+                results.push(serde_json::json!({
+                    "name": proxy_name,
+                    "delay": null,
+                    "error": "select_failed"
+                }));
+                continue;
+            }
+
+            // Test HTTP delay
+            let test_url = "http://cp.cloudflare.com/generate_204";
+            let start = std::time::Instant::now();
+            let elapsed = match client
+                .get(test_url)
+                .timeout(std::time::Duration::from_millis(timeout_ms))
+                .send()
+                .await
+            {
+                Ok(r) => {
+                    if r.status().is_success() || r.status().as_u16() == 204 {
+                        start.elapsed().as_millis() as i64
+                    } else {
+                        -1
+                    }
+                }
+                Err(_) => -1,
+            };
+
+            // Restore to DIRECT
+            let _ = client
+                .put(&select_url)
+                .json(&serde_json::json!({ "name": "DIRECT" }))
+                .timeout(std::time::Duration::from_millis(5000))
+                .send()
+                .await;
+
+            let delay_val = if elapsed >= 0 { serde_json::json!(elapsed) } else { serde_json::json!(null) };
+            results.push(serde_json::json!({
+                "name": proxy_name,
+                "delay": delay_val
+            }));
+            continue;
+        };
+
+        let delay_val = if delay >= 0 { serde_json::json!(delay) } else { serde_json::json!(null) };
+        results.push(serde_json::json!({
+            "name": proxy_name,
+            "delay": delay_val
+        }));
+    }
+
+    // Restore original GLOBAL selection (get from stored data)
+    if let Some(original) = proxies_data.get("proxies").and_then(|p| p.get("GLOBAL")).and_then(|g| g.get("now")).and_then(|v| v.as_str()) {
+        if original != "DIRECT" {
+            let select_url = format!("{}/proxies/GLOBAL", api_url);
+            let _ = client
+                .put(&select_url)
+                .json(&serde_json::json!({ "name": original }))
+                .timeout(std::time::Duration::from_millis(5000))
+                .send()
+                .await;
+        }
+    }
+
+    HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "results": results })))
 }
 
 /// GET /api/logs - Read log files (ctsvc or mihomo)

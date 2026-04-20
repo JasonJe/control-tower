@@ -95,7 +95,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .stat-icon.green{background:var(--success-light)}.stat-icon.green svg{stroke:var(--success)}
 .stat-icon.yellow{background:var(--warning-light)}.stat-icon.yellow svg{stroke:var(--warning)}
 .stat-icon.red{background:var(--danger-light)}.stat-icon.red svg{stroke:var(--danger)}
-.stat-icon.purple{background:#f3e8ff}.stat-icon.purple svg{stroke:#9333ea}
+.stat-icon.purple{background:#c4b5fd}.stat-icon.purple svg{stroke:#6d28d9}
 .stat-info{flex:1;min-width:0}
 .stat-value{font-size:18px;font-weight:700;color:var(--text);letter-spacing:-.3px}
 .stat-label{font-size:11px;color:var(--text3);font-weight:500}
@@ -430,11 +430,16 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           <div class="card-header"><div class="card-title">Currently Selected</div></div>
           <div class="card-body">
             <div style="display:flex;align-items:center;gap:16px">
-              <div>
+              <div style="flex:1">
                 <div id="proxy-sel-name" class="mono" style="font-size:15px;font-weight:600"></div>
-                <div style="display:flex;gap:8px;margin-top:4px">
+                <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
                   <span id="proxy-sel-type" class="badge" style="background:#818cf8;color:#fff;font-size:11px"></span>
                   <span id="proxy-sel-latency" class="badge" style="font-size:11px"></span>
+                  <span id="proxy-sel-udp" class="badge success" style="font-size:11px;display:none">UDP</span>
+                  <span id="proxy-sel-tfo" class="badge warning" style="font-size:11px;display:none">TFO</span>
+                  <span id="proxy-sel-mptcp" class="badge" style="font-size:11px;display:none;background:#f59e0b;color:#fff">MPTCP</span>
+                  <span id="proxy-sel-xudp" class="badge" style="font-size:11px;display:none;background:#ec4899;color:#fff">XUDP</span>
+                  <span id="proxy-sel-uot" class="badge" style="font-size:11px;display:none;background:#14b8a6;color:#fff">UOT</span>
                 </div>
               </div>
             </div>
@@ -702,6 +707,44 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
                 </label>
                 <div style="margin-top:8px;font-size:12px;color:var(--text3)">
                   Requires service restart. Enable only if service has CAP_NET_ADMIN capability.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Latency Test</div>
+              <div class="card-actions">
+                <button class="btn primary sm" id="saveLatencyBtn" onclick="saveLatency()" style="display:none">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                  Save
+                </button>
+                <button class="btn secondary sm" id="cancelLatencyBtn" onclick="cancelEditLatency()" style="display:none">Cancel</button>
+                <button class="btn sm" id="editLatencyBtn" onclick="editLatency()">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                  Edit
+                </button>
+              </div>
+            </div>
+            <div id="latency-display">
+              <div class="info-grid">
+                <div class="info-row">
+                  <span class="info-key">Test Mode</span>
+                  <span class="info-val" id="latency-mode-display">-</span>
+                </div>
+              </div>
+            </div>
+            <div id="latency-edit" style="display:none">
+              <div style="padding:8px 0">
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                  <select id="latency-mode-input" class="form-select">
+                    <option value="http">HTTP (through proxy)</option>
+                    <option value="ping">Ping (TCP connect)</option>
+                  </select>
+                </label>
+                <div style="margin-top:8px;font-size:12px;color:var(--text3)">
+                  HTTP: measures response time through the proxy. Ping: measures TCP connection time to the proxy server.
                 </div>
               </div>
             </div>
@@ -1044,6 +1087,12 @@ async function loadProxies() {
       const lat = savedLatencies[globalNow] ?? null;
       document.getElementById('proxy-sel-latency').textContent = lat !== null ? lat + 'ms' : 'Timeout';
       document.getElementById('proxy-sel-latency').className = 'badge ' + (lat !== null ? (lat < 100 ? 'success' : lat < 300 ? 'warning' : 'danger') : '');
+      // Show/hide protocol badges
+      document.getElementById('proxy-sel-udp').style.display = sel.udp ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-tfo').style.display = sel.tfo ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-mptcp').style.display = sel.mptcp ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-xudp').style.display = sel.xudp ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-uot').style.display = sel.uot ? 'inline-block' : 'none';
       document.getElementById('proxy-selected-card').style.display = 'block';
     }
     renderProxies();
@@ -1123,7 +1172,8 @@ async function selectProxy(name) {
     filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(document.getElementById('proxy-search').value.toLowerCase()));
     // Update selected proxy card
     const selProxy = proxies.find(p => p.name === globalNow);
-    if (selProxy) {
+    const selInfo = pl[globalNow]; // full proxy info from API
+    if (selProxy && selInfo) {
       document.getElementById('proxy-sel-name').textContent = globalNow;
       document.getElementById('proxy-sel-type').textContent = (selProxy.type || '').toUpperCase();
       const lat = selProxy.latency;
@@ -1135,6 +1185,12 @@ async function selectProxy(name) {
         latEl.textContent = 'Timeout';
         latEl.className = 'badge danger';
       }
+      // Show/hide protocol badges
+      document.getElementById('proxy-sel-udp').style.display = selInfo.udp ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-tfo').style.display = selInfo.tfo ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-mptcp').style.display = selInfo.mptcp ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-xudp').style.display = selInfo.xudp ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-uot').style.display = selInfo.uot ? 'inline-block' : 'none';
       document.getElementById('proxy-selected-card').style.display = 'block';
     }
     renderProxies();
@@ -1181,13 +1237,21 @@ async function testAllLatency() {
   btn.disabled = true;
   btn.textContent = 'Testing...';
   try {
-    const tasks = filteredProxies.map(async (p) => {
-      try {
-        const d = await api('POST', '/api/proxies/delay', { name: String(p.idx), timeout: 5000 });
-        p.latency = (d && typeof d.delay === 'number') ? d.delay : null;
-      } catch (_) { p.latency = null; }
-    });
-    await Promise.allSettled(tasks);
+    // Use batch delay-all API
+    const resp = await api('POST', '/api/proxies/delay-all', { timeout: 5000 });
+    if (resp && resp.results) {
+      // Build a map of name -> delay
+      const delayMap = {};
+      resp.results.forEach(r => {
+        delayMap[r.name] = r.delay;
+      });
+      // Apply delays to proxies
+      proxies.forEach(p => {
+        if (delayMap[p.name] !== undefined) {
+          p.latency = delayMap[p.name];
+        }
+      });
+    }
     saveProxyLatencies();
     // Re-sort by latency
     proxies.sort((a, b) => {
@@ -1198,6 +1262,8 @@ async function testAllLatency() {
     filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(document.getElementById('proxy-search').value.toLowerCase()));
     showToast('Latency test completed');
     renderProxies();
+  } catch (e) {
+    showToast('Latency test failed: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> Test All';
@@ -1459,17 +1525,20 @@ async function loadSettings() {
       const socks = resp.socks_port || 7891;
       const apip = resp.api_port || 9090;
       const tunOn = !!resp.tun_enabled;
+      const latencyMode = resp.latency_test_mode || 'http';
       // Update display spans
       document.getElementById('port-http-display').textContent = http;
       document.getElementById('port-socks5-display').textContent = socks;
       document.getElementById('port-api-display').textContent = apip;
       document.getElementById('tun-enabled-display').textContent = tunOn ? 'ON' : 'OFF';
       document.getElementById('tun-enabled-display').style.color = tunOn ? 'var(--success)' : 'var(--text2)';
+      document.getElementById('latency-mode-display').textContent = latencyMode === 'ping' ? 'Ping (TCP)' : 'HTTP';
       // Update input values (hidden until edit)
       document.getElementById('port-http').value = http;
       document.getElementById('port-socks5').value = socks;
       document.getElementById('port-api').value = apip;
       document.getElementById('tun-enabled-input').checked = tunOn;
+      document.getElementById('latency-mode-input').value = latencyMode;
     }
   } catch (e) {
     showToast('Failed to load settings: ' + e.message, 'error');
@@ -1572,6 +1641,46 @@ async function saveTun() {
     setTimeout(() => location.reload(), 1500);
   } catch (e) {
     showToast('Failed to save TUN settings: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+  }
+}
+
+function editLatency() {
+  document.getElementById('latency-display').style.display = 'none';
+  document.getElementById('latency-edit').style.display = 'block';
+  document.getElementById('editLatencyBtn').style.display = 'none';
+  document.getElementById('saveLatencyBtn').style.display = '';
+  document.getElementById('cancelLatencyBtn').style.display = '';
+}
+
+function cancelEditLatency() {
+  document.getElementById('latency-display').style.display = 'block';
+  document.getElementById('latency-edit').style.display = 'none';
+  document.getElementById('editLatencyBtn').style.display = '';
+  document.getElementById('saveLatencyBtn').style.display = 'none';
+  document.getElementById('cancelLatencyBtn').style.display = 'none';
+}
+
+async function saveLatency() {
+  const btn = document.getElementById('saveLatencyBtn');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = 'Saving...';
+  try {
+    const latency_test_mode = document.getElementById('latency-mode-input').value;
+    await api('PUT', '/api/settings', {
+      latency_test_mode,
+      http_port: parseInt(document.getElementById('port-http').value) || 7890,
+      socks_port: parseInt(document.getElementById('port-socks5').value) || 7891,
+      api_port: parseInt(document.getElementById('port-api').value) || 9090,
+      tun_enabled: document.getElementById('tun-enabled-input').checked,
+    });
+    showToast('Latency test mode saved');
+    cancelEditLatency();
+    loadSettings();
+  } catch (e) {
+    showToast('Failed to save latency settings: ' + e.message, 'error');
     btn.disabled = false;
     btn.innerHTML = originalText;
   }

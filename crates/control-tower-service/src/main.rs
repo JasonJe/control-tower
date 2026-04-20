@@ -305,6 +305,7 @@ impl ServiceState {
             tun_enabled: Some(false),
             log_level: Some("info".to_string()),
             mode: Some("rule".to_string()),
+            latency_test_mode: Some("http".to_string()),
         };
 
         let yaml = serde_yaml_ng::to_string(&default_settings)
@@ -340,6 +341,13 @@ impl ServiceState {
         serde_yaml_ng::from_str(&content).unwrap_or_default()
     }
 
+    /// Get latency test mode from settings (default: "http")
+    pub fn get_latency_test_mode(&self) -> String {
+        self.get_settings()
+            .latency_test_mode
+            .unwrap_or_else(|| "http".to_string())
+    }
+
     /// Save settings to settings.yaml
     pub fn save_settings(&self, settings: &SettingsData) -> Result<(), String> {
         let exe_dir = std::env::current_exe()
@@ -371,6 +379,7 @@ impl ServiceState {
         // Step 2: Save to settings.yaml (only port-related fields)
         // Read current tun_enabled from settings.yaml so we don't overwrite it
         let tun_enabled = self.load_tun_enabled();
+        let current_settings = self.get_settings();
         let settings = SettingsData {
             api_host: Some("127.0.0.1".to_string()),
             api_port: Some(*self.api_port.read()),
@@ -380,6 +389,7 @@ impl ServiceState {
             tun_enabled,
             log_level: Some("info".to_string()),
             mode: None,
+            latency_test_mode: current_settings.latency_test_mode,
         };
         self.save_settings(&settings)?;
 
@@ -424,6 +434,7 @@ impl ServiceState {
         // Step 2: Save tun_enabled to settings.yaml
         let http_port = self.load_http_port();
         let socks_port = self.load_socks_port();
+        let current_settings = self.get_settings();
         let settings = SettingsData {
             api_host: Some("127.0.0.1".to_string()),
             api_port: Some(*self.api_port.read()),
@@ -433,6 +444,7 @@ impl ServiceState {
             tun_enabled: Some(tun_enabled),
             log_level: Some("info".to_string()),
             mode: None,
+            latency_test_mode: current_settings.latency_test_mode,
         };
         self.save_settings(&settings)?;
 

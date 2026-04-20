@@ -21,4 +21,6 @@ pub struct SettingsData {
     pub log_level: Option<String>,
     #[serde(default)]
     pub mode: Option<String>,
+    #[serde(rename = "latency_test_mode", default)]
+    pub latency_test_mode: Option<String>,
 }

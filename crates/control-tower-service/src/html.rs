@@ -739,8 +739,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
               <div style="padding:8px 0">
                 <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
                   <select id="latency-mode-input" class="form-select">
-                    <option value="http">HTTP (through proxy)</option>
-                    <option value="ping">Ping (TCP connect)</option>
+                    <option value="http">HTTP</option>
+                    <option value="ping">Ping</option>
                   </select>
                 </label>
                 <div style="margin-top:8px;font-size:12px;color:var(--text3)">
@@ -1551,7 +1551,10 @@ function editPorts() {
   document.getElementById('ports-edit').style.display = 'block';
   // Toggle buttons
   document.getElementById('editPortsBtn').style.display = 'none';
-  document.getElementById('savePortsBtn').style.display = '';
+  const saveBtn = document.getElementById('savePortsBtn');
+  saveBtn.style.display = '';
+  saveBtn.disabled = false;
+  saveBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
   document.getElementById('cancelPortsBtn').style.display = '';
 }
 
@@ -1561,7 +1564,10 @@ function cancelEditPorts() {
   document.getElementById('ports-edit').style.display = 'none';
   // Toggle buttons
   document.getElementById('editPortsBtn').style.display = '';
-  document.getElementById('savePortsBtn').style.display = 'none';
+  const saveBtn = document.getElementById('savePortsBtn');
+  saveBtn.style.display = 'none';
+  saveBtn.disabled = false;
+  saveBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
   document.getElementById('cancelPortsBtn').style.display = 'none';
   // Reload to reset input values to current settings
   loadSettings();
@@ -1613,7 +1619,10 @@ function editTun() {
   document.getElementById('tun-display').style.display = 'none';
   document.getElementById('tun-edit').style.display = 'block';
   document.getElementById('editTunBtn').style.display = 'none';
-  document.getElementById('saveTunBtn').style.display = '';
+  const saveBtn = document.getElementById('saveTunBtn');
+  saveBtn.style.display = '';
+  saveBtn.disabled = false;
+  saveBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
   document.getElementById('cancelTunBtn').style.display = '';
 }
 
@@ -1621,7 +1630,10 @@ function cancelEditTun() {
   document.getElementById('tun-display').style.display = 'block';
   document.getElementById('tun-edit').style.display = 'none';
   document.getElementById('editTunBtn').style.display = '';
-  document.getElementById('saveTunBtn').style.display = 'none';
+  const saveBtn = document.getElementById('saveTunBtn');
+  saveBtn.style.display = 'none';
+  saveBtn.disabled = false;
+  saveBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
   document.getElementById('cancelTunBtn').style.display = 'none';
   loadSettings();
 }
@@ -1650,7 +1662,10 @@ function editLatency() {
   document.getElementById('latency-display').style.display = 'none';
   document.getElementById('latency-edit').style.display = 'block';
   document.getElementById('editLatencyBtn').style.display = 'none';
-  document.getElementById('saveLatencyBtn').style.display = '';
+  const saveBtn = document.getElementById('saveLatencyBtn');
+  saveBtn.style.display = '';
+  saveBtn.disabled = false;
+  saveBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
   document.getElementById('cancelLatencyBtn').style.display = '';
 }
 
@@ -1658,7 +1673,10 @@ function cancelEditLatency() {
   document.getElementById('latency-display').style.display = 'block';
   document.getElementById('latency-edit').style.display = 'none';
   document.getElementById('editLatencyBtn').style.display = '';
-  document.getElementById('saveLatencyBtn').style.display = 'none';
+  const saveBtn = document.getElementById('saveLatencyBtn');
+  saveBtn.style.display = 'none';
+  saveBtn.disabled = false;
+  saveBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
   document.getElementById('cancelLatencyBtn').style.display = 'none';
 }
 

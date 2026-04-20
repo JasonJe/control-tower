@@ -95,6 +95,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .stat-icon.green{background:var(--success-light)}.stat-icon.green svg{stroke:var(--success)}
 .stat-icon.yellow{background:var(--warning-light)}.stat-icon.yellow svg{stroke:var(--warning)}
 .stat-icon.red{background:var(--danger-light)}.stat-icon.red svg{stroke:var(--danger)}
+.stat-icon.purple{background:#f3e8ff}.stat-icon.purple svg{stroke:#9333ea}
 .stat-info{flex:1;min-width:0}
 .stat-value{font-size:18px;font-weight:700;color:var(--text);letter-spacing:-.3px}
 .stat-label{font-size:11px;color:var(--text3);font-weight:500}
@@ -369,11 +370,11 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
             <div class="stat-info"><div class="stat-value mono text-sm" id="dash-download-rate" style="color:var(--warning)">-</div><div class="stat-label">↓ Download Rate</div></div>
           </div>
           <div class="stat-card">
-            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h10a4 4 0 000-8H7a4 4 0 00-4 4z"/></svg></div>
+            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg></div>
             <div class="stat-info"><div class="stat-value mono text-sm" id="dash-cumulative-upload">-</div><div class="stat-label">↑ Cumulative Upload</div></div>
           </div>
           <div class="stat-card">
-            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h10a4 4 0 000-8H7a4 4 0 00-4 4z"/></svg></div>
+            <div class="stat-icon purple"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg></div>
             <div class="stat-info"><div class="stat-value mono text-sm" id="dash-cumulative-download">-</div><div class="stat-label">↓ Cumulative Download</div></div>
           </div>
         </div>
@@ -574,11 +575,11 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
             <div class="stat-info"><div class="stat-value mono text-sm" id="conn-download">0 B/s</div><div class="stat-label">Download Rate</div></div>
           </div>
           <div class="stat-card">
-            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg></div>
             <div class="stat-info"><div class="stat-value mono text-sm" id="conn-cumulative-upload">0 B</div><div class="stat-label">Cumulative Upload</div></div>
           </div>
           <div class="stat-card">
-            <div class="stat-icon yellow"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+            <div class="stat-icon purple"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg></div>
             <div class="stat-info"><div class="stat-value mono text-sm" id="conn-cumulative-download">0 B</div><div class="stat-label">Cumulative Download</div></div>
           </div>
         </div>

@@ -1139,6 +1139,8 @@ pub struct UpdateSettingsRequest {
     pub mode: Option<String>,
     #[serde(rename = "latency_test_mode", default)]
     pub latency_test_mode: Option<String>,
+    #[serde(default)]
+    pub auto_test: Option<super::settings::AutoTestConfig>,
 }
 
 /// PUT /api/settings - Update and persist settings
@@ -1157,6 +1159,7 @@ pub async fn put_settings(
         log_level: body.log_level.clone(),
         mode: body.mode.clone(),
         latency_test_mode: body.latency_test_mode.clone(),
+        auto_test: body.auto_test.clone(),
     };
 
     let state = state.clone();

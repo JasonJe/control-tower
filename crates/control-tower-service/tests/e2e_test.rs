@@ -67,7 +67,7 @@ fn test_service_startup() {
     let socket_path = PathBuf::from("/tmp/test-clash-verge-e2e.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let mut child = start_service(&socket_path);
+    let child = start_service(&socket_path);
 
     // Give it time to initialize
     std::thread::sleep(Duration::from_millis(500));
@@ -86,7 +86,7 @@ fn test_ipc_status_command() {
     let socket_path = PathBuf::from("/tmp/test-clash-verge-e2e-status.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let mut child = start_service(&socket_path);
+    let child = start_service(&socket_path);
     std::thread::sleep(Duration::from_millis(500));
 
     let client = IpcClient::new(socket_path.clone());
@@ -107,7 +107,7 @@ fn test_ipc_logs_command() {
     let socket_path = PathBuf::from("/tmp/test-clash-verge-e2e-logs.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let mut child = start_service(&socket_path);
+    let child = start_service(&socket_path);
     std::thread::sleep(Duration::from_millis(500));
 
     let client = IpcClient::new(socket_path.clone());
@@ -128,7 +128,7 @@ fn test_ipc_start_command_nonexistent_config() {
     let socket_path = PathBuf::from("/tmp/test-clash-verge-e2e-start.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let mut child = start_service(&socket_path);
+    let child = start_service(&socket_path);
     std::thread::sleep(Duration::from_millis(500));
 
     let client = IpcClient::new(socket_path.clone());
@@ -151,7 +151,7 @@ fn test_ipc_get_proxies_command() {
     let socket_path = PathBuf::from("/tmp/test-clash-verge-e2e-proxies.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let mut child = start_service(&socket_path);
+    let child = start_service(&socket_path);
     std::thread::sleep(Duration::from_millis(500));
 
     let client = IpcClient::new(socket_path.clone());
@@ -171,7 +171,7 @@ fn test_ipc_get_connections_command() {
     let socket_path = PathBuf::from("/tmp/test-clash-verge-e2e-conns.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let mut child = start_service(&socket_path);
+    let child = start_service(&socket_path);
     std::thread::sleep(Duration::from_millis(500));
 
     let client = IpcClient::new(socket_path.clone());
@@ -191,7 +191,7 @@ fn test_ipc_stop_command() {
     let socket_path = PathBuf::from("/tmp/test-clash-verge-e2e-stop.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let mut child = start_service(&socket_path);
+    let child = start_service(&socket_path);
     std::thread::sleep(Duration::from_millis(500));
 
     let client = IpcClient::new(socket_path.clone());
@@ -218,7 +218,7 @@ fn test_ipc_multiple_commands_sequence() {
     let socket_path = PathBuf::from("/tmp/test-clash-verge-e2e-multi.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let mut child = start_service(&socket_path);
+    let child = start_service(&socket_path);
     std::thread::sleep(Duration::from_millis(500));
 
     let client = IpcClient::new(socket_path.clone());

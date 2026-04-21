@@ -173,6 +173,7 @@ mod tests {
 
     // === ServiceConfig tests (corrected) ===
 
+    #[allow(deprecated)]
     #[test]
     fn test_service_config_default() {
         let config = ServiceConfig::default();
@@ -180,6 +181,7 @@ mod tests {
         assert!(config.config_dir.exists() || config.config_dir == PathBuf::from("."));
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_service_config_with_config_dir() {
         let config = ServiceConfig::new()
@@ -190,6 +192,7 @@ mod tests {
         assert_eq!(config.pid_file, PathBuf::from("/tmp/test-config/ctsvc.pid"));
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_profiles_path() {
         let config = ServiceConfig::new();
@@ -197,6 +200,7 @@ mod tests {
         assert!(profiles.to_string_lossy().ends_with("profiles.yaml"));
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_verge_config_path() {
         let config = ServiceConfig::new();

@@ -537,7 +537,7 @@ pub async fn add_profile(
     let new_item = ProfileItem {
         uid: uid.clone(),
         name,
-        file: Some(format!("{}.yaml", uid)),
+        file: Some(format!("{}.yaml", &uid[..8])),
         url: Some(body.url.clone()),
         cron: None,
         updated_at: Some(chrono::Utc::now().timestamp()),
@@ -564,18 +564,79 @@ pub async fn activate_profile(
     let uid = path.into_inner();
     let paths = get_control_tower_paths();
     let profiles_path = &paths.profiles_path;
-    let profile_file = paths.config_dir.join("profiles").join(format!("{}.yaml", uid));
 
     if !profiles_path.exists() {
         return HttpResponse::NotFound().json(ApiResponse::<()>::error("profiles.yaml not found"));
     }
 
-    if !profile_file.exists() {
-        return HttpResponse::NotFound().json(ApiResponse::<()>::error(format!("Profile {} not found", uid)));
+    // Read profiles.yaml to find the profile's file path
+    let content = match std::fs::read_to_string(profiles_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to read profiles.yaml: {}", e)))
+        }
+    };
+
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct ProfilesYaml {
+        #[serde(default)]
+        current: Option<String>,
+        items: Vec<ProfileItem>,
     }
 
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct ProfileItem {
+        uid: String,
+        name: Option<String>,
+        #[serde(rename = "file")]
+        file: Option<String>,
+        url: Option<String>,
+    }
+
+    let yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
+        Ok(y) => y,
+        Err(e) => {
+            return HttpResponse::BadRequest()
+                .json(ApiResponse::<()>::error(format!("Invalid profiles.yaml: {}", e)))
+        }
+    };
+
+    // Find the profile by uid
+    let profile_item = match yaml.items.iter().find(|p| p.uid == uid) {
+        Some(item) => item,
+        None => {
+            return HttpResponse::NotFound().json(ApiResponse::<()>::error(format!("Profile {} not found in profiles.yaml", uid)));
+        }
+    };
+
+    let file_name = match &profile_item.file {
+        Some(f) => f.clone(),
+        None => {
+            return HttpResponse::BadRequest()
+                .json(ApiResponse::<()>::error(format!("Profile {} has no file path", uid)));
+        }
+    };
+
+    let profiles_dir = paths.config_dir.join("profiles");
+    let profile_file = profiles_dir.join(&file_name);
+
+    // Fallback: if file field path doesn't exist, try uid[..8].yaml (for profiles created with truncated filename)
+    let actual_file = if !profile_file.exists() && uid.len() > 8 {
+        let fallback = profiles_dir.join(format!("{}.yaml", &uid[..8]));
+        if fallback.exists() {
+            fallback
+        } else {
+            return HttpResponse::NotFound().json(ApiResponse::<()>::error(format!("Profile file {} not found", file_name)));
+        }
+    } else {
+        profile_file
+    };
+
     // Validate profile content before activation
-    let profile_content = match std::fs::read_to_string(&profile_file) {
+    let profile_content = match std::fs::read_to_string(&actual_file) {
         Ok(c) => c,
         Err(e) => {
             return HttpResponse::BadRequest()
@@ -603,25 +664,17 @@ pub async fn activate_profile(
             .json(ApiResponse::<()>::error("Profile does not contain valid proxy configuration (missing: proxies, mixed-port, proxy-providers, or proxy-groups)".to_string()));
     }
 
-    // Read and update profiles.yaml
-    let content = match std::fs::read_to_string(profiles_path) {
-        Ok(c) => c,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(ApiResponse::<()>::error(format!("Failed to read profiles.yaml: {}", e)))
-        }
-    };
-
+    // Re-parse with Serialize for writing back
     #[derive(serde::Deserialize, serde::Serialize)]
     #[allow(dead_code)]
-    struct ProfilesYaml {
+    struct ProfilesYamlWrite {
         #[serde(default)]
         current: Option<String>,
-        items: Vec<ProfileItem>,
+        items: Vec<ProfileItemWrite>,
     }
 
     #[derive(serde::Deserialize, serde::Serialize)]
-    struct ProfileItem {
+    struct ProfileItemWrite {
         uid: String,
         name: Option<String>,
         #[serde(rename = "file")]
@@ -632,7 +685,7 @@ pub async fn activate_profile(
         updated_at: Option<i64>,
     }
 
-    let mut yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
+    let mut yaml_write: ProfilesYamlWrite = match serde_yaml_ng::from_str(&content) {
         Ok(y) => y,
         Err(e) => {
             return HttpResponse::InternalServerError()
@@ -641,17 +694,17 @@ pub async fn activate_profile(
     };
 
     // Update current marker
-    yaml.current = Some(uid.clone());
+    yaml_write.current = Some(uid.clone());
 
     // Write back profiles.yaml
-    if let Err(e) = std::fs::write(profiles_path, serde_yaml_ng::to_string(&yaml).unwrap_or_default()) {
+    if let Err(e) = std::fs::write(profiles_path, serde_yaml_ng::to_string(&yaml_write).unwrap_or_default()) {
         return HttpResponse::InternalServerError()
             .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
     }
 
     // Replace active config from profile
     let store = control_tower_service_core::ActiveConfigStore::new(paths.clone());
-    if let Err(e) = store.replace_from_profile(&profile_file) {
+    if let Err(e) = store.replace_from_profile(&actual_file) {
         return HttpResponse::InternalServerError()
             .json(ApiResponse::<()>::error(format!("Failed to activate profile: {}", e)));
     }
@@ -774,9 +827,8 @@ pub async fn refresh_profile(
     let paths = get_control_tower_paths();
     let profiles_path = &paths.profiles_path;
     let profiles_dir = paths.config_dir.join("profiles");
-    let profile_file = profiles_dir.join(format!("{}.yaml", uid));
 
-    // Read profiles.yaml to get URL
+    // Read profiles.yaml to get URL and file path
     let content = match std::fs::read_to_string(profiles_path) {
         Ok(c) => c,
         Err(e) => {
@@ -785,19 +837,20 @@ pub async fn refresh_profile(
         }
     };
 
-    #[derive(serde::Deserialize, serde::Serialize)]
-    struct ProfilesYaml {
-        current: Option<String>,
-        items: Vec<ProfileItem>,
-    }
-
-    #[derive(serde::Deserialize, serde::Serialize)]
-    struct ProfileItem {
+    #[derive(serde::Deserialize)]
+    struct ProfileItemRead {
         uid: String,
         url: Option<String>,
+        #[serde(rename = "file")]
+        file: Option<String>,
     }
 
-    let yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
+    #[derive(serde::Deserialize)]
+    struct ProfilesYamlRead {
+        items: Vec<ProfileItemRead>,
+    }
+
+    let yaml: ProfilesYamlRead = match serde_yaml_ng::from_str(&content) {
         Ok(y) => y,
         Err(e) => {
             return HttpResponse::InternalServerError()
@@ -805,20 +858,36 @@ pub async fn refresh_profile(
         }
     };
 
-    let url = match yaml.items.iter().find(|i| i.uid == uid) {
-        Some(item) => item.url.clone(),
+    let profile_item = match yaml.items.iter().find(|i| i.uid == uid) {
+        Some(item) => item,
         None => {
             return HttpResponse::NotFound()
                 .json(ApiResponse::<()>::error("Profile not found".to_string()))
         }
     };
 
-    let url = match url {
-        Some(u) => u,
+    let url = match &profile_item.url {
+        Some(u) => u.clone(),
         None => {
             return HttpResponse::BadRequest()
                 .json(ApiResponse::<()>::error("Profile has no subscription URL".to_string()))
         }
+    };
+
+    // Determine profile file path: use file field if present, fallback to uid[..8].yaml
+    let profile_file = if let Some(ref file_name) = profile_item.file {
+        let pf = profiles_dir.join(file_name);
+        if pf.exists() {
+            pf
+        } else if uid.len() > 8 {
+            profiles_dir.join(format!("{}.yaml", &uid[..8]))
+        } else {
+            pf
+        }
+    } else if uid.len() > 8 {
+        profiles_dir.join(format!("{}.yaml", &uid[..8]))
+    } else {
+        profiles_dir.join(format!("{}.yaml", uid))
     };
 
     if !profile_file.exists() {
@@ -923,7 +992,7 @@ pub async fn delete_profile(
     let uid = path.into_inner();
     let paths = get_control_tower_paths();
     let profiles_path = &paths.profiles_path;
-    let profile_file = paths.config_dir.join("profiles").join(format!("{}.yaml", uid));
+    let profiles_dir = paths.config_dir.join("profiles");
 
     if !profiles_path.exists() {
         return HttpResponse::NotFound().json(ApiResponse::<()>::error("profiles.yaml not found"));
@@ -966,10 +1035,29 @@ pub async fn delete_profile(
         }
     };
 
-    // Check if profile exists
-    if !yaml.items.iter().any(|item| item.uid == uid) {
-        return HttpResponse::NotFound().json(ApiResponse::<()>::error(format!("Profile {} not found", uid)));
-    }
+    // Find the profile to get its file path
+    let file_name = match yaml.items.iter().find(|item| item.uid == uid) {
+        Some(item) => item.file.clone(),
+        None => {
+            return HttpResponse::NotFound().json(ApiResponse::<()>::error(format!("Profile {} not found", uid)));
+        }
+    };
+
+    // Determine actual file path: use file field if present, fallback to uid[..8].yaml
+    let profile_file = if let Some(ref f) = file_name {
+        let pf = profiles_dir.join(f);
+        if pf.exists() {
+            pf
+        } else if uid.len() > 8 {
+            profiles_dir.join(format!("{}.yaml", &uid[..8]))
+        } else {
+            pf
+        }
+    } else if uid.len() > 8 {
+        profiles_dir.join(format!("{}.yaml", &uid[..8]))
+    } else {
+        profiles_dir.join(format!("{}.yaml", uid))
+    };
 
     // Remove from items
     yaml.items.retain(|item| item.uid != uid);
@@ -1439,21 +1527,35 @@ pub async fn proxy_delay_all(
     let mut results: Vec<serde_json::Value> = Vec::new();
 
     for proxy_name in &global_all {
-        let delay = if mode == "ping" {
+        if mode == "ping" {
             // Ping mode: use Mihomo's TCP delay test
             let ping_url = format!("{}/proxies/{}/delay?timeout={}", api_url, proxy_name, timeout_ms);
             match client.get(&ping_url).send().await {
                 Ok(response) => {
                     if response.status().is_success() {
-                        response.json::<serde_json::Value>().await
+                        let delay = response.json::<serde_json::Value>().await
                             .ok()
                             .and_then(|d| d.get("delay").and_then(|v| v.as_i64()))
-                            .unwrap_or(-1)
+                            .unwrap_or(-1);
+                        results.push(serde_json::json!({
+                            "name": proxy_name,
+                            "delay": if delay >= 0 { serde_json::json!(delay) } else { serde_json::json!(null) }
+                        }));
                     } else {
-                        -1
+                        results.push(serde_json::json!({
+                            "name": proxy_name,
+                            "delay": null,
+                            "error": format!("Not supported (HTTP {})", response.status())
+                        }));
                     }
                 }
-                Err(_) => -1,
+                Err(_) => {
+                    results.push(serde_json::json!({
+                        "name": proxy_name,
+                        "delay": null,
+                        "error": "Timeout"
+                    }));
+                }
             }
         } else {
             // HTTP mode: switch to proxy, test HTTP, restore
@@ -1507,14 +1609,7 @@ pub async fn proxy_delay_all(
                 "name": proxy_name,
                 "delay": delay_val
             }));
-            continue;
-        };
-
-        let delay_val = if delay >= 0 { serde_json::json!(delay) } else { serde_json::json!(null) };
-        results.push(serde_json::json!({
-            "name": proxy_name,
-            "delay": delay_val
-        }));
+        }
     }
 
     // Restore original GLOBAL selection (get from stored data)

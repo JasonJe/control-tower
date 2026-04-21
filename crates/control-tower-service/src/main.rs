@@ -18,6 +18,7 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use tracing_subscriber::fmt::time::ChronoLocal;
 use scheduler::{Schedule, ProfileCronJob};
+use chrono::Utc;
 
 /// IPC command types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,6 +191,26 @@ pub fn serialize_response(resp: &IpcResponse) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("Failed to serialize response: {}", e))
 }
 
+// ============ AutoTestState + LatencyResult ============
+
+/// Result of a single proxy latency test
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LatencyResult {
+    pub name: String,
+    pub latency: Option<i64>,
+    pub error: Option<String>,
+}
+
+/// State for automatic latency testing (Auto Speed Test)
+#[derive(Debug, Default)]
+pub struct AutoTestState {
+    pub enabled: bool,
+    pub interval_secs: u64,
+    pub last_test_at: Option<i64>,
+    pub fastest: Option<LatencyResult>,
+    pub results: Vec<LatencyResult>,
+}
+
 // ============ Service State with MihomoManager Integration ============
 
 use std::collections::VecDeque;
@@ -210,6 +231,8 @@ pub struct ServiceState {
     api_host: RwLock<String>,
     /// Mihomo API port (default: 9090)
     api_port: RwLock<u16>,
+    /// Auto latency test state
+    auto_test: RwLock<AutoTestState>,
 }
 
 impl Default for ServiceState {
@@ -228,6 +251,7 @@ impl ServiceState {
             last_config_path: RwLock::new(None),
             api_host: RwLock::new("127.0.0.1".to_string()),
             api_port: RwLock::new(9090),
+            auto_test: RwLock::new(AutoTestState::default()),
         }
     }
 
@@ -306,6 +330,7 @@ impl ServiceState {
             log_level: Some("info".to_string()),
             mode: Some("rule".to_string()),
             latency_test_mode: Some("http".to_string()),
+            auto_test: None,
         };
 
         let yaml = serde_yaml_ng::to_string(&default_settings)
@@ -390,6 +415,7 @@ impl ServiceState {
             log_level: Some("info".to_string()),
             mode: None,
             latency_test_mode: current_settings.latency_test_mode,
+            auto_test: None,
         };
         self.save_settings(&settings)?;
 
@@ -445,6 +471,7 @@ impl ServiceState {
             log_level: Some("info".to_string()),
             mode: None,
             latency_test_mode: current_settings.latency_test_mode,
+            auto_test: None,
         };
         self.save_settings(&settings)?;
 
@@ -1127,6 +1154,174 @@ impl ServiceState {
     /// Check if Mihomo is running
     pub fn is_running(&self) -> bool {
         self.manager.write().is_running()
+    }
+
+    /// Run automatic latency test on all proxies
+    /// Returns the number of proxies tested
+    pub fn run_auto_latency_test(&self) -> usize {
+        // Step 1: Read auto_test config from settings
+        let settings = self.get_settings();
+        let auto_test_cfg = match settings.auto_test {
+            Some(cfg) => cfg,
+            None => {
+                tracing::debug!("Auto test config not found, skipping");
+                return 0;
+            }
+        };
+
+        // Step 2: If disabled, skip
+        if !auto_test_cfg.enabled {
+            return 0;
+        }
+
+        // Step 3: Check if Mihomo is running
+        if !self.is_running() {
+            tracing::warn!("Mihomo not running, skipping auto latency test");
+            return 0;
+        }
+
+        let api_url = self.get_api_url();
+
+        // Step 4: Fetch all proxies from Mihomo
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Failed to create HTTP client: {}", e);
+                return 0;
+            }
+        };
+
+        let proxies_url = format!("{}/proxies", api_url);
+        let proxies_response = match client.get(&proxies_url).send() {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Failed to fetch proxies for latency test: {}", e);
+                return 0;
+            }
+        };
+
+        if !proxies_response.status().is_success() {
+            tracing::warn!("Failed to get proxies: {}", proxies_response.status());
+            return 0;
+        }
+
+        let proxies_data: serde_json::Value = match proxies_response.json() {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!("Failed to parse proxies response: {}", e);
+                return 0;
+            }
+        };
+
+        // Step 5: Get GLOBAL.all list
+        let global_all = match proxies_data
+            .get("proxies")
+            .and_then(|p| p.get("GLOBAL"))
+            .and_then(|g| g.get("all"))
+            .and_then(|a| a.as_array())
+        {
+            Some(a) => a,
+            None => {
+                tracing::warn!("GLOBAL.all not found in proxies response");
+                return 0;
+            }
+        };
+
+        // Step 6: Iterate all proxies, skip first 3 (DIRECT/REJECT/FALLBACK)
+        let skip_count = 3;
+        let all_names: Vec<String> = global_all
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+
+        let nodes_to_test: Vec<&str> = all_names
+            .iter()
+            .skip(skip_count)
+            .map(|s| s.as_str())
+            .collect();
+
+        if nodes_to_test.is_empty() {
+            tracing::debug!("No proxy nodes to test");
+            let mut state = self.auto_test.write();
+            state.enabled = true;
+            state.interval_secs = (auto_test_cfg.interval_minutes as u64) * 60;
+            state.last_test_at = Some(Utc::now().timestamp());
+            state.fastest = None;
+            state.results.clear();
+            return 0;
+        }
+
+        let mut results: Vec<LatencyResult> = Vec::with_capacity(nodes_to_test.len());
+        let timeout_ms = 8000;
+
+        for node_name in &nodes_to_test {
+            let delay_url = format!("{}/proxies/{}/delay?timeout={}", api_url, node_name, timeout_ms);
+            match client.get(&delay_url).send() {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        match response.json::<serde_json::Value>() {
+                            Ok(data) => {
+                                let delay = data.get("delay").and_then(|v| v.as_i64()).unwrap_or(-1);
+                                if delay >= 0 {
+                                    results.push(LatencyResult {
+                                        name: (*node_name).to_string(),
+                                        latency: Some(delay),
+                                        error: None,
+                                    });
+                                } else {
+                                    results.push(LatencyResult {
+                                        name: (*node_name).to_string(),
+                                        latency: None,
+                                        error: Some("Negative delay".into()),
+                                    });
+                                }
+                            }
+                            Err(_) => {
+                                results.push(LatencyResult {
+                                    name: (*node_name).to_string(),
+                                    latency: None,
+                                    error: Some("Parse error".into()),
+                                });
+                            }
+                        }
+                    } else {
+                        let status_code = response.status().as_u16();
+                        results.push(LatencyResult {
+                            name: (*node_name).to_string(),
+                            latency: None,
+                            error: Some(format!("Not supported (HTTP {})", status_code)),
+                        });
+                    }
+                }
+                Err(_) => {
+                    results.push(LatencyResult {
+                        name: (*node_name).to_string(),
+                        latency: None,
+                        error: Some("Timeout".into()),
+                    });
+                }
+            }
+        }
+
+        // Step 7: Find fastest (minimum non-null latency)
+        let fastest = results.iter()
+            .filter(|r| r.latency.is_some())
+            .min_by_key(|r| r.latency.unwrap())
+            .cloned();
+
+        // Step 8: Write to auto_test state
+        let mut state = self.auto_test.write();
+        state.enabled = true;
+        state.interval_secs = (auto_test_cfg.interval_minutes as u64) * 60;
+        state.last_test_at = Some(Utc::now().timestamp());
+        state.fastest = fastest;
+        state.results = results;
+
+        tracing::info!("Auto latency test completed, tested {} nodes", nodes_to_test.len());
+        nodes_to_test.len()
     }
 }
 
@@ -2286,6 +2481,32 @@ mod tests {
         assert_eq!(resp.code, 0);
         assert!(resp.data.is_some());
     }
+
+    // ============ AutoTestState Tests ============
+
+    #[test]
+    fn test_auto_test_state_default() {
+        let state = AutoTestState::default();
+        assert!(!state.enabled);
+        assert_eq!(state.interval_secs, 0);
+        assert!(state.fastest.is_none());
+        assert!(state.results.is_empty());
+    }
+
+    #[test]
+    fn test_latency_result_fastest() {
+        let results = vec![
+            LatencyResult { name: "a".into(), latency: Some(100), error: None },
+            LatencyResult { name: "b".into(), latency: Some(50), error: None },
+            LatencyResult { name: "c".into(), latency: None, error: Some("N/A".into()) },
+        ];
+        let fastest = results.iter()
+            .filter(|r| r.latency.is_some())
+            .min_by_key(|r| r.latency.unwrap())
+            .cloned();
+        assert!(fastest.is_some());
+        assert_eq!(fastest.unwrap().name, "b");
+    }
 }
 
 // ============ Main Function Implementation ============
@@ -2353,6 +2574,19 @@ fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Re
         // Check if it's time to check cron jobs
         if last_cron_check.elapsed() >= CRON_CHECK_INTERVAL {
             state.check_and_run_crons();
+
+            // Check if auto latency test is due
+            {
+                let auto_test = state.auto_test.read();
+                let last = auto_test.last_test_at.unwrap_or(0);
+                let interval = auto_test.interval_secs.max(60) as i64;
+                let now = Utc::now().timestamp();
+                if now - last >= interval {
+                    drop(auto_test);
+                    state.run_auto_latency_test();
+                }
+            }
+
             last_cron_check = std::time::Instant::now();
         }
 

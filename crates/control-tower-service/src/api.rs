@@ -1462,6 +1462,56 @@ pub async fn proxy_delay_post(
     HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "delay": delay })))
 }
 
+// ============ Fastest Proxy DTOs ============
+
+#[derive(Serialize)]
+pub struct LatencyResultDto {
+    pub name: String,
+    pub latency: Option<i64>,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct FastestResponse {
+    pub enabled: bool,
+    pub interval_minutes: u32,
+    pub last_test_at: Option<i64>,
+    pub fastest: Option<LatencyResultDto>,
+    pub results: Vec<LatencyResultDto>,
+}
+
+/// GET /api/proxies/fastest - Get auto speed test results
+pub async fn get_fastest(
+    state: web::Data<Arc<ServiceState>>,
+) -> HttpResponse {
+    let auto_test = state.auto_test.read();
+    let interval_minutes = (auto_test.interval_secs / 60).max(1) as u32;
+
+    let results: Vec<LatencyResultDto> = auto_test.results.iter().map(|r| {
+        LatencyResultDto {
+            name: r.name.clone(),
+            latency: r.latency,
+            error: r.error.clone(),
+        }
+    }).collect();
+
+    let fastest = auto_test.fastest.as_ref().map(|r| {
+        LatencyResultDto {
+            name: r.name.clone(),
+            latency: r.latency,
+            error: r.error.clone(),
+        }
+    });
+
+    HttpResponse::Ok().json(ApiResponse::success(FastestResponse {
+        enabled: auto_test.enabled,
+        interval_minutes,
+        last_test_at: auto_test.last_test_at,
+        fastest,
+        results,
+    }))
+}
+
 /// POST /api/proxies/delay-all - Batch delay test for all proxies
 pub async fn proxy_delay_all(
     state: web::Data<Arc<ServiceState>>,
@@ -1677,4 +1727,47 @@ pub async fn get_logs(
 pub struct LogsQuery {
     pub source: Option<String>,
     pub lines: Option<usize>,
+}
+
+#[cfg(test)]
+mod fastest_tests {
+    use super::*;
+
+    #[test]
+    fn test_fastest_response_serialization() {
+        let resp = FastestResponse {
+            enabled: true,
+            interval_minutes: 15,
+            last_test_at: Some(1745214725),
+            fastest: Some(LatencyResultDto {
+                name: "vmess-hk-01".into(),
+                latency: Some(127),
+                error: None,
+            }),
+            results: vec![
+                LatencyResultDto { name: "vmess-hk-01".into(), latency: Some(127), error: None },
+                LatencyResultDto { name: "vmess-sg-02".into(), latency: None, error: Some("Not supported".into()) },
+            ],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"enabled\":true"));
+        assert!(json.contains("\"interval_minutes\":15"));
+        assert!(json.contains("vmess-hk-01"));
+        assert!(json.contains("127"));
+    }
+
+    #[test]
+    fn test_fastest_response_empty_results() {
+        let resp = FastestResponse {
+            enabled: false,
+            interval_minutes: 15,
+            last_test_at: None,
+            fastest: None,
+            results: vec![],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"fastest\":null"));
+        assert!(json.contains("\"results\":[]"));
+        assert!(json.contains("\"last_test_at\":null"));
+    }
 }

@@ -37,6 +37,7 @@ pub async fn start_http_server(port: u16, state: Arc<ServiceState>) -> std::io::
                     .route("/proxies/{name}/delay", web::get().to(api::proxy_delay))
                     .route("/proxies/delay", web::post().to(api::proxy_delay_post))
                     .route("/proxies/delay-all", web::post().to(api::proxy_delay_all))
+                    .route("/proxies/fastest", web::get().to(api::get_fastest))
                     .route("/connections", web::get().to(api::get_connections))
                     .route("/connections/{id}", web::delete().to(api::close_connection))
                     .route("/service/start", web::post().to(api::service_start))

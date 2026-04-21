@@ -1128,7 +1128,7 @@ function renderProxies() {
   document.getElementById('proxy-count').textContent = `${filteredProxies.length} of ${proxies.length} nodes`;
   document.getElementById('proxy-list').innerHTML = items.map((p) => {
     const lc = p.latency === null ? 'latency-timeout' : p.latency < 100 ? 'latency-good' : p.latency < 300 ? 'latency-medium' : 'latency-bad';
-    const lt = (p.latency !== null && typeof p.latency === 'number') ? p.latency + 'ms' : 'Timeout';
+    const lt = (p.latency !== null && typeof p.latency === 'number') ? p.latency + 'ms' : (p.latencyError ? 'N/A' : 'Timeout');
     // Status: show UDP/TFO badges if enabled
     const statusBadges = (p.udp ? '<span class="badge" style="background:#0ea5e9;color:#fff;font-size:10px;margin-right:2px">UDP</span>' : '') +
                          (p.tfo ? '<span class="badge" style="background:#8b5cf6;color:#fff;font-size:10px">TFO</span>' : '');
@@ -1203,9 +1203,10 @@ async function testProxy(idx) {
   try {
     const d = await api('POST', '/api/proxies/delay', { name: String(idx), timeout: 5000 });
     const latency = (d && typeof d.delay === 'number') ? d.delay : null;
+    const errMsg = d?.error || null;
     // Update in proxies array by index
-    if (proxies[idx]) proxies[idx].latency = latency;
-    if (filteredProxies[idx]) filteredProxies[idx].latency = latency;
+    if (proxies[idx]) { proxies[idx].latency = latency; proxies[idx].latencyError = errMsg; }
+    if (filteredProxies[idx]) { filteredProxies[idx].latency = latency; filteredProxies[idx].latencyError = errMsg; }
     saveProxyLatencies();
     // Update selected card if this is the selected proxy
     const selName = proxyData?.proxies?.GLOBAL?.now;
@@ -1215,16 +1216,16 @@ async function testProxy(idx) {
         latEl.textContent = latency + 'ms';
         latEl.className = 'badge ' + (latency < 100 ? 'success' : latency < 300 ? 'warning' : 'danger');
       } else {
-        latEl.textContent = 'Timeout';
+        latEl.textContent = errMsg ? 'N/A' : 'Timeout';
         latEl.className = 'badge danger';
       }
     }
-    showToast(latency !== null ? `Latency: ${latency}ms` : 'Timeout');
+    showToast(latency !== null ? `Latency: ${latency}ms` : (errMsg || 'Timeout'));
     renderProxies();
   } catch (e) {
     // On failure, ensure latency is null (not leftover stale value)
-    if (proxies[idx]) proxies[idx].latency = null;
-    if (filteredProxies[idx]) filteredProxies[idx].latency = null;
+    if (proxies[idx]) { proxies[idx].latency = null; proxies[idx].latencyError = null; }
+    if (filteredProxies[idx]) { filteredProxies[idx].latency = null; filteredProxies[idx].latencyError = null; }
     saveProxyLatencies();
     showToast(`Timeout`, 'error');
     renderProxies();
@@ -1240,15 +1241,18 @@ async function testAllLatency() {
     // Use batch delay-all API
     const resp = await api('POST', '/api/proxies/delay-all', { timeout: 5000 });
     if (resp && resp.results) {
-      // Build a map of name -> delay
+      // Build a map of name -> delay and error
       const delayMap = {};
+      const errorMap = {};
       resp.results.forEach(r => {
         delayMap[r.name] = r.delay;
+        if (r.error) errorMap[r.name] = r.error;
       });
       // Apply delays to proxies
       proxies.forEach(p => {
         if (delayMap[p.name] !== undefined) {
           p.latency = delayMap[p.name];
+          p.latencyError = errorMap[p.name] || null;
         }
       });
     }

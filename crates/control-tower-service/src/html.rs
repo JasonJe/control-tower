@@ -441,6 +441,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
                   <span id="proxy-sel-xudp" class="badge" style="font-size:11px;display:none;background:#ec4899;color:#fff">XUDP</span>
                   <span id="proxy-sel-uot" class="badge" style="font-size:11px;display:none;background:#14b8a6;color:#fff">UOT</span>
                 </div>
+                <div id="dashboard-fastest" style="margin-top:4px"></div>
               </div>
             </div>
           </div>
@@ -743,6 +744,19 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
                     <option value="ping">Ping</option>
                   </select>
                 </label>
+                <div style="margin-top:8px;display:flex;align-items:center;gap:12px">
+                  <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                    <input type="checkbox" id="auto-test-enabled" onchange="onAutoTestChange()">
+                    <span style="font-size:13px">Auto Test</span>
+                  </label>
+                  <select id="auto-test-interval" class="form-select" style="width:120px" onchange="onAutoTestIntervalChange()" disabled>
+                    <option value="5">5 min</option>
+                    <option value="15">15 min</option>
+                    <option value="30">30 min</option>
+                    <option value="60">60 min</option>
+                  </select>
+                </div>
+                <div id="auto-test-status" style="margin-top:6px;font-size:12px;color:var(--text3)"></div>
                 <div style="margin-top:8px;font-size:12px;color:var(--text3)">
                   HTTP: measures response time through the proxy. Ping: measures TCP connection time to the proxy server.
                 </div>
@@ -1028,7 +1042,31 @@ async function loadDashboard() {
     // Auto-refresh every 5 seconds
     if (dashRefreshTimer) { clearInterval(dashRefreshTimer); }
     dashRefreshTimer = setInterval(loadDashboard, 5000);
+    // Also refresh fastest node every 30 seconds
+    if (typeof dashboardTimer !== 'undefined') clearInterval(dashboardTimer);
+    window.dashboardTimer = setInterval(refreshDashboardFastest, 30000);
+    refreshDashboardFastest();
   } catch (e) { showToast('Failed to load dashboard: ' + e.message, 'error'); }
+}
+
+async function refreshDashboardFastest() {
+  try {
+    const data = await api('GET', '/api/proxies/fastest');
+    const el = document.getElementById('dashboard-fastest');
+    if (!el) return;
+    if (!data.data || !data.data.fastest) {
+      el.innerHTML = '<span style="color:var(--text3);font-size:13px">No test data</span>';
+      return;
+    }
+    const f = data.data.fastest;
+    const latencyStr = f.latency ? f.latency + 'ms' : 'N/A';
+    const timeStr = data.data.last_test_at
+      ? new Date(data.data.last_test_at * 1000).toLocaleTimeString()
+      : '-';
+    el.innerHTML = '<span style="font-size:12px">' + escapeHtml(f.name) +
+      ' <span style="color:var(--success)">' + latencyStr + '</span> ' +
+      '<span style="color:var(--text3)">' + timeStr + '</span></span>';
+  } catch (e) { /* ignore */ }
 }
 
 async function startService() {
@@ -1074,6 +1112,24 @@ async function loadProxies() {
       if (['GLOBAL','DIRECT','REJECT','FALLBACK'].includes(name)) continue;
       proxies.push({ idx: idx++, name, type: info.type || 'unknown', latency: savedLatencies[name] ?? null, udp: info.udp || false, tfo: info.tfo || false, selected: name === globalNow });
     }
+    // Fetch fastest node data
+    try {
+      const fastestData = await api('GET', '/api/proxies/fastest');
+      if (fastestData && fastestData.data) {
+        const resultMap = {};
+        (fastestData.data.results || []).forEach(r => { resultMap[r.name] = r; });
+        proxies.forEach(p => {
+          if (resultMap[p.name]) {
+            p.latency = resultMap[p.name].latency;
+            p.latencyError = resultMap[p.name].error || null;
+          }
+        });
+        if (fastestData.data.fastest) {
+          const fname = fastestData.data.fastest.name;
+          proxies.forEach(p => { p.isFastest = (p.name === fname); });
+        }
+      }
+    } catch (_) {}
     // Restore filter from localStorage
     const savedFilter = loadProxyFilter();
     document.getElementById('proxy-search').value = savedFilter;
@@ -1126,6 +1182,18 @@ function renderProxies() {
   const start = (proxyPage - 1) * PROXY_PAGE_SIZE;
   const items = filteredProxies.slice(start, start + PROXY_PAGE_SIZE);
   document.getElementById('proxy-count').textContent = `${filteredProxies.length} of ${proxies.length} nodes`;
+  // Summary bar for fastest node
+  const fastestNode = proxies.find(p => p.isFastest);
+  const existingSummary = document.getElementById('proxy-fastest-summary');
+  if (existingSummary) existingSummary.remove();
+  const summaryHtml = fastestNode
+    ? `<div id="proxy-fastest-summary" style="padding:5px 12px;font-size:12px;background:rgba(34,197,94,0.08);border-bottom:1px solid var(--border);color:var(--text2)">
+         Fastest: <b>${escapeHtml(fastestNode.name)}</b> ${fastestNode.latency ? fastestNode.latency + 'ms' : 'N/A'}
+       </div>`
+    : '';
+  if (summaryHtml) {
+    document.getElementById('proxy-list').insertAdjacentHTML('beforebegin', summaryHtml);
+  }
   document.getElementById('proxy-list').innerHTML = items.map((p) => {
     const lc = p.latency === null ? 'latency-timeout' : p.latency < 100 ? 'latency-good' : p.latency < 300 ? 'latency-medium' : 'latency-bad';
     const lt = (p.latency !== null && typeof p.latency === 'number') ? p.latency + 'ms' : (p.latencyError ? 'N/A' : 'Timeout');
@@ -1137,7 +1205,8 @@ function renderProxies() {
     const name = escapeHtml(p.name);
     const selBtnClass = p.selected ? 'btn xs secondary disabled' : 'btn xs primary';
     const selBtnTxt = p.selected ? '✓' : '◉';
-    return `<tr class="cell-clickable" onclick="selectProxy('${escapeHtml(p.name)}')" title="Click to select ${name}">
+    const fastestStyle = p.isFastest ? ' style="background:rgba(34,197,94,0.08)"' : '';
+    return `<tr class="cell-clickable"${fastestStyle} onclick="selectProxy('${escapeHtml(p.name)}')" title="Click to select ${name}">
       <td class="text-muted" style="font-size:12px;text-align:center">${p.idx + 1}</td>
       <td><span class="mono">${name}</span></td>
       <td>${escapeHtml(p.type)}</td>
@@ -1543,6 +1612,12 @@ async function loadSettings() {
       document.getElementById('port-api').value = apip;
       document.getElementById('tun-enabled-input').checked = tunOn;
       document.getElementById('latency-mode-input').value = latencyMode;
+      const autoTest = resp.auto_test;
+      if (autoTest) {
+        document.getElementById('auto-test-enabled').checked = autoTest.enabled;
+        document.getElementById('auto-test-interval').value = String(autoTest.interval_minutes || 15);
+        document.getElementById('auto-test-interval').disabled = !autoTest.enabled;
+      }
     }
   } catch (e) {
     showToast('Failed to load settings: ' + e.message, 'error');
@@ -1691,8 +1766,11 @@ async function saveLatency() {
   btn.innerHTML = 'Saving...';
   try {
     const latency_test_mode = document.getElementById('latency-mode-input').value;
+    const auto_test_enabled = document.getElementById('auto-test-enabled').checked;
+    const auto_test_interval = parseInt(document.getElementById('auto-test-interval').value) || 15;
     await api('PUT', '/api/settings', {
       latency_test_mode,
+      auto_test: { enabled: auto_test_enabled, interval_minutes: auto_test_interval },
       http_port: parseInt(document.getElementById('port-http').value) || 7890,
       socks_port: parseInt(document.getElementById('port-socks5').value) || 7891,
       api_port: parseInt(document.getElementById('port-api').value) || 9090,
@@ -1706,6 +1784,32 @@ async function saveLatency() {
     btn.disabled = false;
     btn.innerHTML = originalText;
   }
+}
+
+function onAutoTestChange() {
+  const enabled = document.getElementById('auto-test-enabled').checked;
+  document.getElementById('auto-test-interval').disabled = !enabled;
+  if (!enabled) return;
+  saveAutoTestSettings();
+}
+
+function onAutoTestIntervalChange() {
+  if (!document.getElementById('auto-test-enabled').checked) return;
+  saveAutoTestSettings();
+}
+
+async function saveAutoTestSettings() {
+  const latency_test_mode = document.getElementById('latency-mode-input').value;
+  const auto_test_enabled = document.getElementById('auto-test-enabled').checked;
+  const auto_test_interval = parseInt(document.getElementById('auto-test-interval').value) || 15;
+  await api('PUT', '/api/settings', {
+    latency_test_mode,
+    auto_test: { enabled: auto_test_enabled, interval_minutes: auto_test_interval },
+    http_port: parseInt(document.getElementById('port-http').value) || 7890,
+    socks_port: parseInt(document.getElementById('port-socks5').value) || 7891,
+    api_port: parseInt(document.getElementById('port-api').value) || 9090,
+    tun_enabled: document.getElementById('tun-enabled-input') && document.getElementById('tun-enabled-input').checked || false,
+  });
 }
 
 function loadLogs() {

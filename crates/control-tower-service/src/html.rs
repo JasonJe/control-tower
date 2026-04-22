@@ -362,6 +362,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
             <div class="stat-info"><div class="stat-value" id="dash-proxy" style="font-size:13px;font-family:'JetBrains Mono',monospace">-</div><div class="stat-label">Current Proxy</div></div>
           </div>
           <div class="stat-card">
+            <div class="stat-icon green" id="dash-fastest-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="dash-fastest" style="font-size:13px;font-family:'JetBrains Mono',monospace">-</div><div class="stat-label" id="dash-fastest-label">Fastest</div></div>
+          </div>
+          <div class="stat-card">
             <div class="stat-icon red"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
             <div class="stat-info"><div class="stat-value mono text-sm" id="dash-upload-rate" style="color:var(--success)">-</div><div class="stat-label">↑ Upload Rate</div></div>
           </div>
@@ -408,6 +412,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
             <button class="btn secondary" id="btn-mode-direct" onclick="setMode('direct')">Direct</button>
           </div>
         </div>
+
       </div>
 
       <!-- Proxies -->
@@ -427,21 +432,26 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
         </div>
 
         <div id="proxy-selected-card" class="card" style="margin-bottom:16px;display:none">
-          <div class="card-header"><div class="card-title">Currently Selected</div></div>
-          <div class="card-body">
-            <div style="display:flex;align-items:center;gap:16px">
-              <div style="flex:1">
-                <div id="proxy-sel-name" class="mono" style="font-size:15px;font-weight:600"></div>
-                <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
-                  <span id="proxy-sel-type" class="badge" style="background:#818cf8;color:#fff;font-size:11px"></span>
-                  <span id="proxy-sel-latency" class="badge" style="font-size:11px"></span>
-                  <span id="proxy-sel-udp" class="badge success" style="font-size:11px;display:none">UDP</span>
-                  <span id="proxy-sel-tfo" class="badge warning" style="font-size:11px;display:none">TFO</span>
-                  <span id="proxy-sel-mptcp" class="badge" style="font-size:11px;display:none;background:#f59e0b;color:#fff">MPTCP</span>
-                  <span id="proxy-sel-xudp" class="badge" style="font-size:11px;display:none;background:#ec4899;color:#fff">XUDP</span>
-                  <span id="proxy-sel-uot" class="badge" style="font-size:11px;display:none;background:#14b8a6;color:#fff">UOT</span>
-                </div>
-                <div id="dashboard-fastest" style="margin-top:4px"></div>
+          <div class="card-header"><div class="card-title">Proxy Status</div></div>
+          <div class="card-body" style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:200px">
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Selected</div>
+              <div id="proxy-sel-name" class="mono" style="font-size:14px;font-weight:600;margin-bottom:6px"></div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <span id="proxy-sel-type" class="badge" style="background:#818cf8;color:#fff;font-size:10px"></span>
+                <span id="proxy-sel-latency" class="badge" style="font-size:10px"></span>
+                <span id="proxy-sel-udp" class="badge success" style="font-size:10px;display:none">UDP</span>
+                <span id="proxy-sel-tfo" class="badge warning" style="font-size:10px;display:none">TFO</span>
+                <span id="proxy-sel-mptcp" class="badge" style="font-size:10px;display:none;background:#f59e0b;color:#fff">MPTCP</span>
+                <span id="proxy-sel-xudp" class="badge" style="font-size:10px;display:none;background:#ec4899;color:#fff">XUDP</span>
+                <span id="proxy-sel-uot" class="badge" style="font-size:10px;display:none;background:#14b8a6;color:#fff">UOT</span>
+              </div>
+            </div>
+            <div style="flex:1;min-width:200px;border-left:1px solid var(--border);padding-left:12px">
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Fastest</div>
+              <div id="proxy-fastest-name" class="mono" style="font-size:14px;font-weight:600;color:var(--success);margin-bottom:6px">-</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <span id="proxy-fastest-latency" class="badge success" style="font-size:10px"></span>
               </div>
             </div>
           </div>
@@ -734,12 +744,16 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
                   <span class="info-key">Test Mode</span>
                   <span class="info-val" id="latency-mode-display">-</span>
                 </div>
+                <div class="info-row">
+                  <span class="info-key">Auto Test</span>
+                  <span class="info-val" id="auto-test-display">-</span>
+                </div>
               </div>
             </div>
             <div id="latency-edit" style="display:none">
               <div style="padding:8px 0">
                 <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
-                  <select id="latency-mode-input" class="form-select">
+                  <select id="latency-mode-input" class="form-select" onchange="onLatencyModeChange()">
                     <option value="http">HTTP</option>
                     <option value="ping">Ping</option>
                   </select>
@@ -792,7 +806,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
                 </button>
               </div>
             </div>
-            <div id="logs-content" class="logs-content" style="max-height:420px;overflow-y:auto;background:#0f172a;color:#e2e8f0;font-family:'JetBrains Mono',monospace;font-size:11px;padding:8px;border-radius:6px;line-height:1.6"></div>
+            <div id="logs-content" style="max-height:420px;overflow-y:auto;background:#0f172a;color:#e2e8f0;font-family:'JetBrains Mono',monospace;font-size:11px;padding:8px;border-radius:6px;line-height:1.6"></div>
           </div>
         </div>
       </div>
@@ -888,10 +902,17 @@ function loadProxyFilter() {
   try { return localStorage.getItem(LS_PROXY_FILTER) || ''; } catch (_) { return ''; }
 }
 
-async function api(method, path, body) {
+async function api(method, path, body, fetchTimeoutMs) {
   const opts = { method, headers: {'Content-Type': 'application/json'} };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(path, opts);
+  let res;
+  if (fetchTimeoutMs) {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), fetchTimeoutMs);
+    try { res = await fetch(path, { ...opts, signal: ctrl.signal }); } finally { clearTimeout(tid); }
+  } else {
+    res = await fetch(path, opts);
+  }
   const json = await res.json();
   if (json.code !== 0) throw new Error(json.message);
   return json.data;
@@ -1050,23 +1071,31 @@ async function loadDashboard() {
 }
 
 async function refreshDashboardFastest() {
+  const el = document.getElementById('dash-fastest');
+  if (!el) return;
   try {
+    // Try API (auto test state) first
     const data = await api('GET', '/api/proxies/fastest');
-    const el = document.getElementById('dashboard-fastest');
-    if (!el) return;
-    if (!data.data || !data.data.fastest) {
-      el.innerHTML = '<span style="color:var(--text3);font-size:13px">No test data</span>';
+    if (data && data.fastest) {
+      const f = data.fastest;
+      const timeStr = data.last_test_at ? new Date(data.last_test_at * 1000).toLocaleTimeString() : '-';
+      el.textContent = escapeHtml(f.name) + ' ' + (f.latency ? f.latency + 'ms' : 'N/A');
+      document.getElementById('dash-fastest-label').textContent = 'Fastest ' + timeStr;
       return;
     }
-    const f = data.data.fastest;
-    const latencyStr = f.latency ? f.latency + 'ms' : 'N/A';
-    const timeStr = data.data.last_test_at
-      ? new Date(data.data.last_test_at * 1000).toLocaleTimeString()
-      : '-';
-    el.innerHTML = '<span style="font-size:12px">' + escapeHtml(f.name) +
-      ' <span style="color:var(--success)">' + latencyStr + '</span> ' +
-      '<span style="color:var(--text3)">' + timeStr + '</span></span>';
-  } catch (e) { /* ignore */ }
+  } catch (_) {}
+  // Fall back: derive from localStorage latency data
+  const saved = loadProxyLatencies();
+  const entries = Object.entries(saved).filter(([, v]) => v !== null && v !== undefined && v > 0);
+  if (entries.length > 0) {
+    entries.sort((a, b) => a[1] - b[1]);
+    const [name, latency] = entries[0];
+    el.textContent = escapeHtml(name) + ' ' + latency + 'ms';
+    document.getElementById('dash-fastest-label').textContent = 'Fastest (local)';
+  } else {
+    el.textContent = 'No test data';
+    document.getElementById('dash-fastest-label').textContent = 'Fastest';
+  }
 }
 
 async function startService() {
@@ -1112,44 +1141,72 @@ async function loadProxies() {
       if (['GLOBAL','DIRECT','REJECT','FALLBACK'].includes(name)) continue;
       proxies.push({ idx: idx++, name, type: info.type || 'unknown', latency: savedLatencies[name] ?? null, udp: info.udp || false, tfo: info.tfo || false, selected: name === globalNow });
     }
-    // Fetch fastest node data
+    // Fetch auto test results and merge with localStorage latencies
+    let autoResults = [];
+    let autoFastest = null;
     try {
-      const fastestData = await api('GET', '/api/proxies/fastest');
-      if (fastestData && fastestData.data) {
-        const resultMap = {};
-        (fastestData.data.results || []).forEach(r => { resultMap[r.name] = r; });
-        proxies.forEach(p => {
-          if (resultMap[p.name]) {
-            p.latency = resultMap[p.name].latency;
-            p.latencyError = resultMap[p.name].error || null;
-          }
-        });
-        if (fastestData.data.fastest) {
-          const fname = fastestData.data.fastest.name;
-          proxies.forEach(p => { p.isFastest = (p.name === fname); });
-        }
-      }
+      const fd = await api('GET', '/api/proxies/fastest');
+      if (fd) { autoResults = fd.results || []; autoFastest = fd.fastest; }
     } catch (_) {}
+    // Build result map from auto test results
+    const resultMap = {};
+    autoResults.forEach(r => { resultMap[r.name] = r; });
+    proxies.forEach(p => {
+      if (resultMap[p.name]) {
+        p.latency = resultMap[p.name].latency ?? p.latency;
+        p.latencyError = resultMap[p.name].error || null;
+      } else if (savedLatencies[p.name] !== undefined) {
+        p.latency = savedLatencies[p.name];
+      }
+    });
+    // Mark fastest: prefer API result, fall back to lowest localStorage latency
+    if (autoFastest) {
+      const fname = autoFastest.name;
+      proxies.forEach(p => { p.isFastest = (p.name === fname); });
+    } else {
+      // No auto test result — find lowest latency from data
+      const candidates = proxies.filter(p => p.latency !== null && p.latency > 0);
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => a.latency - b.latency);
+        candidates[0].isFastest = true;
+      }
+    }
     // Restore filter from localStorage
     const savedFilter = loadProxyFilter();
     document.getElementById('proxy-search').value = savedFilter;
     filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(savedFilter.toLowerCase()));
     proxyPage = 1;
-    // Update selected proxy card
-    if (globalNow && pl[globalNow]) {
+    // Update selected proxy card — always show card (fastest + selected sections)
+    const hasSel = !!(globalNow && pl[globalNow]);
+    if (hasSel) {
       const sel = pl[globalNow];
       document.getElementById('proxy-sel-name').textContent = globalNow;
       document.getElementById('proxy-sel-type').textContent = (sel.type || '').toUpperCase();
       const lat = savedLatencies[globalNow] ?? null;
       document.getElementById('proxy-sel-latency').textContent = lat !== null ? lat + 'ms' : 'Timeout';
       document.getElementById('proxy-sel-latency').className = 'badge ' + (lat !== null ? (lat < 100 ? 'success' : lat < 300 ? 'warning' : 'danger') : '');
-      // Show/hide protocol badges
       document.getElementById('proxy-sel-udp').style.display = sel.udp ? 'inline-block' : 'none';
       document.getElementById('proxy-sel-tfo').style.display = sel.tfo ? 'inline-block' : 'none';
       document.getElementById('proxy-sel-mptcp').style.display = sel.mptcp ? 'inline-block' : 'none';
       document.getElementById('proxy-sel-xudp').style.display = sel.xudp ? 'inline-block' : 'none';
       document.getElementById('proxy-sel-uot').style.display = sel.uot ? 'inline-block' : 'none';
-      document.getElementById('proxy-selected-card').style.display = 'block';
+    } else {
+      document.getElementById('proxy-sel-name').textContent = '-';
+      document.getElementById('proxy-sel-type').textContent = '-';
+      document.getElementById('proxy-sel-latency').textContent = '-';
+      document.getElementById('proxy-sel-latency').className = 'badge';
+    }
+    // Always show the status card when we have proxies
+    document.getElementById('proxy-selected-card').style.display = proxies.length > 0 ? 'block' : 'none';
+    // Update fastest proxy in the card
+    const fastestNode = proxies.find(p => p.isFastest);
+    if (fastestNode) {
+      document.getElementById('proxy-fastest-name').textContent = fastestNode.name;
+      const fl = fastestNode.latency;
+      document.getElementById('proxy-fastest-latency').textContent = fl !== null ? fl + 'ms' : 'N/A';
+    } else {
+      document.getElementById('proxy-fastest-name').textContent = '-';
+      document.getElementById('proxy-fastest-latency').textContent = '-';
     }
     renderProxies();
   } catch (err) { l.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load proxies'; }
@@ -1182,18 +1239,6 @@ function renderProxies() {
   const start = (proxyPage - 1) * PROXY_PAGE_SIZE;
   const items = filteredProxies.slice(start, start + PROXY_PAGE_SIZE);
   document.getElementById('proxy-count').textContent = `${filteredProxies.length} of ${proxies.length} nodes`;
-  // Summary bar for fastest node
-  const fastestNode = proxies.find(p => p.isFastest);
-  const existingSummary = document.getElementById('proxy-fastest-summary');
-  if (existingSummary) existingSummary.remove();
-  const summaryHtml = fastestNode
-    ? `<div id="proxy-fastest-summary" style="padding:5px 12px;font-size:12px;background:rgba(34,197,94,0.08);border-bottom:1px solid var(--border);color:var(--text2)">
-         Fastest: <b>${escapeHtml(fastestNode.name)}</b> ${fastestNode.latency ? fastestNode.latency + 'ms' : 'N/A'}
-       </div>`
-    : '';
-  if (summaryHtml) {
-    document.getElementById('proxy-list').insertAdjacentHTML('beforebegin', summaryHtml);
-  }
   document.getElementById('proxy-list').innerHTML = items.map((p) => {
     const lc = p.latency === null ? 'latency-timeout' : p.latency < 100 ? 'latency-good' : p.latency < 300 ? 'latency-medium' : 'latency-bad';
     const lt = (p.latency !== null && typeof p.latency === 'number') ? p.latency + 'ms' : (p.latencyError ? 'N/A' : 'Timeout');
@@ -1264,13 +1309,34 @@ async function selectProxy(name) {
     }
     renderProxies();
     loadDashboard();
+    refreshFastestCard();
   } catch (e) { showToast('Failed to select proxy: ' + e.message, 'error'); }
 }
 
-// Test latency for a single proxy (by global index to avoid emoji URL encoding issues)
+// Update fastest proxy in the side-by-side card
+async function refreshFastestCard() {
+  try {
+    const fd = await api('GET', '/api/proxies/fastest');
+    if (fd && fd.fastest) {
+      document.getElementById('proxy-fastest-name').textContent = fd.fastest.name;
+      document.getElementById('proxy-fastest-latency').textContent = fd.fastest.latency ? fd.fastest.latency + 'ms' : 'N/A';
+    } else {
+      // No auto test data — derive from proxies array
+      const fn = proxies.find(p => p.isFastest);
+      if (fn) {
+        document.getElementById('proxy-fastest-name').textContent = fn.name;
+        document.getElementById('proxy-fastest-latency').textContent = fn.latency ? fn.latency + 'ms' : 'N/A';
+      }
+    }
+  } catch (_) {}
+}
+
+// Test latency for a single proxy (by name, handles emoji/special chars via server-side encoding)
 async function testProxy(idx) {
   try {
-    const d = await api('POST', '/api/proxies/delay', { name: String(idx), timeout: 5000 });
+    const proxyName = proxies[idx]?.name;
+    if (!proxyName) { showToast('Proxy not found', 'error'); return; }
+    const d = await api('POST', '/api/proxies/delay', { name: proxyName, timeout: 5000 });
     const latency = (d && typeof d.delay === 'number') ? d.delay : null;
     const errMsg = d?.error || null;
     // Update in proxies array by index
@@ -1308,13 +1374,13 @@ async function testAllLatency() {
   btn.textContent = 'Testing...';
   try {
     // Use batch delay-all API
-    const resp = await api('POST', '/api/proxies/delay-all', { timeout: 5000 });
+    const resp = await api('POST', '/api/proxies/delay-all', { timeout: 5000 }, 60000);
     if (resp && resp.results) {
       // Build a map of name -> delay and error
       const delayMap = {};
       const errorMap = {};
       resp.results.forEach(r => {
-        delayMap[r.name] = r.delay;
+        delayMap[r.name] = r.latency;
         if (r.error) errorMap[r.name] = r.error;
       });
       // Apply delays to proxies
@@ -1617,6 +1683,10 @@ async function loadSettings() {
         document.getElementById('auto-test-enabled').checked = autoTest.enabled;
         document.getElementById('auto-test-interval').value = String(autoTest.interval_minutes || 15);
         document.getElementById('auto-test-interval').disabled = !autoTest.enabled;
+        const autoTestDisplay = document.getElementById('auto-test-display');
+        autoTestDisplay.textContent = autoTest.enabled
+          ? `${autoTest.interval_minutes} min interval`
+          : 'Off';
       }
     }
   } catch (e) {
@@ -1770,7 +1840,7 @@ async function saveLatency() {
     const auto_test_interval = parseInt(document.getElementById('auto-test-interval').value) || 15;
     await api('PUT', '/api/settings', {
       latency_test_mode,
-      auto_test: { enabled: auto_test_enabled, interval_minutes: auto_test_interval },
+      auto_test: { enabled: auto_test_enabled, interval_minutes: auto_test_interval, latency_test_mode },
       http_port: parseInt(document.getElementById('port-http').value) || 7890,
       socks_port: parseInt(document.getElementById('port-socks5').value) || 7891,
       api_port: parseInt(document.getElementById('port-api').value) || 9090,
@@ -1798,13 +1868,19 @@ function onAutoTestIntervalChange() {
   saveAutoTestSettings();
 }
 
+function onLatencyModeChange() {
+  // When latency mode changes, update auto_test config so it uses the new mode
+  if (!document.getElementById('auto-test-enabled').checked) return;
+  saveAutoTestSettings();
+}
+
 async function saveAutoTestSettings() {
   const latency_test_mode = document.getElementById('latency-mode-input').value;
   const auto_test_enabled = document.getElementById('auto-test-enabled').checked;
   const auto_test_interval = parseInt(document.getElementById('auto-test-interval').value) || 15;
   await api('PUT', '/api/settings', {
     latency_test_mode,
-    auto_test: { enabled: auto_test_enabled, interval_minutes: auto_test_interval },
+    auto_test: { enabled: auto_test_enabled, interval_minutes: auto_test_interval, latency_test_mode },
     http_port: parseInt(document.getElementById('port-http').value) || 7890,
     socks_port: parseInt(document.getElementById('port-socks5').value) || 7891,
     api_port: parseInt(document.getElementById('port-api').value) || 9090,
@@ -1819,10 +1895,13 @@ function loadLogs() {
     .then(r => r.json())
     .then(resp => {
       if (resp && resp.data && resp.data.items) {
-        container.textContent = resp.data.items.join('\n');
+        container.innerHTML = resp.data.items.map(line => {
+          const escaped = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          return `<div style="white-space:pre-wrap">${escaped}</div>`;
+        }).join('');
         container.scrollTop = container.scrollHeight;
       }
-    }).catch(() => { container.textContent = 'Failed to load logs'; });
+    }).catch(() => { container.innerHTML = '<div style="white-space:pre-wrap;color:#f87171">Failed to load logs</div>'; });
 }
 
 function onLogRefreshChange() {

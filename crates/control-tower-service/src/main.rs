@@ -9,6 +9,7 @@ mod html;
 mod http_server;
 mod settings;
 
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
 use std::path::{PathBuf, Path};
 use std::sync::Arc;
@@ -48,6 +49,8 @@ pub enum IpcCommand {
     SetMode { mode: String },
     /// Select a proxy in the GLOBAL selector group
     SelectProxy { name: String },
+    /// Test a proxy's latency using Mihomo's delay API (no GLOBAL switching)
+    TestProxy { name: String, timeout_ms: Option<u64> },
 }
 
 /// IPC response types
@@ -176,6 +179,9 @@ pub fn handle_command(cmd: IpcCommand) -> IpcResponse {
         IpcCommand::SelectProxy { .. } => {
             IpcResponse::error("SelectProxy requires stateful handler")
         }
+        IpcCommand::TestProxy { .. } => {
+            IpcResponse::error("TestProxy requires stateful handler")
+        }
     }
 }
 
@@ -209,6 +215,8 @@ pub struct AutoTestState {
     pub last_test_at: Option<i64>,
     pub fastest: Option<LatencyResult>,
     pub results: Vec<LatencyResult>,
+    /// Prevents concurrent auto-test runs
+    pub running: bool,
 }
 
 // ============ Service State with MihomoManager Integration ============
@@ -1174,7 +1182,14 @@ impl ServiceState {
             return 0;
         }
 
-        // Step 3: Check if Mihomo is running
+        // Step 3: Always record attempt time first — even if Mihomo is not running,
+        // this prevents repeated spurious triggers in the cron loop
+        {
+            let mut st = self.auto_test.write();
+            st.last_test_at = Some(Utc::now().timestamp());
+        }
+
+        // Step 4: Check if Mihomo is running
         if !self.is_running() {
             tracing::warn!("Mihomo not running, skipping auto latency test");
             return 0;
@@ -1230,7 +1245,7 @@ impl ServiceState {
             }
         };
 
-        // Step 6: Iterate all proxies, skip first 3 (DIRECT/REJECT/FALLBACK)
+        // Step 7: Iterate all proxies, skip first 3 (DIRECT/REJECT/FALLBACK)
         let skip_count = 3;
         let all_names: Vec<String> = global_all
             .iter()
@@ -1256,9 +1271,29 @@ impl ServiceState {
 
         let mut results: Vec<LatencyResult> = Vec::with_capacity(nodes_to_test.len());
         let timeout_ms = 8000;
+        let latency_mode = auto_test_cfg.latency_test_mode.as_deref().unwrap_or("http");
 
         for node_name in &nodes_to_test {
-            let delay_url = format!("{}/proxies/{}/delay?timeout={}", api_url, node_name, timeout_ms);
+            // All modes use Mihomo's /proxies/{name}/delay API (no GLOBAL switching needed).
+            // - http mode: ?url=...&timeout=...  (HTTP test via proxy)
+            // - ping mode: ?timeout=...  (TCP ping, may not work for VLESS nodes)
+            let delay_url = if latency_mode == "http" {
+                format!(
+                    "{}/proxies/{}/delay?url={}&timeout={}",
+                    api_url,
+                    utf8_percent_encode(node_name, NON_ALPHANUMERIC),
+                    "http%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204",
+                    timeout_ms
+                )
+            } else {
+                format!(
+                    "{}/proxies/{}/delay?timeout={}",
+                    api_url,
+                    utf8_percent_encode(node_name, NON_ALPHANUMERIC),
+                    timeout_ms
+                )
+            };
+
             match client.get(&delay_url).send() {
                 Ok(response) => {
                     if response.status().is_success() {
@@ -1292,7 +1327,7 @@ impl ServiceState {
                         results.push(LatencyResult {
                             name: (*node_name).to_string(),
                             latency: None,
-                            error: Some(format!("Not supported (HTTP {})", status_code)),
+                            error: Some(format!("Mihomo error (HTTP {})", status_code)),
                         });
                     }
                 }
@@ -1306,21 +1341,27 @@ impl ServiceState {
             }
         }
 
-        // Step 7: Find fastest (minimum non-null latency)
-        let fastest = results.iter()
+        // Step 8: Find fastest (minimum non-null latency)
+        let fastest_name = results.iter()
             .filter(|r| r.latency.is_some())
             .min_by_key(|r| r.latency.unwrap())
-            .cloned();
+            .map(|r| r.name.clone())
+            .unwrap_or_else(|| "N/A".to_string());
 
-        // Step 8: Write to auto_test state
+        // Step 9: Write to auto_test state
         let mut state = self.auto_test.write();
         state.enabled = true;
         state.interval_secs = (auto_test_cfg.interval_minutes as u64) * 60;
         state.last_test_at = Some(Utc::now().timestamp());
-        state.fastest = fastest;
+        state.fastest = results.iter()
+            .filter(|r| r.latency.is_some())
+            .min_by_key(|r| r.latency.unwrap())
+            .cloned();
         state.results = results;
 
-        tracing::info!("Auto latency test completed, tested {} nodes", nodes_to_test.len());
+        tracing::info!("Auto latency test completed, tested {} nodes, fastest: {}",
+            nodes_to_test.len(), fastest_name);
+        self.append_log(format!("Auto test: {} nodes tested, fastest={}", nodes_to_test.len(), fastest_name));
         nodes_to_test.len()
     }
 }
@@ -1441,6 +1482,45 @@ pub fn handle_command_with_state(state: &ServiceState, cmd: IpcCommand) -> IpcRe
             match state.select_proxy(&name) {
                 Ok(()) => IpcResponse::success(),
                 Err(e) => IpcResponse::error(e),
+            }
+        }
+        IpcCommand::TestProxy { name, timeout_ms } => {
+            let timeout = timeout_ms.unwrap_or(5000);
+            let api_url = state.get_api_url();
+            let encoded_name = utf8_percent_encode(&name, NON_ALPHANUMERIC).to_string();
+            let url = format!(
+                "{}/proxies/{}/delay?url={}&timeout={}",
+                api_url,
+                encoded_name,
+                "http%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204",
+                timeout
+            );
+            match reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_millis(timeout + 1000))
+                .build()
+            {
+                Ok(client) => {
+                    match client.get(&url).send() {
+                        Ok(response) => {
+                            if response.status().is_success() {
+                                match response.json::<serde_json::Value>() {
+                                    Ok(data) => {
+                                        let delay = data.get("delay").and_then(|v| v.as_i64()).unwrap_or(-1);
+                                        IpcResponse::success_with_data(serde_json::json!({
+                                            "delay": delay,
+                                            "error": if delay < 0 { Some("Negative or missing delay".to_string()) } else { None::<String> }
+                                        }))
+                                    }
+                                    Err(e) => IpcResponse::error(format!("Failed to parse response: {}", e)),
+                                }
+                            } else {
+                                IpcResponse::error(format!("Mihomo error: {}", response.status()))
+                            }
+                        }
+                        Err(e) => IpcResponse::error(format!("Request failed: {}", e)),
+                    }
+                }
+                Err(e) => IpcResponse::error(format!("Failed to create HTTP client: {}", e)),
             }
         }
     }
@@ -2577,13 +2657,23 @@ fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Re
 
             // Check if auto latency test is due
             {
-                let auto_test = state.auto_test.read();
-                let last = auto_test.last_test_at.unwrap_or(0);
-                let interval = auto_test.interval_secs.max(60) as i64;
-                let now = Utc::now().timestamp();
-                if now - last >= interval {
-                    drop(auto_test);
+                let should_run = {
+                    let auto_test = state.auto_test.read();
+                    let last = auto_test.last_test_at.unwrap_or(0);
+                    let interval = auto_test.interval_secs.max(60) as i64;
+                    let now = Utc::now().timestamp();
+                    !auto_test.running && now - last >= interval
+                };
+                if should_run {
+                    {
+                        let mut auto_test = state.auto_test.write();
+                        auto_test.running = true;
+                    }
                     state.run_auto_latency_test();
+                    {
+                        let mut auto_test = state.auto_test.write();
+                        auto_test.running = false;
+                    }
                 }
             }
 

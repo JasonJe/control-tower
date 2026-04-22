@@ -1,13 +1,9 @@
 //! Proxy management module
 
 use anyhow::Result;
-use std::time::{Duration, Instant};
 
-use crate::service::{get_clash_proxies, select_proxy as service_select_proxy};
+use crate::service::{get_clash_proxies, select_proxy as service_select_proxy, test_proxy_ipc};
 use crate::ProxyAction;
-
-const CLASH_API_HOST: &str = "127.0.0.1";
-const CLASH_PROXY_PORT: u16 = 7890;  // Mixed proxy port for HTTP/SOCKS5
 
 /// Truncate string to max_width characters, showing start and end with "..." in middle if truncated
 fn truncate_str(s: &str, max_width: usize) -> String {
@@ -270,65 +266,10 @@ async fn test_proxy(name: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Get the currently selected proxy in GLOBAL group
-async fn get_current_global_proxy() -> Result<String> {
-    let proxies = get_clash_proxies().await?;
-
-    if let Some(global) = proxies.get("proxies").and_then(|p| p.get("GLOBAL")) {
-        if let Some(now) = global.get("now").and_then(|v| v.as_str()) {
-            return Ok(now.to_string());
-        }
-    }
-
-    anyhow::bail!("Could not find current GLOBAL proxy")
-}
-
-/// Test a single proxy by temporarily setting it as GLOBAL and making a request
-async fn test_single_proxy(name: &str, test_url: &str, timeout_ms: u64) -> Result<u64> {
-    // Get current GLOBAL selection to restore later
-    let original_proxy = get_current_global_proxy().await?;
-
-    // Temporarily select the proxy to test
-    service_select_proxy(name).await?;
-
-    // Make the test request through the system proxy (which now routes through our target)
-    let delay = measure_http_delay(test_url, timeout_ms).await;
-
-    // Restore original proxy selection
-    if let Err(e) = service_select_proxy(&original_proxy).await {
-        tracing::warn!("Failed to restore original proxy {}: {}", original_proxy, e);
-    }
-
-    delay
-}
-
-/// Measure HTTP request delay through the system proxy
-async fn measure_http_delay(url: &str, timeout_ms: u64) -> Result<u64> {
-    let start = Instant::now();
-
-    // We need to go through the Clash HTTP proxy at 127.0.0.1:9090
-    // The system proxy is already configured to use Clash, so we just need
-    // to make a request to an external URL
-
-    let client = reqwest::Client::builder()
-        .proxy(reqwest::Proxy::http(format!("http://{}:{}", CLASH_API_HOST, CLASH_PROXY_PORT))?)
-        .proxy(reqwest::Proxy::https(format!("http://{}:{}", CLASH_API_HOST, CLASH_PROXY_PORT))?)
-        .timeout(Duration::from_millis(timeout_ms))
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("Request failed: {}", e))?;
-
-    if !response.status().is_success() && response.status().as_u16() != 204 {
-        anyhow::bail!("HTTP error: {}", response.status());
-    }
-
-    let elapsed = start.elapsed().as_millis() as u64;
-    Ok(elapsed)
+/// Test a single proxy by directly calling Mihomo's delay API (no GLOBAL switching)
+async fn test_single_proxy(name: &str, _test_url: &str, timeout_ms: u64) -> Result<u64> {
+    // Use IPC to call Mihomo's /proxies/{name}/delay API directly - no GLOBAL switching needed
+    test_proxy_ipc(name, Some(timeout_ms)).await
 }
 
 /// Show statistics for all proxies

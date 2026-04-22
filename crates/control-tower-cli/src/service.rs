@@ -38,6 +38,7 @@ pub enum IpcCommand {
     CloseConnection { id: String },
     SetMode { mode: String },
     SelectProxy { name: String },
+    TestProxy { name: String, timeout_ms: Option<u64> },
 }
 
 /// IPC response types
@@ -168,6 +169,27 @@ pub async fn select_proxy(name: &str) -> Result<()> {
 
     crate::settings::set_selected_proxy(name.to_string());
     Ok(())
+}
+
+/// Test a proxy's latency via IPC using Mihomo's delay API (no GLOBAL switching)
+pub async fn test_proxy_ipc(name: &str, timeout_ms: Option<u64>) -> Result<u64> {
+    if default_socket_path().exists() {
+        let resp = ipc_connect_and_send(&IpcCommand::TestProxy {
+            name: name.to_string(),
+            timeout_ms,
+        }).map_err(anyhow::Error::msg)?;
+        if resp.is_success() {
+            if let Some(data) = resp.data {
+                if let Some(delay) = data.get("delay").and_then(|v| v.as_i64()).map(|d| d as u64) {
+                    return Ok(delay);
+                }
+            }
+            anyhow::bail!("Invalid response from TestProxy IPC");
+        } else {
+            anyhow::bail!("TestProxy IPC failed: {}", resp.message);
+        }
+    }
+    anyhow::bail!("Service not running (socket not found)");
 }
 
 /// Get current mode from Clash

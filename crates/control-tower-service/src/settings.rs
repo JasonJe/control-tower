@@ -26,6 +26,8 @@ mod tests {
 pub struct AutoTestConfig {
     pub enabled: bool,
     pub interval_minutes: u32,
+    #[serde(rename = "latency_test_mode", default)]
+    pub latency_test_mode: Option<String>,
 }
 
 impl Default for AutoTestConfig {
@@ -33,6 +35,7 @@ impl Default for AutoTestConfig {
         Self {
             enabled: false,
             interval_minutes: 15,
+            latency_test_mode: None,
         }
     }
 }

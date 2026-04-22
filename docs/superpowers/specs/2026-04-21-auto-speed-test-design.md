@@ -124,9 +124,45 @@ Replace/enhance the current proxy delay card:
 | `http_server.rs` | Route `GET /api/proxies/fastest` |
 | `html.rs` | Settings: add auto-test toggle + interval dropdown; Dashboard: add fastest card; Proxies: highlight + summary bar |
 
+## Boundary Cases
+
+### No test ever run
+- `GET /api/proxies/fastest` returns `fastest: null`, `last_test_at: null`
+- Dashboard card: shows "No test data" placeholder, no node name/latency
+- Proxies list: no highlight, latency column shows "-" or "Not tested"
+
+### All nodes failed (all N/A or timeout)
+- `fastest: null` since no valid latency
+- `last_test_at` is set (test did run, just all failed)
+- Dashboard: shows "All nodes failed" or "No available nodes"
+- Proxies list: all rows show "N/A", no highlight
+
+### Empty proxy list (no nodes)
+- Handle gracefully: `results: []`, `fastest: null`
+- Dashboard: "No proxy nodes found"
+- No error thrown
+
+### Partial failure (some nodes fail, some succeed)
+- `results` includes all nodes (failed ones have `latency: null, error: "..."`)
+- `fastest` is the node with minimum non-null latency
+- Proxies list: failed nodes show "N/A", fastest highlighted
+
+### Mihomo not running
+- `proxy_delay_all` returns 500 or times out
+- Auto-test skips update: `last_test_at` stays unchanged
+- No error shown to user until next manual test
+- Log warning: "Auto latency test failed: Mihomo not responding"
+
+### Network timeout during test
+- Individual node timeout → `latency: null, error: "Timeout"`
+- `fastest` computed from remaining valid results
+- If ALL timeout → same as "all failed" case
+
 ## Testing
 
 - Manual test via "Test All" button still works as before
 - With auto-test enabled: verify `GET /api/proxies/fastest` returns after scheduled interval
 - Verify fastest node highlight appears in proxies list
 - Toggle off auto-test: verify no background requests fire
+- No test run yet: verify placeholder state
+- All nodes failed: verify "All nodes failed" state

@@ -13,8 +13,6 @@ A lightweight management tool for Mihomo ( Clash.Meta ) , featuring both CLI and
 - **节点测速 / Proxy Latency Testing** — 一键批量检测节点延迟
 - **流量统计 / Traffic Statistics** — 实时展示当前速率与累计流量
 - **规则管理 / Rule Management** — 可视化添加、删除、导入导出规则
-- **systemd 守护进程 / systemd Daemon** — 支持以服务方式部署，开机自启
-- **跨平台 / Cross-Platform** — Linux aarch64 / amd64 全覆盖
 
 ---
 

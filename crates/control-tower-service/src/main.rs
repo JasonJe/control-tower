@@ -263,7 +263,7 @@ impl ServiceState {
         }
     }
 
-    /// Load api_host and api_port from settings.yaml
+    /// Load api_host and api_port from settings.yaml, also sync AutoTestState
     pub fn load_settings(&self) {
         let exe_dir = std::env::current_exe()
             .ok()
@@ -288,6 +288,13 @@ impl ServiceState {
         struct Settings {
             api_host: Option<String>,
             api_port: Option<u16>,
+            auto_test: Option<AutoTestYaml>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct AutoTestYaml {
+            enabled: Option<bool>,
+            interval_minutes: Option<u32>,
         }
 
         match serde_yaml_ng::from_str::<Settings>(&content) {
@@ -298,8 +305,14 @@ impl ServiceState {
                 if let Some(port) = settings.api_port {
                     *self.api_port.write() = port;
                 }
-                tracing::info!("Loaded settings: api_host={}, api_port={}",
-                    self.api_host.read(), self.api_port.read());
+                // Sync AutoTestState from settings.yaml
+                if let Some(ref auto_cfg) = settings.auto_test {
+                    let mut auto_test = self.auto_test.write();
+                    auto_test.enabled = auto_cfg.enabled.unwrap_or(false);
+                    auto_test.interval_secs = (auto_cfg.interval_minutes.unwrap_or(5) as u64) * 60;
+                }
+                tracing::info!("Loaded settings: api_host={}, api_port={}, auto_test.enabled={}",
+                    self.api_host.read(), self.api_port.read(), self.auto_test.read().enabled);
             }
             Err(e) => {
                 tracing::warn!("Failed to parse settings.yaml: {}", e);
@@ -477,9 +490,9 @@ impl ServiceState {
             service_port: Some(8080),
             tun_enabled: Some(tun_enabled),
             log_level: Some("info".to_string()),
-            mode: None,
+            mode: current_settings.mode,
             latency_test_mode: current_settings.latency_test_mode,
-            auto_test: None,
+            auto_test: current_settings.auto_test,
         };
         self.save_settings(&settings)?;
 

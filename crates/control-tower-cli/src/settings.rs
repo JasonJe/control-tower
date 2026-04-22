@@ -23,28 +23,28 @@ pub struct Settings {
     pub mihomo_path: Option<PathBuf>,
 
     /// Mihomo API port (default: 9090)
-    #[serde(default = "default_api_port")]
-    pub api_port: u16,
+    #[serde(default)]
+    pub api_port: Option<u16>,
 
     /// HTTP proxy port (default: 7890)
-    #[serde(default = "default_http_port")]
-    pub http_port: u16,
+    #[serde(default)]
+    pub http_port: Option<u16>,
 
     /// SOCKS5 proxy port (default: 7891)
-    #[serde(default = "default_socks_port")]
-    pub socks_port: u16,
+    #[serde(default)]
+    pub socks_port: Option<u16>,
 
     /// Control Tower Service port (default: 8080)
-    #[serde(default = "default_service_port")]
-    pub service_port: u16,
+    #[serde(default)]
+    pub service_port: Option<u16>,
 
     /// Enable TUN mode (default: false)
     #[serde(default)]
     pub tun_enabled: bool,
 
     /// Log level (default: info)
-    #[serde(default = "default_log_level")]
-    pub log_level: String,
+    #[serde(default)]
+    pub log_level: Option<String>,
 
     /// Currently selected proxy name
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,23 +55,19 @@ pub struct Settings {
     pub mode: Option<String>,
 }
 
-fn default_api_port() -> u16 { 9090 }
-fn default_http_port() -> u16 { 7890 }
-fn default_socks_port() -> u16 { 7891 }
-fn default_service_port() -> u16 { 8080 }
-fn default_log_level() -> String { "info".to_string() }
+// Note: defaults are handled via Option<> + #[serde(default)] pattern
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             working_dir: None,
             mihomo_path: None,
-            api_port: default_api_port(),
-            http_port: default_http_port(),
-            socks_port: default_socks_port(),
-            service_port: default_service_port(),
+            api_port: None,
+            http_port: None,
+            socks_port: None,
+            service_port: None,
             tun_enabled: false,
-            log_level: default_log_level(),
+            log_level: None,
             selected_proxy: None,
             mode: None,
         }
@@ -139,7 +135,9 @@ fn find_settings_path() -> Option<PathBuf> {
 pub fn load_settings() -> Result<Settings> {
     let settings_path = match find_settings_path() {
         Some(path) => path,
-        None => return Ok(Settings::default()),
+        None => {
+            return Ok(Settings::default());
+        }
     };
 
     if !settings_path.exists() {
@@ -147,8 +145,13 @@ pub fn load_settings() -> Result<Settings> {
     }
 
     let content = fs::read_to_string(&settings_path)?;
-    let settings: Settings = serde_yaml_ng::from_str(&content)?;
-    Ok(settings)
+    match serde_yaml_ng::from_str::<Settings>(&content) {
+        Ok(s) => Ok(s),
+        Err(e) => {
+            eprintln!("[settings] parse error: {}, using defaults", e);
+            Ok(Settings::default())
+        }
+    }
 }
 
 /// Reload settings from file
@@ -162,31 +165,33 @@ pub fn reload_settings() -> Result<()> {
 
 /// Get current API port
 pub fn get_api_port() -> u16 {
-    SETTINGS.read().map(|s| s.api_port).unwrap_or(9090)
+    SETTINGS.read().map(|s| s.api_port.unwrap_or(9090)).unwrap_or(9090)
 }
 
 /// Get current HTTP proxy port
 #[allow(dead_code)]
 pub fn get_http_port() -> u16 {
-    SETTINGS.read().map(|s| s.http_port).unwrap_or(7890)
+    SETTINGS.read().map(|s| s.http_port.unwrap_or(7890)).unwrap_or(7890)
 }
 
 /// Get current SOCKS5 proxy port
 #[allow(dead_code)]
 pub fn get_socks_port() -> u16 {
-    SETTINGS.read().map(|s| s.socks_port).unwrap_or(7891)
+    SETTINGS.read().map(|s| s.socks_port.unwrap_or(7891)).unwrap_or(7891)
 }
 
 /// Get current Service port
 #[allow(dead_code)]
 pub fn get_service_port() -> u16 {
-    SETTINGS.read().map(|s| s.service_port).unwrap_or(8080)
+    SETTINGS.read().map(|s| s.service_port.unwrap_or(8080)).unwrap_or(8080)
 }
 
 /// Get log level
 #[allow(dead_code)]
 pub fn get_log_level() -> String {
-    SETTINGS.read().map(|s| s.log_level.clone()).unwrap_or_else(|_| "info".to_string())
+    SETTINGS.read().ok()
+        .and_then(|s| s.log_level.clone())
+        .unwrap_or_else(|| "info".to_string())
 }
 
 /// Check if TUN is enabled

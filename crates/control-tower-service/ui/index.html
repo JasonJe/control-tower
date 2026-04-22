@@ -1,0 +1,1953 @@
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control Tower</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='10' y='10' width='4' height='12' rx='0.5' fill='%236366f1'/%3E%3Crect x='6' y='6' width='12' height='4' rx='1' fill='%236366f1'/%3E%3Ccircle cx='12' cy='3.5' r='2.5' fill='%236366f1'/%3E%3Crect x='7.5' y='7.5' width='2' height='1.5' rx='0.3' fill='white'/%3E%3Crect x='14.5' y='7.5' width='2' height='1.5' rx='0.3' fill='white'/%3E%3C/svg%3E">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+--bg:#f8fafc;--bg2:#ffffff;--bg3:#f1f5f9;--bg4:#e2e8f0;
+--border:#e2e8f0;--border2:#cbd5e1;
+--text:#0f172a;--text2:#475569;--text3:#94a3b8;
+--accent:#6366f1;--accent-hover:#4f46e5;--accent-light:rgba(99,102,241,.1);
+--success:#10b981;--success-light:rgba(16,185,129,.1);
+--warning:#f59e0b;--warning-light:rgba(245,158,11,.1);
+--danger:#ef4444;--danger-light:rgba(239,68,68,.1);
+--sidebar-w:220px;--header-h:60px;
+--radius:10px;--radius-sm:6px;--radius-lg:14px;
+--shadow-sm:0 1px 2px rgba(0,0,0,.05);
+--shadow:0 4px 6px -1px rgba(0,0,0,.1),0 2px 4px -2px rgba(0,0,0,.1);
+--shadow-lg:0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.1);
+}
+@media(prefers-color-scheme:dark){
+:root{
+--bg:#0f172a;--bg2:#1e293b;--bg3:#0f172a;--bg4:#334155;
+--border:#1e293b;--border2:#334155;
+--text:#f1f5f9;--text2:#94a3b8;--text3:#64748b;
+--accent:#818cf8;--accent-hover:#6366f1;--accent-light:rgba(129,140,248,.1);
+--success:#34d399;--success-light:rgba(52,211,153,.1);
+--warning:#fbbf24;--warning-light:rgba(251,191,36,.1);
+--danger:#f87171;--danger-light:rgba(248,113,113,.1);
+--shadow-sm:0 1px 2px rgba(0,0,0,.3);
+--shadow:0 4px 6px -1px rgba(0,0,0,.4);
+--shadow-lg:0 10px 15px -3px rgba(0,0,0,.5);
+}}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);transition:background 200ms ease,color 200ms ease;line-height:1.5;-webkit-font-smoothing:antialiased}
+.mono{font-family:'JetBrains Mono',monospace}
+
+/* Layout */
+.app{display:flex;flex-direction:column;height:100vh}
+.header{position:fixed;top:0;left:0;right:0;height:var(--header-h);background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;z-index:100;gap:14px;box-shadow:var(--shadow-sm)}
+.header .logo{width:34px;height:34px;background:linear-gradient(135deg,var(--accent),var(--accent-hover));border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.header .logo svg{width:18px;height:18px}
+.header h1{font-size:15px;font-weight:600;letter-spacing:-.2px}
+.header .subtitle{font-size:12px;color:var(--text3);margin-left:4px;font-weight:400}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--success);margin-left:auto;transition:background 200ms;flex-shrink:0}
+.status-dot.stopped{background:var(--danger)}
+.status-dot.running{background:var(--success);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.main{display:flex;flex:1;padding-top:var(--header-h)}
+
+/* Sidebar */
+.sidebar{position:fixed;left:0;top:var(--header-h);bottom:0;width:var(--sidebar-w);background:var(--bg2);border-right:1px solid var(--border);padding:12px 10px;display:flex;flex-direction:column;gap:2px;overflow-y:auto}
+.nav-group{margin-bottom:8px}
+.nav-group-label{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;padding:8px 10px 4px;margin-top:4px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius-sm);color:var(--text2);cursor:pointer;transition:all 150ms ease;font-size:13px;font-weight:500;border:1px solid transparent}
+.nav-item:hover{background:var(--bg3);color:var(--text)}
+.nav-item.active{background:var(--accent-light);color:var(--accent);border-color:var(--accent)}
+.nav-item.active svg{stroke:var(--accent)}
+.nav-item svg{width:17px;height:17px;flex-shrink:0;stroke:var(--text3);transition:stroke 150ms}
+.nav-item:hover svg{stroke:var(--text2)}
+.nav-spacer{flex:1}
+.nav-footer{padding:8px 10px;border-top:1px solid var(--border);margin-top:auto;font-size:11px;color:var(--text3);text-align:center}
+
+/* Content */
+.content{margin-left:var(--sidebar-w);flex:1;padding:28px 32px;max-width:1400px;width:100%;overflow-y:auto}
+
+/* Page header */
+.page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;gap:16px}
+.page-title{font-size:20px;font-weight:700;color:var(--text);letter-spacing:-.3px}
+.page-subtitle{font-size:13px;color:var(--text3);margin-top:2px}
+.page-actions{display:flex;align-items:center;gap:10px}
+
+/* Cards */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;margin-bottom:20px;box-shadow:var(--shadow-sm);transition:box-shadow 200ms,border-color 200ms}
+.card:hover{box-shadow:var(--shadow)}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.card-title{font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.6px}
+.card-actions{display:flex;gap:8px;align-items:center}
+.card-value{font-size:28px;font-weight:700;color:var(--text);letter-spacing:-.5px;line-height:1.2}
+.card-sub{font-size:12px;color:var(--text3);margin-top:4px}
+.dash-hint{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--accent-light);border:1px solid var(--accent);border-radius:var(--radius);margin-bottom:14px;font-size:13px;color:var(--text)}
+
+/* Stat grid */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:20px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:flex;align-items:center;gap:14px}
+.stat-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.stat-icon svg{width:20px;height:20px;stroke-width:2}
+.stat-icon.blue{background:var(--accent-light)}.stat-icon.blue svg{stroke:var(--accent)}
+.stat-icon.green{background:var(--success-light)}.stat-icon.green svg{stroke:var(--success)}
+.stat-icon.yellow{background:var(--warning-light)}.stat-icon.yellow svg{stroke:var(--warning)}
+.stat-icon.red{background:var(--danger-light)}.stat-icon.red svg{stroke:var(--danger)}
+.stat-icon.purple{background:#c4b5fd}.stat-icon.purple svg{stroke:#6d28d9}
+.stat-info{flex:1;min-width:0}
+.stat-value{font-size:18px;font-weight:700;color:var(--text);letter-spacing:-.3px}
+.stat-label{font-size:11px;color:var(--text3);font-weight:500}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 18px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;cursor:pointer;transition:all 150ms ease;border:none;font-family:inherit;white-space:nowrap}
+.btn:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
+.btn:active{transform:translateY(0);box-shadow:none}
+.btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent-hover));color:#fff}
+.btn.primary:hover{background:linear-gradient(135deg,var(--accent-hover),var(--accent))}
+.btn.secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
+.btn.secondary:hover{background:var(--bg4);border-color:var(--border2)}
+.btn.danger{background:var(--danger);color:#fff}
+.btn.danger:hover{background:#dc2626}
+.btn.success{background:var(--success);color:#fff}
+.btn.success:hover{background:#059669}
+.btn.ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}
+.btn.ghost:hover{background:var(--bg3);color:var(--text)}
+.btn.sm{padding:6px 12px;font-size:12px}
+.btn.xs{padding:4px 10px;font-size:11px}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none!important;box-shadow:none!important}
+.btn-group{display:flex;gap:8px;flex-wrap:wrap}
+
+/* Forms */
+.form-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.form-group{flex:1;min-width:160px;margin-bottom:0}
+.form-group.narrow{min-width:120px}
+.form-label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px}
+.form-grid{display:flex;flex-direction:column;gap:12px}
+.form-input{width:100%;padding:9px 13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-size:13px;transition:border-color 150ms,box-shadow 150ms;font-family:inherit}
+.form-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
+.form-input::placeholder{color:var(--text3)}
+.form-select{width:100%;padding:9px 13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-size:13px;cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
+.form-select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
+
+/* Port settings form */
+.port-grid{display:flex;flex-direction:column;gap:10px}
+.port-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.port-label{font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap;min-width:80px}
+.port-input{width:100px;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-size:13px;text-align:right;transition:border-color 150ms,box-shadow 150ms}
+.port-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
+
+/* Tables */
+.table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow-sm)}
+.table{width:100%;border-collapse:collapse}
+.table th{text-align:left;padding:11px 16px;font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;background:var(--bg3);border-bottom:1px solid var(--border);white-space:nowrap}
+.table td{padding:11px 16px;font-size:13px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text2)}
+.table tr:last-child td{border-bottom:none}
+.table tbody tr{transition:background 100ms}
+.table tbody tr:hover td{background:var(--bg3)}
+.table .truncate{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.table .mono{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text)}
+.cell-clickable{cursor:pointer}
+
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600}
+.badge.success{background:var(--success-light);color:var(--success)}
+.badge.warning{background:var(--warning-light);color:var(--warning)}
+.badge.danger{background:var(--danger-light);color:var(--danger)}
+.badge.info{background:var(--accent-light);color:var(--accent)}
+.badge.neutral{background:var(--bg3);color:var(--text3)}
+
+/* Latency */
+.latency-good{color:var(--success);font-weight:600}
+.latency-medium{color:var(--warning);font-weight:600}
+.latency-bad{color:var(--danger)}
+.latency-timeout{color:var(--text3)}
+.sortable-th:hover{color:var(--success)}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:1000;display:none;animation:slideIn 200ms ease;max-width:360px;font-size:13px;font-weight:500}
+.toast.show{display:flex;align-items:center;gap:10px}
+.toast.success{border-left:4px solid var(--success)}
+.toast.error{border-left:4px solid var(--danger)}
+.toast.warning{border-left:4px solid var(--warning)}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* Modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:200;backdrop-filter:blur(2px)}
+.modal.show{display:flex}
+.modal-content{background:var(--bg2);border-radius:var(--radius-lg);padding:24px;max-width:420px;width:90%;box-shadow:var(--shadow-lg);border:1px solid var(--border)}
+.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.modal-title{font-size:16px;font-weight:600}
+.modal-close{width:28px;height:28px;border-radius:var(--radius-sm);border:none;background:var(--bg3);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 150ms}
+.modal-close:hover{background:var(--bg4)}
+.modal-close svg{width:14px;height:14px;stroke:var(--text2)}
+.modal-body{color:var(--text2);font-size:14px;margin-bottom:24px;line-height:1.6}
+.modal-footer{display:flex;gap:8px;justify-content:flex-end}
+
+/* Loading */
+.loading{display:flex;align-items:center;justify-content:center;padding:48px;color:var(--text3);gap:12px;font-size:13px}
+.spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Empty */
+.empty-state{text-align:center;padding:56px 20px;color:var(--text3)}
+.empty-state svg{width:44px;height:44px;margin-bottom:12px;opacity:.4}
+.empty-state p{font-size:13px}
+.empty-action{margin-top:12px}
+
+/* Pagination */
+.pagination{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-top:1px solid var(--border);background:var(--bg3);flex-wrap:wrap;gap:8px}
+.pagination-info{font-size:12px;color:var(--text3)}
+.pagination-controls{display:flex;align-items:center;gap:4px}
+.page-btn{width:32px;height:32px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg2);color:var(--text2);cursor:pointer;font-size:12px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;transition:all 150ms}
+.page-btn:hover:not(:disabled){background:var(--bg3);border-color:var(--border2)}
+.page-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.page-btn:disabled{opacity:.4;cursor:not-allowed}
+.page-btn.nav{font-size:10px}
+
+/* Search */
+.search-wrap{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.search-input{width:100%;max-width:280px;padding:8px 12px 8px 36px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-size:13px;transition:border-color 150ms;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:12px center}
+.search-input:focus{outline:none;border-color:var(--accent)}
+
+/* Info grid */
+.info-grid{}
+.info-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);gap:16px}
+.info-row:last-child{border-bottom:none}
+.info-key{font-size:12px;color:var(--text3);font-weight:500}
+.info-val{font-size:13px;font-weight:500;color:var(--text);font-family:'JetBrains Mono',monospace}
+
+/* View */
+.view{display:none}
+.view.active{display:block}
+
+/* Utils */
+.text-sm{font-size:12px}.text-xs{font-size:11px}
+.text-muted{color:var(--text3)}.text-success{color:var(--success)}.text-danger{color:var(--danger)}
+.flex{display:flex}.flex-col{flex-direction:column}
+.items-center{align-items:center}.items-start{align-items:flex-start}
+.justify-between{justify-content:space-between}.justify-end{justify-content:flex-end}
+.gap-4{gap:4px}.gap-6{gap:6px}.gap-8{gap:8px}.gap-12{gap:12px}.gap-16{gap:16px}
+.mt-8{margin-top:8px}.mt-12{margin-top:12px}.mt-16{margin-top:16px}
+.mb-8{margin-bottom:8px}.mb-12{margin-bottom:12px}.mb-16{margin-bottom:16px}
+.ml-auto{margin-left:auto}.w-full{width:100%}
+.hidden{display:none!important}
+
+/* Responsive */
+@media(max-width:768px){
+.sidebar{top:auto;bottom:0;left:0;right:0;width:100%;height:64px;flex-direction:row;padding:6px 4px;justify-content:space-around;border-right:none;border-top:1px solid var(--border);align-items:center}
+.nav-group{margin-bottom:0;display:flex;flex-direction:row;gap:2px}
+.nav-group-label{display:none}
+.nav-item{flex-direction:column;gap:2px;font-size:9px;padding:4px 8px;min-width:48px;align-items:center;justify-content:center}
+.nav-item span{display:none}
+.nav-footer{display:none}
+.content{margin-left:0;margin-bottom:64px;padding:16px}
+.page-header{flex-direction:column;align-items:flex-start;gap:12px}
+.stat-grid{grid-template-columns:1fr 1fr}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;max-height:50vh;overflow-y:auto}
+}
+
+/* Keyboard hint */
+.kbd{display:inline-flex;align-items:center;padding:2px 6px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text3);margin-left:8px;vertical-align:middle}
+
+/* Search no results */
+.search-no-results{padding:24px;text-align:center;color:var(--text3);font-size:13px;border-top:1px solid var(--border)}
+
+/* Row hover cursor */
+.table tbody tr{cursor:default}
+.table tbody tr.row-action{cursor:pointer}
+
+/* Selected row highlight */
+.table tbody tr.row-selected td{background:var(--accent-light)}
+
+/* Proxy name in table */
+.proxy-name{font-weight:500}
+
+/* Conn metadata */
+.conn-meta{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2)}
+.conn-badge{margin-top:2px}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="header">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="white">
+        <rect x="10" y="10" width="4" height="12" rx="0.5"/>
+        <rect x="6" y="6" width="12" height="4" rx="1"/>
+        <circle cx="12" cy="3.5" r="2.5"/>
+        <rect x="7.5" y="7.5" width="2" height="1.5" rx="0.3"/>
+        <rect x="14.5" y="7.5" width="2" height="1.5" rx="0.3"/>
+      </svg>
+    </div>
+    <h1>Control Tower</h1>
+    <span class="subtitle">Proxy Management</span>
+    <div class="status-dot" id="headerStatus" title="Service Status"></div>
+  </header>
+
+  <main class="main">
+    <nav class="sidebar">
+      <div class="nav-group">
+        <div class="nav-group-label">Status</div>
+        <div class="nav-item active" data-view="dashboard">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+          <span>Dashboard</span>
+        </div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Proxy</div>
+        <div class="nav-item" data-view="proxies">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg>
+          <span>Proxies</span>
+        </div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Config</div>
+        <div class="nav-item" data-view="profiles">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <span>Profiles</span>
+        </div>
+        <div class="nav-item" data-view="rules">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+          <span>Rules</span>
+        </div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Monitor</div>
+        <div class="nav-item" data-view="connections">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <span>Connections</span>
+        </div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">System</div>
+        <div class="nav-item" data-view="settings">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          <span>Settings</span>
+        </div>
+      </div>
+      <div class="nav-spacer"></div>
+      <div class="nav-footer">Control Tower v0.1</div>
+    </nav>
+
+    <div class="content">
+
+      <!-- Dashboard -->
+      <div class="view active" id="view-dashboard">
+        <div class="page-header">
+          <div><div class="page-title">Dashboard</div><div class="page-subtitle">System overview and quick controls</div></div>
+          <div class="page-actions">
+            <button class="btn ghost sm" onclick="loadDashboard()">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="dash-nodes">-</div><div class="stat-label">Proxy Nodes</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon green"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="dash-connections">-</div><div class="stat-label">Active Connections</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon yellow"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="dash-mode">-</div><div class="stat-label">Current Mode</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon green"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="dash-proxy" style="font-size:13px;font-family:'JetBrains Mono',monospace">-</div><div class="stat-label">Current Proxy</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon green" id="dash-fastest-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="dash-fastest" style="font-size:13px;font-family:'JetBrains Mono',monospace">-</div><div class="stat-label" id="dash-fastest-label">Fastest</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon red"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="dash-upload-rate" style="color:var(--success)">-</div><div class="stat-label">↑ Upload Rate</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon yellow"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="dash-download-rate" style="color:var(--warning)">-</div><div class="stat-label">↓ Download Rate</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="dash-cumulative-upload">-</div><div class="stat-label">↑ Cumulative Upload</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon purple"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="dash-cumulative-download">-</div><div class="stat-label">↓ Cumulative Download</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Service Control</div>
+            <span class="badge" id="dash-status-badge"><span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span></span>
+          </div>
+          <div id="dash-no-profile-hint" class="dash-hint" style="display:none">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span id="dash-no-profile-text"></span>
+          </div>
+          <div class="flex items-center gap-16">
+            <div>
+              <div class="card-value" id="dash-status">Loading...</div>
+              <div class="card-sub" id="dash-uptime"></div>
+            </div>
+            <div class="btn-group" style="margin-left:auto">
+              <button class="btn success" id="btn-start" onclick="startService()">Start Service</button>
+              <button class="btn danger" id="btn-stop" onclick="stopService()">Stop Service</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Switch Mode</div></div>
+          <div class="btn-group">
+            <button class="btn secondary" id="btn-mode-rule" onclick="setMode('rule')">Rule</button>
+            <button class="btn secondary" id="btn-mode-global" onclick="setMode('global')">Global</button>
+            <button class="btn secondary" id="btn-mode-direct" onclick="setMode('direct')">Direct</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Proxies -->
+      <div class="view" id="view-proxies">
+        <div class="page-header">
+          <div><div class="page-title">Proxy Nodes</div><div class="page-subtitle">Select and manage proxy providers</div></div>
+          <div class="page-actions">
+            <button class="btn ghost sm" onclick="testAllLatency()" id="btn-test-all">
+              <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              Test All
+            </button>
+            <button class="btn ghost sm" onclick="loadProxies()">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <div id="proxy-selected-card" class="card" style="margin-bottom:16px;display:none">
+          <div class="card-header"><div class="card-title">Proxy Status</div></div>
+          <div class="card-body" style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:200px">
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Selected</div>
+              <div id="proxy-sel-name" class="mono" style="font-size:14px;font-weight:600;margin-bottom:6px"></div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <span id="proxy-sel-type" class="badge" style="background:#818cf8;color:#fff;font-size:10px"></span>
+                <span id="proxy-sel-latency" class="badge" style="font-size:10px"></span>
+                <span id="proxy-sel-udp" class="badge success" style="font-size:10px;display:none">UDP</span>
+                <span id="proxy-sel-tfo" class="badge warning" style="font-size:10px;display:none">TFO</span>
+                <span id="proxy-sel-mptcp" class="badge" style="font-size:10px;display:none;background:#f59e0b;color:#fff">MPTCP</span>
+                <span id="proxy-sel-xudp" class="badge" style="font-size:10px;display:none;background:#ec4899;color:#fff">XUDP</span>
+                <span id="proxy-sel-uot" class="badge" style="font-size:10px;display:none;background:#14b8a6;color:#fff">UOT</span>
+              </div>
+            </div>
+            <div style="flex:1;min-width:200px;border-left:1px solid var(--border);padding-left:12px">
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Fastest</div>
+              <div id="proxy-fastest-name" class="mono" style="font-size:14px;font-weight:600;color:var(--success);margin-bottom:6px">-</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <span id="proxy-fastest-latency" class="badge success" style="font-size:10px"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="search-wrap">
+          <input type="text" class="search-input" id="proxy-search" placeholder="Search proxies by name..." oninput="filterProxies()">
+          <span class="text-sm text-muted" id="proxy-count"></span>
+        </div>
+
+        <div class="table-wrap">
+          <div id="proxy-loading" class="loading"><div class="spinner"></div>Loading proxy nodes...</div>
+          <table class="table" id="proxy-table" style="display:none">
+            <thead><tr><th style="width:40px">#</th><th>Name</th><th>Type</th><th class="sortable-th" onclick="sortProxiesByLatency()" style="cursor:pointer" title="Click to sort by latency">Latency <span id="latency-sort-indicator" style="font-size:10px;color:var(--text3)"></span></th><th>Status</th><th style="width:120px">Action</th></tr></thead>
+            <tbody id="proxy-list"></tbody>
+          </table>
+          <div id="proxy-empty" class="empty-state" style="display:none">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg>
+            <p>No proxy nodes found</p>
+          </div>
+          <div id="proxy-pagination" class="pagination" style="display:none">
+            <div class="pagination-info" id="proxy-pagination-info"></div>
+            <div class="pagination-controls" id="proxy-pagination-controls"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Profiles -->
+      <div class="view" id="view-profiles">
+        <div class="page-header">
+          <div><div class="page-title">Profiles <span class="text-sm text-muted" id="profiles-total-count" style="font-weight:400"></span></div><div class="page-subtitle">Manage subscription profiles</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Add New Profile</div></div>
+          <form onsubmit="addProfile(event)" class="form-row">
+            <div class="form-group" style="flex:2;margin-bottom:0">
+              <label class="form-label">Subscription URL</label>
+              <input type="url" class="form-input" id="profile-url" placeholder="https://example.com/profile.yaml" required>
+            </div>
+            <div class="form-group" style="flex:1;margin-bottom:0">
+              <label class="form-label">Profile Name (optional)</label>
+              <input type="text" class="form-input" id="profile-name" placeholder="My Profile">
+            </div>
+            <div style="margin-bottom:0;padding-top:22px">
+              <button type="submit" class="btn primary">Add Profile</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="table-wrap">
+          <div id="profiles-loading" class="loading"><div class="spinner"></div>Loading profiles...</div>
+          <table class="table" id="profiles-table" style="display:none">
+            <thead><tr><th>Name</th><th>Subscription URL</th><th>Status</th><th>Cron</th><th>Last Update</th><th style="width:200px">Actions</th></tr></thead>
+            <tbody id="profiles-list"></tbody>
+          </table>
+          <div id="profiles-empty" class="empty-state" style="display:none">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            <p>No profiles found</p>
+            <div class="empty-action text-sm text-muted">Add a subscription URL above to get started</div>
+          </div>
+          <div id="profiles-pagination" class="pagination" style="display:none">
+            <div class="pagination-info" id="profiles-pagination-info"></div>
+            <div class="pagination-controls" id="profiles-pagination-controls"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rules -->
+      <div class="view" id="view-rules">
+        <div class="page-header">
+          <div><div class="page-title">Rules <span class="text-sm text-muted" id="rules-total-count" style="font-weight:400"></span></div><div class="page-subtitle">Configure routing rules</div></div>
+          <div class="page-actions">
+            <button class="btn ghost sm" onclick="loadRules()">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <div style="margin-bottom:12px">
+          <input type="text" id="rules-search" class="search-input" placeholder="Filter rules..." oninput="renderRules()">
+        </div>
+
+        <div class="table-wrap">
+          <div id="rules-loading" class="loading"><div class="spinner"></div>Loading rules...</div>
+          <table class="table" id="rules-table" style="display:none">
+            <thead><tr><th style="width:60px">#</th><th>Type</th><th>Value</th><th>Proxy</th></tr></thead>
+            <tbody id="rules-list"></tbody>
+          </table>
+          <div id="rules-empty" class="empty-state" style="display:none">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+            <p>No rules configured</p>
+            <div class="empty-action text-sm text-muted">Rules are managed via profile subscriptions</div>
+          </div>
+          <div id="rules-pagination" class="pagination" style="display:none">
+            <div class="pagination-info" id="rules-pagination-info"></div>
+            <div class="pagination-controls" id="rules-pagination-controls"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Connections -->
+      <div class="view" id="view-connections">
+        <div class="page-header">
+          <div><div class="page-title">Connections</div><div class="page-subtitle">Real-time network activity monitor</div></div>
+          <div class="page-actions">
+            <select id="conn-refresh-interval" class="form-select" style="width:auto;font-size:12px;margin-right:8px" onchange="onConnRefreshChange()">
+              <option value="3000">3s</option>
+              <option value="5000" selected>5s</option>
+              <option value="10000">10s</option>
+              <option value="30000">30s</option>
+              <option value="0">Manual</option>
+            </select>
+            <button class="btn ghost sm" id="btn-pause-conn" onclick="toggleConnPause()">
+              <svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              Pause
+            </button>
+            <button class="btn ghost sm" onclick="loadConnections()">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="stat-grid" style="margin-bottom:20px">
+          <div class="stat-card">
+            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div>
+            <div class="stat-info"><div class="stat-value" id="conn-total">0</div><div class="stat-label">Total Connections</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon green"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="conn-upload">0 B/s</div><div class="stat-label">Upload Rate</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon yellow"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="conn-download">0 B/s</div><div class="stat-label">Download Rate</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="conn-cumulative-upload">0 B</div><div class="stat-label">Cumulative Upload</div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon purple"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg></div>
+            <div class="stat-info"><div class="stat-value mono text-sm" id="conn-cumulative-download">0 B</div><div class="stat-label">Cumulative Download</div></div>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <div id="conn-loading" class="loading"><div class="spinner"></div>Loading connections...</div>
+          <table class="table" id="conn-table" style="display:none">
+            <thead><tr><th style="width:50px">#</th><th>Source</th><th>Target</th><th>Proxy</th><th style="width:80px">Upload</th><th style="width:80px">Download</th><th style="width:70px">Duration</th><th style="width:70px">Action</th></tr></thead>
+            <tbody id="conn-list"></tbody>
+          </table>
+          <div id="conn-empty" class="empty-state" style="display:none">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <p>No active connections</p>
+          </div>
+          <div id="conn-pagination" class="pagination" style="display:none">
+            <div class="pagination-info" id="conn-pagination-info"></div>
+            <div class="pagination-controls" id="conn-pagination-controls"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings -->
+      <div class="view" id="view-settings">
+        <div class="page-header">
+          <div><div class="page-title">Settings</div><div class="page-subtitle">Service configuration and system info</div></div>
+        </div>
+
+        <div style="max-width:960px">
+          <div class="card">
+            <div class="card-header"><div class="card-title">Service Operations</div></div>
+            <div class="btn-group">
+              <button class="btn primary" onclick="restartService()">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Restart Service
+              </button>
+              <button class="btn danger" onclick="stopService()">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"/></svg>
+                Stop Service
+              </button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Mihomo Ports</div>
+              <div class="card-actions">
+                <button class="btn primary sm" id="savePortsBtn" onclick="savePorts()" style="display:none">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                  Save
+                </button>
+                <button class="btn secondary sm" id="cancelPortsBtn" onclick="cancelEditPorts()" style="display:none">Cancel</button>
+                <button class="btn sm" id="editPortsBtn" onclick="editPorts()">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                  Edit
+                </button>
+              </div>
+            </div>
+            <div id="ports-display">
+              <div class="info-grid">
+                <div class="info-row">
+                  <span class="info-key">HTTP Port</span>
+                  <span class="info-val" id="port-http-display">-</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-key">SOCKS5 Port</span>
+                  <span class="info-val" id="port-socks5-display">-</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-key">API Port</span>
+                  <span class="info-val" id="port-api-display">-</span>
+                </div>
+              </div>
+            </div>
+            <div id="ports-edit" style="display:none">
+              <div class="port-grid">
+                <div class="port-row">
+                  <label class="port-label">HTTP Port</label>
+                  <input type="number" id="port-http" class="port-input" min="1" max="65535">
+                </div>
+                <div class="port-row">
+                  <label class="port-label">SOCKS5 Port</label>
+                  <input type="number" id="port-socks5" class="port-input" min="1" max="65535">
+                </div>
+                <div class="port-row">
+                  <label class="port-label">API Port</label>
+                  <input type="number" id="port-api" class="port-input" min="1" max="65535">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">TUN Mode</div>
+              <div class="card-actions">
+                <button class="btn primary sm" id="saveTunBtn" onclick="saveTun()" style="display:none">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                  Save
+                </button>
+                <button class="btn secondary sm" id="cancelTunBtn" onclick="cancelEditTun()" style="display:none">Cancel</button>
+                <button class="btn sm" id="editTunBtn" onclick="editTun()">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                  Edit
+                </button>
+              </div>
+            </div>
+            <div id="tun-display">
+              <div class="info-grid">
+                <div class="info-row">
+                  <span class="info-key">TUN Enable</span>
+                  <span class="info-val" id="tun-enabled-display">-</span>
+                </div>
+              </div>
+            </div>
+            <div id="tun-edit" style="display:none">
+              <div style="padding:8px 0">
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                  <input type="checkbox" id="tun-enabled-input">
+                  <span>Enable TUN mode (intercepts all system traffic)</span>
+                </label>
+                <div style="margin-top:8px;font-size:12px;color:var(--text3)">
+                  Requires service restart. Enable only if service has CAP_NET_ADMIN capability.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Latency Test</div>
+              <div class="card-actions">
+                <button class="btn primary sm" id="saveLatencyBtn" onclick="saveLatency()" style="display:none">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                  Save
+                </button>
+                <button class="btn secondary sm" id="cancelLatencyBtn" onclick="cancelEditLatency()" style="display:none">Cancel</button>
+                <button class="btn sm" id="editLatencyBtn" onclick="editLatency()">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                  Edit
+                </button>
+              </div>
+            </div>
+            <div id="latency-display">
+              <div class="info-grid">
+                <div class="info-row">
+                  <span class="info-key">Test Mode</span>
+                  <span class="info-val" id="latency-mode-display">-</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-key">Auto Test</span>
+                  <span class="info-val" id="auto-test-display">-</span>
+                </div>
+              </div>
+            </div>
+            <div id="latency-edit" style="display:none">
+              <div style="padding:8px 0">
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                  <select id="latency-mode-input" class="form-select" onchange="onLatencyModeChange()">
+                    <option value="http">HTTP</option>
+                    <option value="ping">Ping</option>
+                  </select>
+                </label>
+                <div style="margin-top:8px;display:flex;align-items:center;gap:12px">
+                  <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                    <input type="checkbox" id="auto-test-enabled" onchange="onAutoTestChange()">
+                    <span style="font-size:13px">Auto Test</span>
+                  </label>
+                  <select id="auto-test-interval" class="form-select" style="width:120px" onchange="onAutoTestIntervalChange()" disabled>
+                    <option value="5">5 min</option>
+                    <option value="15">15 min</option>
+                    <option value="30">30 min</option>
+                    <option value="60">60 min</option>
+                  </select>
+                </div>
+                <div id="auto-test-status" style="margin-top:6px;font-size:12px;color:var(--text3)"></div>
+                <div style="margin-top:8px;font-size:12px;color:var(--text3)">
+                  HTTP: measures response time through the proxy. Ping: measures TCP connection time to the proxy server.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header"><div class="card-title">About</div></div>
+            <div class="info-grid">
+              <div class="info-row"><span class="info-key">Version</span><span class="info-val" style="font-family:'JetBrains Mono',monospace">0.1.0</span></div>
+              <div class="info-row"><span class="info-key">Build</span><span class="info-val">release</span></div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:16px" id="logs-card">
+            <div class="card-header">
+              <div class="card-title">Logs</div>
+              <div class="card-actions">
+                <select id="log-source" class="form-select" style="width:auto;font-size:12px;margin-right:8px" onchange="loadLogs()">
+                  <option value="ctsvc">ctsvc</option>
+                  <option value="mihomo">mihomo</option>
+                </select>
+                <select id="log-refresh-interval" class="form-select" style="width:auto;font-size:12px;margin-right:8px" onchange="onLogRefreshChange()">
+                  <option value="0">Manual</option>
+                  <option value="5000">5s</option>
+                  <option value="10000">10s</option>
+                  <option value="30000" selected>30s</option>
+                  <option value="60000">60s</option>
+                </select>
+                <button class="btn ghost sm" onclick="loadLogs()" title="Refresh logs">
+                  <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                </button>
+              </div>
+            </div>
+            <div id="logs-content" style="max-height:420px;overflow-y:auto;background:#0f172a;color:#e2e8f0;font-family:'JetBrains Mono',monospace;font-size:11px;padding:8px;border-radius:6px;line-height:1.6"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal" id="deleteModal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 class="modal-title">Confirm Delete</h3>
+      <button class="modal-close" onclick="closeDeleteModal()" title="Close (ESC)">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="deleteModalText">Are you sure you want to delete this item?</div>
+    <div class="modal-footer">
+      <button class="btn secondary" onclick="closeDeleteModal()">Cancel</button>
+      <button class="btn danger" id="deleteModalBtn">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="cronModal">
+  <div class="modal-content" style="max-width:380px">
+    <div class="modal-header">
+      <h3 class="modal-title">Edit Update Schedule</h3>
+      <button class="modal-close" onclick="closeCronModal()" title="Close (ESC)">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p class="text-sm text-muted" style="margin-bottom:16px">Set how often this profile updates automatically (in minutes). Leave empty to disable.</p>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="number" id="cronMinutes" class="form-input" min="1" max="10080" placeholder="e.g. 60" style="width:120px">
+        <span class="text-muted text-sm">minutes</span>
+      </div>
+      <p class="text-sm text-muted" style="margin-top:8px">Valid range: 1–10080 (max 1 week)</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn secondary" onclick="closeCronModal()">Cancel</button>
+      <button class="btn" id="cronModalSaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const PROXY_PAGE_SIZE = 50;
+const PROFILE_PAGE_SIZE = 50;
+const CONN_PAGE_SIZE = 50;
+const LS_PROXY_LATENCIES = 'ct_proxy_latencies';
+const LS_PROXY_FILTER = 'ct_proxy_filter';
+
+let proxies = [];
+let filteredProxies = [];
+let proxyPage = 1;
+let proxyData = null; // full proxies response for selected proxy card
+let profiles = [];
+let profilePage = 1;
+let profilePageSize = PROFILE_PAGE_SIZE;
+let currentProfileUid = null;
+let rules = [];
+let rulesPage = 1;
+const rulesPerPage = 50;
+let connections = [];
+let connPage = 1;
+const connPageSize = CONN_PAGE_SIZE;
+let connRefreshTimer = null;
+let connPaused = false;
+let currentMode = '';
+
+function saveProxyLatencies() {
+  const m = {};
+  proxies.forEach(p => { if (p.latency !== null) m[p.name] = p.latency; });
+  try { localStorage.setItem(LS_PROXY_LATENCIES, JSON.stringify(m)); } catch (_) {}
+}
+
+function loadProxyLatencies() {
+  try {
+    const s = localStorage.getItem(LS_PROXY_LATENCIES);
+    return s ? JSON.parse(s) : {};
+  } catch (_) { return {}; }
+}
+
+function saveProxyFilter(q) {
+  try { localStorage.setItem(LS_PROXY_FILTER, q); } catch (_) {}
+}
+
+function loadProxyFilter() {
+  try { return localStorage.getItem(LS_PROXY_FILTER) || ''; } catch (_) { return ''; }
+}
+
+async function api(method, path, body, fetchTimeoutMs) {
+  const opts = { method, headers: {'Content-Type': 'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  let res;
+  if (fetchTimeoutMs) {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), fetchTimeoutMs);
+    try { res = await fetch(path, { ...opts, signal: ctrl.signal }); } finally { clearTimeout(tid); }
+  } else {
+    res = await fetch(path, opts);
+  }
+  const json = await res.json();
+  if (json.code !== 0) throw new Error(json.message);
+  return json.data;
+}
+
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast ${type} show`;
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+document.querySelectorAll('.nav-item').forEach(el => {
+  el.addEventListener('click', () => { switchView(el.dataset.view); });
+});
+
+function switchView(view) {
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.view === view));
+  document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === `view-${view}`));
+  stopConnections();
+  // Always stop dashboard auto-refresh when switching away
+  if (dashRefreshTimer) { clearInterval(dashRefreshTimer); dashRefreshTimer = null; }
+
+  if (view === 'dashboard') loadDashboard();
+  else if (view === 'proxies') { loadProxyLatencies(); loadProxies(); }
+  else if (view === 'profiles') loadProfiles();
+  else if (view === 'rules') loadRules();
+  else if (view === 'connections') startConnections();
+  else if (view === 'settings') { loadSettings(); loadLogs(); onLogRefreshChange(); }
+}
+
+function formatBytes(b) {
+  if (b === 0) return '0 B';
+  const k = 1024, sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(b) / Math.log(k));
+  return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function formatTimestamp(unixTs) {
+  if (!unixTs) return '-';
+  const d = new Date(unixTs * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function formatDuration(s) {
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function truncate(s, len) { return (s && s.length > len) ? s.slice(0, len) + '...' : (s || '-'); }
+
+// Dashboard
+async function loadDashboard() {
+  try {
+    const [status, profilesData] = await Promise.all([
+      api('GET', '/api/status'),
+      api('GET', '/api/profiles').catch(() => null)
+    ]);
+    const hasActiveProfile = profilesData && profilesData.current;
+    const dot = document.getElementById('headerStatus');
+    dot.className = 'status-dot' + (status.running ? ' running' : ' stopped');
+    dot.title = status.running ? 'Service Running' : 'Service Stopped';
+    const sb = document.getElementById('dash-status-badge');
+    sb.className = status.running ? 'badge success' : 'badge danger';
+    sb.textContent = status.running ? 'Running' : 'Stopped';
+    document.getElementById('dash-status').textContent = status.running ? 'Running' : 'Stopped';
+    document.getElementById('dash-uptime').textContent = status.running && status.uptime_secs ? 'Uptime: ' + formatDuration(status.uptime_secs) : '';
+
+    // Show hint if service is stopped and no profile is active
+    const hint = document.getElementById('dash-no-profile-hint');
+    hint.style.display = (!status.running && !hasActiveProfile) ? 'flex' : 'none';
+    if (!status.running && !hasActiveProfile) {
+      const txt = document.getElementById('dash-no-profile-text');
+      txt.textContent = 'No profile active. Please ';
+      const a = document.createElement('a');
+      a.href = '#';
+      a.style.color = 'var(--accent)';
+      a.textContent = 'add and activate a subscription';
+      a.onclick = e => { e.preventDefault(); switchView('profiles'); };
+      txt.appendChild(a);
+      txt.appendChild(document.createTextNode(' first.'));
+    }
+    document.getElementById('btn-start').disabled = status.running || !hasActiveProfile;
+    document.getElementById('btn-stop').disabled = !status.running;
+
+    if (!status.running) {
+      // Service is stopped: skip Mihomo API calls, show defaults
+      document.getElementById('dash-mode').textContent = '-';
+      document.getElementById('dash-proxy').textContent = '-';
+      document.getElementById('dash-nodes').textContent = '-';
+      document.getElementById('dash-connections').textContent = '0';
+      document.getElementById('dash-upload-rate').textContent = '-';
+      document.getElementById('dash-download-rate').textContent = '-';
+      document.getElementById('dash-cumulative-upload').textContent = '-';
+      document.getElementById('dash-cumulative-download').textContent = '-';
+      // Don't clear currentMode; preserve last known mode so button stays highlighted
+      ['rule','global','direct'].forEach(m => {
+        const btn = document.getElementById('btn-mode-' + m);
+        if (btn) btn.className = 'btn ' + (m === currentMode ? 'primary' : 'secondary');
+      });
+      // Stop auto-refresh when service is not running
+      if (dashRefreshTimer) { clearInterval(dashRefreshTimer); dashRefreshTimer = null; }
+      return;
+    }
+
+    // Service is running: fetch Mihomo data
+    let mode = '';
+    try { mode = await api('GET', '/api/mode'); } catch (_) {}
+    document.getElementById('dash-mode').textContent = mode ? mode.toUpperCase() : (currentMode ? currentMode.toUpperCase() : '-');
+    if (mode) {
+      currentMode = mode;
+      ['rule','global','direct'].forEach(m => {
+        const btn = document.getElementById('btn-mode-' + m);
+        if (btn) btn.className = 'btn ' + (m === currentMode ? 'primary' : 'secondary');
+      });
+    }
+
+    try {
+      const pd = await api('GET', '/api/proxies');
+      const names = Object.keys(pd.proxies || {});
+      const cur = pd.proxies?.GLOBAL?.now || '-';
+      document.getElementById('dash-proxy').textContent = cur;
+      document.getElementById('dash-nodes').textContent = names.filter(n => !['GLOBAL','DIRECT','REJECT','FALLBACK'].includes(n)).length;
+    } catch (_) { document.getElementById('dash-proxy').textContent = '-'; document.getElementById('dash-nodes').textContent = '-'; }
+    try {
+      const cd = await api('GET', '/api/connections');
+      const conns = cd.connections || [];
+      document.getElementById('dash-connections').textContent = conns.length;
+      let upRate = 0, dnRate = 0;
+      conns.forEach(c => { upRate += c.upload || 0; dnRate += c.download || 0; });
+      document.getElementById('dash-upload-rate').textContent = formatBytes(upRate) + '/s';
+      document.getElementById('dash-download-rate').textContent = formatBytes(dnRate) + '/s';
+      document.getElementById('dash-cumulative-upload').textContent = formatBytes(cd.uploadTotal || 0);
+      document.getElementById('dash-cumulative-download').textContent = formatBytes(cd.downloadTotal || 0);
+    } catch (_) {
+      document.getElementById('dash-connections').textContent = '0';
+      document.getElementById('dash-upload-rate').textContent = '-';
+      document.getElementById('dash-download-rate').textContent = '-';
+      document.getElementById('dash-cumulative-upload').textContent = '-';
+      document.getElementById('dash-cumulative-download').textContent = '-';
+    }
+    // Auto-refresh every 5 seconds
+    if (dashRefreshTimer) { clearInterval(dashRefreshTimer); }
+    dashRefreshTimer = setInterval(loadDashboard, 5000);
+    // Also refresh fastest node every 30 seconds
+    if (typeof dashboardTimer !== 'undefined') clearInterval(dashboardTimer);
+    window.dashboardTimer = setInterval(refreshDashboardFastest, 30000);
+    refreshDashboardFastest();
+  } catch (e) { showToast('Failed to load dashboard: ' + e.message, 'error'); }
+}
+
+async function refreshDashboardFastest() {
+  const el = document.getElementById('dash-fastest');
+  if (!el) return;
+  try {
+    // Try API (auto test state) first
+    const data = await api('GET', '/api/proxies/fastest');
+    if (data && data.fastest) {
+      const f = data.fastest;
+      const timeStr = data.last_test_at ? new Date(data.last_test_at * 1000).toLocaleTimeString() : '-';
+      el.textContent = escapeHtml(f.name) + ' ' + (f.latency ? f.latency + 'ms' : 'N/A');
+      document.getElementById('dash-fastest-label').textContent = 'Fastest ' + timeStr;
+      return;
+    }
+  } catch (_) {}
+  // Fall back: derive from localStorage latency data
+  const saved = loadProxyLatencies();
+  const entries = Object.entries(saved).filter(([, v]) => v !== null && v !== undefined && v > 0);
+  if (entries.length > 0) {
+    entries.sort((a, b) => a[1] - b[1]);
+    const [name, latency] = entries[0];
+    el.textContent = escapeHtml(name) + ' ' + latency + 'ms';
+    document.getElementById('dash-fastest-label').textContent = 'Fastest (local)';
+  } else {
+    el.textContent = 'No test data';
+    document.getElementById('dash-fastest-label').textContent = 'Fastest';
+  }
+}
+
+async function startService() {
+  try { await api('POST', '/api/service/start'); showToast('Service started'); setTimeout(() => location.reload(), 1500); }
+  catch (e) { showToast('Failed to start: ' + e.message, 'error'); }
+}
+
+async function stopService() {
+  try { await api('POST', '/api/service/stop'); showToast('Service stopped'); setTimeout(() => location.reload(), 1500); }
+  catch (e) { showToast('Failed to stop: ' + e.message, 'error'); }
+}
+
+async function setMode(mode) {
+  try {
+    await api('POST', '/api/mode', { mode });
+    showToast('Mode set to ' + mode);
+    // Update currentMode, button styles, and dashboard card immediately
+    currentMode = mode;
+    const dashMode = document.getElementById('dash-mode');
+    if (dashMode) dashMode.textContent = mode.toUpperCase();
+    ['rule','global','direct'].forEach(m => {
+      const btn = document.getElementById('btn-mode-' + m);
+      if (btn) btn.className = 'btn ' + (m === currentMode ? 'primary' : 'secondary');
+    });
+  } catch (e) { showToast('Failed to set mode: ' + e.message, 'error'); }
+}
+
+// Proxies
+async function loadProxies() {
+  const l = document.getElementById('proxy-loading'), t = document.getElementById('proxy-table'), e = document.getElementById('proxy-empty');
+  l.style.display = 'flex'; t.style.display = 'none'; e.style.display = 'none';
+  document.getElementById('proxy-pagination').style.display = 'none';
+  document.getElementById('proxy-selected-card').style.display = 'none';
+  try {
+    const data = await api('GET', '/api/proxies');
+    proxies = [];
+    proxyData = data; // store full response for selected proxy card
+    const pl = data.proxies || {}, globalNow = pl.GLOBAL?.now || '';
+    // Restore latencies from localStorage
+    const savedLatencies = loadProxyLatencies();
+    let idx = 0;
+    for (const [name, info] of Object.entries(pl)) {
+      if (['GLOBAL','DIRECT','REJECT','FALLBACK'].includes(name)) continue;
+      proxies.push({ idx: idx++, name, type: info.type || 'unknown', latency: savedLatencies[name] ?? null, udp: info.udp || false, tfo: info.tfo || false, selected: name === globalNow });
+    }
+    // Fetch auto test results and merge with localStorage latencies
+    let autoResults = [];
+    let autoFastest = null;
+    try {
+      const fd = await api('GET', '/api/proxies/fastest');
+      if (fd) { autoResults = fd.results || []; autoFastest = fd.fastest; }
+    } catch (_) {}
+    // Build result map from auto test results
+    const resultMap = {};
+    autoResults.forEach(r => { resultMap[r.name] = r; });
+    proxies.forEach(p => {
+      if (resultMap[p.name]) {
+        p.latency = resultMap[p.name].latency ?? p.latency;
+        p.latencyError = resultMap[p.name].error || null;
+      } else if (savedLatencies[p.name] !== undefined) {
+        p.latency = savedLatencies[p.name];
+      }
+    });
+    // Mark fastest: prefer API result, fall back to lowest localStorage latency
+    if (autoFastest) {
+      const fname = autoFastest.name;
+      proxies.forEach(p => { p.isFastest = (p.name === fname); });
+    } else {
+      // No auto test result — find lowest latency from data
+      const candidates = proxies.filter(p => p.latency !== null && p.latency > 0);
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => a.latency - b.latency);
+        candidates[0].isFastest = true;
+      }
+    }
+    // Restore filter from localStorage
+    const savedFilter = loadProxyFilter();
+    document.getElementById('proxy-search').value = savedFilter;
+    filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(savedFilter.toLowerCase()));
+    proxyPage = 1;
+    // Update selected proxy card — always show card (fastest + selected sections)
+    const hasSel = !!(globalNow && pl[globalNow]);
+    if (hasSel) {
+      const sel = pl[globalNow];
+      document.getElementById('proxy-sel-name').textContent = globalNow;
+      document.getElementById('proxy-sel-type').textContent = (sel.type || '').toUpperCase();
+      const lat = savedLatencies[globalNow] ?? null;
+      document.getElementById('proxy-sel-latency').textContent = lat !== null ? lat + 'ms' : 'Timeout';
+      document.getElementById('proxy-sel-latency').className = 'badge ' + (lat !== null ? (lat < 100 ? 'success' : lat < 300 ? 'warning' : 'danger') : '');
+      document.getElementById('proxy-sel-udp').style.display = sel.udp ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-tfo').style.display = sel.tfo ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-mptcp').style.display = sel.mptcp ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-xudp').style.display = sel.xudp ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-uot').style.display = sel.uot ? 'inline-block' : 'none';
+    } else {
+      document.getElementById('proxy-sel-name').textContent = '-';
+      document.getElementById('proxy-sel-type').textContent = '-';
+      document.getElementById('proxy-sel-latency').textContent = '-';
+      document.getElementById('proxy-sel-latency').className = 'badge';
+    }
+    // Always show the status card when we have proxies
+    document.getElementById('proxy-selected-card').style.display = proxies.length > 0 ? 'block' : 'none';
+    // Update fastest proxy in the card
+    const fastestNode = proxies.find(p => p.isFastest);
+    if (fastestNode) {
+      document.getElementById('proxy-fastest-name').textContent = fastestNode.name;
+      const fl = fastestNode.latency;
+      document.getElementById('proxy-fastest-latency').textContent = fl !== null ? fl + 'ms' : 'N/A';
+    } else {
+      document.getElementById('proxy-fastest-name').textContent = '-';
+      document.getElementById('proxy-fastest-latency').textContent = '-';
+    }
+    renderProxies();
+  } catch (err) { l.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load proxies'; }
+}
+
+function filterProxies() {
+  const q = document.getElementById('proxy-search').value;
+  saveProxyFilter(q);
+  filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(q.toLowerCase()));
+  proxyPage = 1;
+  renderProxies();
+}
+
+// Latency sort state: null = unsorted, 'asc' = lowest first, 'desc' = highest first
+let latencySortOrder = null;
+
+function sortProxiesByLatency() {
+  if (latencySortOrder === null) {
+    latencySortOrder = 'asc';
+  } else if (latencySortOrder === 'asc') {
+    latencySortOrder = 'desc';
+  } else {
+    latencySortOrder = null; // toggle off
+  }
+  if (latencySortOrder === null) {
+    // Restore original order: tested first, then untested, then name sort
+    filteredProxies.sort((a, b) => {
+      if (a.latency === null && b.latency === null) return a.name.localeCompare(b.name);
+      if (a.latency === null) return 1; if (b.latency === null) return -1;
+      return a.name.localeCompare(b.name);
+    });
+  } else {
+    filteredProxies.sort((a, b) => {
+      if (a.latency === null && b.latency === null) return a.name.localeCompare(b.name);
+      if (a.latency === null) return 1; if (b.latency === null) return -1;
+      return latencySortOrder === 'asc' ? a.latency - b.latency : b.latency - a.latency;
+    });
+  }
+  proxyPage = 1;
+  renderProxies();
+}
+
+function renderProxies() {
+  const l = document.getElementById('proxy-loading'), t = document.getElementById('proxy-table'), e = document.getElementById('proxy-empty'), pg = document.getElementById('proxy-pagination');
+  if (filteredProxies.length === 0) {
+    l.style.display = 'none'; t.style.display = 'none'; pg.style.display = 'none';
+    e.style.display = 'block';
+    const searchQ = document.getElementById('proxy-search').value;
+    if (searchQ && proxies.length > 0) {
+      e.querySelector('p').textContent = `No proxies match "${searchQ}"`;
+    } else {
+      e.querySelector('p').textContent = 'No proxy nodes found';
+    }
+    return;
+  }
+  l.style.display = 'none'; t.style.display = 'table'; e.style.display = 'none';
+  const totalPages = Math.max(1, Math.ceil(filteredProxies.length / PROXY_PAGE_SIZE));
+  if (proxyPage > totalPages) proxyPage = totalPages;
+  const start = (proxyPage - 1) * PROXY_PAGE_SIZE;
+  const items = filteredProxies.slice(start, start + PROXY_PAGE_SIZE);
+  document.getElementById('proxy-count').textContent = `${filteredProxies.length} of ${proxies.length} nodes`;
+  // Update sort indicator
+  const sortEl = document.getElementById('latency-sort-indicator');
+  if (sortEl) {
+    sortEl.textContent = latencySortOrder === 'asc' ? '↑' : latencySortOrder === 'desc' ? '↓' : '';
+  }
+  document.getElementById('proxy-list').innerHTML = items.map((p) => {
+    const lc = p.latency === null ? 'latency-timeout' : p.latency < 100 ? 'latency-good' : p.latency < 300 ? 'latency-medium' : 'latency-bad';
+    const lt = (p.latency !== null && typeof p.latency === 'number') ? p.latency + 'ms' : (p.latencyError ? 'N/A' : 'Timeout');
+    // Status: show UDP/TFO badges if enabled
+    const statusBadges = (p.udp ? '<span class="badge" style="background:#0ea5e9;color:#fff;font-size:10px;margin-right:2px">UDP</span>' : '') +
+                         (p.tfo ? '<span class="badge" style="background:#8b5cf6;color:#fff;font-size:10px">TFO</span>' : '');
+    const selBadge = p.selected ? '<span class="badge info">Selected</span>' : '';
+    const statusContent = statusBadges || selBadge || '';
+    const name = escapeHtml(p.name);
+    const selBtnClass = p.selected ? 'btn xs secondary disabled' : 'btn xs primary';
+    const selBtnTxt = p.selected ? '✓' : '◉';
+    const fastestStyle = p.isFastest ? ' style="background:rgba(34,197,94,0.08)"' : '';
+    return `<tr class="cell-clickable"${fastestStyle} onclick="selectProxy('${escapeHtml(p.name)}')" title="Click to select ${name}">
+      <td class="text-muted" style="font-size:12px;text-align:center">${p.idx + 1}</td>
+      <td><span class="mono">${name}</span></td>
+      <td>${escapeHtml(p.type)}</td>
+      <td class="${lc} mono">${lt}</td>
+      <td>${statusContent}</td>
+      <td>
+        <button class="btn xs secondary" onclick="event.stopPropagation();testProxy(${p.idx})" title="Test latency" style="width:28px;padding:0;text-align:center">⚡</button>
+        <button class="${selBtnClass}" onclick="event.stopPropagation();selectProxy('${escapeHtml(p.name)}')" title="${p.selected ? 'Selected' : 'Select ' + name}" style="width:28px;padding:0;text-align:center">${selBtnTxt}</button>
+      </td>
+    </tr>`;
+  }).join('');
+  pg.style.display = 'flex';
+  document.getElementById('proxy-pagination-info').textContent = `Showing ${start + 1}-${Math.min(start + PROXY_PAGE_SIZE, filteredProxies.length)} of ${filteredProxies.length}`;
+  document.getElementById('proxy-pagination-controls').innerHTML =
+    `<button class="page-btn nav" onclick="goProxyPage(${proxyPage - 1})" ${proxyPage === 1 ? 'disabled' : ''}>‹</button>` +
+    (proxyPage > 1 ? `<button class="page-btn" onclick="goProxyPage(${proxyPage - 1})">${proxyPage - 1}</button>` : '') +
+    `<button class="page-btn active">${proxyPage}</button>` +
+    (proxyPage < totalPages ? `<button class="page-btn" onclick="goProxyPage(${proxyPage + 1})">${proxyPage + 1}</button>` : '') +
+    `<button class="page-btn nav" onclick="goProxyPage(${proxyPage + 1})" ${proxyPage >= totalPages ? 'disabled' : ''}>›</button>`;
+}
+
+function goProxyPage(p) { proxyPage = p; renderProxies(); }
+
+async function selectProxy(name) {
+  try {
+    await api('POST', '/api/proxies/select', { name });
+    showToast(`Selected: ${name}`);
+    // Update proxies list with new selection, preserving current page
+    const pl = proxyData?.proxies || {};
+    const globalNow = name; // we just selected this
+    proxies.forEach(p => p.selected = p.name === globalNow);
+    filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(document.getElementById('proxy-search').value.toLowerCase()));
+    // Update selected proxy card
+    const selProxy = proxies.find(p => p.name === globalNow);
+    const selInfo = pl[globalNow]; // full proxy info from API
+    if (selProxy && selInfo) {
+      document.getElementById('proxy-sel-name').textContent = globalNow;
+      document.getElementById('proxy-sel-type').textContent = (selProxy.type || '').toUpperCase();
+      const lat = selProxy.latency;
+      const latEl = document.getElementById('proxy-sel-latency');
+      if (lat !== null && lat !== undefined) {
+        latEl.textContent = lat + 'ms';
+        latEl.className = 'badge ' + (lat < 100 ? 'success' : lat < 300 ? 'warning' : 'danger');
+      } else {
+        latEl.textContent = 'Timeout';
+        latEl.className = 'badge danger';
+      }
+      // Show/hide protocol badges
+      document.getElementById('proxy-sel-udp').style.display = selInfo.udp ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-tfo').style.display = selInfo.tfo ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-mptcp').style.display = selInfo.mptcp ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-xudp').style.display = selInfo.xudp ? 'inline-block' : 'none';
+      document.getElementById('proxy-sel-uot').style.display = selInfo.uot ? 'inline-block' : 'none';
+      document.getElementById('proxy-selected-card').style.display = 'block';
+    }
+    renderProxies();
+    loadDashboard();
+    refreshFastestCard();
+  } catch (e) { showToast('Failed to select proxy: ' + e.message, 'error'); }
+}
+
+// Update fastest proxy in the side-by-side card
+async function refreshFastestCard() {
+  try {
+    const fd = await api('GET', '/api/proxies/fastest');
+    if (fd && fd.fastest) {
+      document.getElementById('proxy-fastest-name').textContent = fd.fastest.name;
+      document.getElementById('proxy-fastest-latency').textContent = fd.fastest.latency ? fd.fastest.latency + 'ms' : 'N/A';
+    } else {
+      // No auto test data — derive from proxies array
+      const fn = proxies.find(p => p.isFastest);
+      if (fn) {
+        document.getElementById('proxy-fastest-name').textContent = fn.name;
+        document.getElementById('proxy-fastest-latency').textContent = fn.latency ? fn.latency + 'ms' : 'N/A';
+      }
+    }
+  } catch (_) {}
+}
+
+// Test latency for a single proxy (by name, handles emoji/special chars via server-side encoding)
+async function testProxy(idx) {
+  try {
+    const proxyName = proxies[idx]?.name;
+    if (!proxyName) { showToast('Proxy not found', 'error'); return; }
+    const d = await api('POST', '/api/proxies/delay', { name: proxyName, timeout: 5000 });
+    const latency = (d && typeof d.delay === 'number') ? d.delay : null;
+    const errMsg = d?.error || null;
+    // Update in proxies array by index
+    if (proxies[idx]) { proxies[idx].latency = latency; proxies[idx].latencyError = errMsg; }
+    if (filteredProxies[idx]) { filteredProxies[idx].latency = latency; filteredProxies[idx].latencyError = errMsg; }
+    saveProxyLatencies();
+    // Update selected card if this is the selected proxy
+    const selName = proxyData?.proxies?.GLOBAL?.now;
+    if (proxies[idx] && proxies[idx].name === selName) {
+      const latEl = document.getElementById('proxy-sel-latency');
+      if (latency !== null) {
+        latEl.textContent = latency + 'ms';
+        latEl.className = 'badge ' + (latency < 100 ? 'success' : latency < 300 ? 'warning' : 'danger');
+      } else {
+        latEl.textContent = errMsg ? 'N/A' : 'Timeout';
+        latEl.className = 'badge danger';
+      }
+    }
+    showToast(latency !== null ? `Latency: ${latency}ms` : (errMsg || 'Timeout'));
+    renderProxies();
+  } catch (e) {
+    // On failure, ensure latency is null (not leftover stale value)
+    if (proxies[idx]) { proxies[idx].latency = null; proxies[idx].latencyError = null; }
+    if (filteredProxies[idx]) { filteredProxies[idx].latency = null; filteredProxies[idx].latencyError = null; }
+    saveProxyLatencies();
+    showToast(`Timeout`, 'error');
+    renderProxies();
+  }
+}
+
+// Test latency for all filtered proxies
+async function testAllLatency() {
+  const btn = document.getElementById('btn-test-all');
+  btn.disabled = true;
+  btn.textContent = 'Testing...';
+  try {
+    // Use batch delay-all API
+    const resp = await api('POST', '/api/proxies/delay-all', { timeout: 5000 }, 60000);
+    if (resp && resp.results) {
+      // Build a map of name -> delay and error
+      const delayMap = {};
+      const errorMap = {};
+      resp.results.forEach(r => {
+        delayMap[r.name] = r.latency;
+        if (r.error) errorMap[r.name] = r.error;
+      });
+      // Apply delays to proxies
+      proxies.forEach(p => {
+        if (delayMap[p.name] !== undefined) {
+          p.latency = delayMap[p.name];
+          p.latencyError = errorMap[p.name] || null;
+        }
+      });
+    }
+    saveProxyLatencies();
+    // Re-sort by latency
+    proxies.sort((a, b) => {
+      if (a.latency === null && b.latency === null) return a.name.localeCompare(b.name);
+      if (a.latency === null) return 1; if (b.latency === null) return -1;
+      return a.latency - b.latency;
+    });
+    filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(document.getElementById('proxy-search').value.toLowerCase()));
+    showToast('Latency test completed');
+    renderProxies();
+  } catch (e) {
+    showToast('Latency test failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> Test All';
+  }
+}
+
+// Profiles
+async function loadProfiles() {
+  const l = document.getElementById('profiles-loading'), t = document.getElementById('profiles-table'), e = document.getElementById('profiles-empty');
+  l.style.display = 'flex'; t.style.display = 'none'; e.style.display = 'none';
+  document.getElementById('profiles-pagination').style.display = 'none';
+  try {
+    const data = await api('GET', '/api/profiles');
+    profiles = data?.items || [];
+    currentProfileUid = data?.current || null;
+    profilePage = 1;
+    renderProfiles();
+  } catch (_) { l.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load profiles'; }
+}
+
+function renderProfiles() {
+  const l = document.getElementById('profiles-loading'), t = document.getElementById('profiles-table'), e = document.getElementById('profiles-empty'), pg = document.getElementById('profiles-pagination');
+  if (profiles.length === 0) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; pg.style.display = 'none'; document.getElementById('profiles-total-count').textContent = ''; return; }
+  l.style.display = 'none'; t.style.display = 'table'; e.style.display = 'none';
+  const totalPages = Math.max(1, Math.ceil(profiles.length / profilePageSize));
+  if (profilePage > totalPages) profilePage = totalPages;
+  const start = (profilePage - 1) * profilePageSize;
+  const items = profiles.slice(start, start + profilePageSize);
+  document.getElementById('profiles-list').innerHTML = items.map(p => {
+    const isActive = p.uid === currentProfileUid;
+    const st = isActive ? '<span class="badge success">Active</span>' : '<span class="badge neutral">Inactive</span>';
+    return `<tr>
+      <td><span style="font-weight:500">${escapeHtml(p.name || 'Unnamed')}</span></td>
+      <td><span class="mono truncate" style="max-width:280px;display:block" title="${escapeHtml(p.url || '')}">${escapeHtml(p.url || '-')}</span></td>
+      <td>${st}</td>
+      <td>${isActive && p.cron ? `<span class="mono text-sm">${escapeHtml(p.cron)} min</span>` : '<span class="text-muted text-sm">-</span>'}</td>
+      <td><span class="mono text-sm">${formatTimestamp(p.updated_at)}</span>${isActive ? `<button class="btn xs" onclick="refreshProfile('${p.uid.replace(/'/g, "\\'")}', false)" title="Refresh direct">↻D</button><button class="btn xs primary" onclick="refreshProfile('${p.uid.replace(/'/g, "\\'")}', true)" title="Refresh via proxy">↻P</button>` : ''}</td>
+      <td><div class="btn-group" style="gap:6px">${isActive ? `<button class="btn xs" onclick="openCronModal('${p.uid.replace(/'/g, "\\'")}','${escapeHtml(p.cron || '')}')" title="Edit update schedule">Edit</button>` : ''}${!isActive ? `<button class="btn xs success" id="btn-activate-${p.uid.replace(/'/g, "")}" onclick="activateProfile('${p.uid.replace(/'/g, "\\'")}', this)" title="Activate this profile">Activate</button>` : ''}<button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${p.uid}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
+    </tr>`;
+  }).join('');
+  pg.style.display = 'flex';
+  document.getElementById('profiles-pagination-info').textContent = `Showing ${start + 1}-${Math.min(start + profilePageSize, profiles.length)} of ${profiles.length}`;
+  document.getElementById('profiles-total-count').textContent = profiles.length > 0 ? `(${profiles.length})` : '';
+  document.getElementById('profiles-pagination-controls').innerHTML =
+    `<button class="page-btn nav" onclick="goProfilePage(${profilePage - 1})" ${profilePage === 1 ? 'disabled' : ''}>‹</button>` +
+    (profilePage > 1 ? `<button class="page-btn" onclick="goProfilePage(${profilePage - 1})">${profilePage - 1}</button>` : '') +
+    `<button class="page-btn active">${profilePage}</button>` +
+    (profilePage < totalPages ? `<button class="page-btn" onclick="goProfilePage(${profilePage + 1})">${profilePage + 1}</button>` : '') +
+    `<button class="page-btn nav" onclick="goProfilePage(${profilePage + 1})" ${profilePage >= totalPages ? 'disabled' : ''}>›</button>`;
+}
+
+function goProfilePage(p) { profilePage = p; renderProfiles(); }
+
+async function addProfile(e) {
+  e.preventDefault();
+  const url = document.getElementById('profile-url').value, name = document.getElementById('profile-name').value;
+  try { await api('POST', '/api/profiles', { url, name: name || undefined }); showToast('Profile added'); document.getElementById('profile-url').value = ''; document.getElementById('profile-name').value = ''; loadProfiles(); }
+  catch (e) { showToast('Failed to add: ' + e.message, 'error'); }
+}
+
+async function activateProfile(uid, btn) {
+  const b = btn || document.getElementById('btn-activate-' + uid.replace(/[^a-zA-Z0-9]/g, ''));
+  if (b) { b.disabled = true; b.textContent = 'Activating...'; }
+  try {
+    await api('POST', `/api/profiles/${uid}/activate`);
+    showToast('Profile activated, starting Mihomo...');
+    loadProfiles();
+    if (document.getElementById('proxies-view')) loadProxies();
+    if (document.getElementById('rules-view')) loadRules();
+    loadDashboard();
+  }
+  catch (e) { showToast('Failed to activate: ' + e.message, 'error'); }
+  finally { if (b) { b.disabled = false; b.textContent = 'Activate'; } }
+}
+
+async function refreshProfile(uid, useProxy) {
+  try {
+    await api('POST', `/api/profiles/${uid}/refresh`, { use_proxy: useProxy });
+    showToast('Profile refreshed');
+    loadProfiles();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+// Profiles
+function deleteProfile(uid) { document.getElementById('deleteModalText').textContent = 'Are you sure you want to delete this profile? This action cannot be undone.'; document.getElementById('deleteModalBtn').dataset.target = uid; document.getElementById('deleteModal').classList.add('show'); }
+
+
+document.getElementById('deleteModalBtn').addEventListener('click', async () => {
+  const target = document.getElementById('deleteModalBtn').dataset.target;
+  if (!target) return;
+  closeDeleteModal();
+  try { await api('DELETE', `/api/profiles/${target}`); showToast('Profile deleted'); loadProfiles(); }
+  catch (e) { showToast('Failed to delete: ' + e.message, 'error'); }
+});
+
+function closeDeleteModal() { document.getElementById('deleteModal').classList.remove('show'); document.getElementById('deleteModalBtn').dataset.target = ''; }
+
+let cronEditUid = '';
+function openCronModal(uid, currentCron) {
+  cronEditUid = uid;
+  document.getElementById('cronMinutes').value = currentCron || '';
+  document.getElementById('cronModal').classList.add('show');
+  document.getElementById('cronMinutes').focus();
+}
+function closeCronModal() { document.getElementById('cronModal').classList.remove('show'); cronEditUid = ''; }
+
+document.getElementById('cronModalSaveBtn').addEventListener('click', async () => {
+  if (!cronEditUid) { console.error('cronEditUid is empty'); return; }
+  const val = document.getElementById('cronMinutes').value.trim();
+  const cron = val ? String(val) : '';
+  const uid = cronEditUid;
+  closeCronModal();
+  try {
+    const res = await fetch('/api/profiles/' + uid, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ cron: cron || null }) });
+    const json = await res.json();
+    if (json.code !== 0) throw new Error(json.message);
+    showToast('Update schedule saved');
+    loadProfiles();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+});
+
+document.getElementById('cronMinutes').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cronModalSaveBtn').click(); });
+
+// Rules
+async function loadRules() {
+  const l = document.getElementById('rules-loading'), t = document.getElementById('rules-table'), e = document.getElementById('rules-empty');
+  l.style.display = 'flex'; t.style.display = 'none'; e.style.display = 'none';
+  document.getElementById('rules-pagination').style.display = 'none';
+  try { rules = (await api('GET', '/api/rules')) || []; rulesPage = 1; renderRules(); }
+  catch (_) { rules = []; l.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load rules'; }
+}
+
+function renderRules() {
+  const l = document.getElementById('rules-loading'), t = document.getElementById('rules-table'), e = document.getElementById('rules-empty'), pg = document.getElementById('rules-pagination');
+  const q = document.getElementById('rules-search').value.toLowerCase();
+  const filtered = q ? rules.filter(r => {
+    const parts = typeof r === 'string' ? r.split(',') : [];
+    return parts.join(',').toLowerCase().includes(q);
+  }) : rules;
+  if (rules.length === 0) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; pg.style.display = 'none'; document.getElementById('rules-total-count').textContent = ''; return; }
+  l.style.display = 'none'; t.style.display = 'table'; e.style.display = 'none';
+  const totalPages = Math.max(1, Math.ceil(filtered.length / rulesPerPage));
+  if (rulesPage > totalPages) rulesPage = totalPages;
+  const start = (rulesPage - 1) * rulesPerPage;
+  const pageRules = [...filtered].reverse().slice(start, start + rulesPerPage);
+  const pageOrigIdx = pageRules.map((_, i) => {
+    const reversedIdx = filtered.length - 1 - (start + i);
+    const ruleItem = rules.indexOf(filtered[reversedIdx]);
+    return ruleItem >= 0 ? ruleItem + 1 : reversedIdx + 1;
+  });
+  document.getElementById('rules-list').innerHTML = pageRules.map((r, i) => {
+    const idx = start + i + 1, parts = typeof r === 'string' ? r.split(',') : [];
+    const rt = parts[0] || '', rv = parts.slice(1, -1).join(','), rp = parts[parts.length - 1] || '';
+    const rb = rt === 'RULE-SET' ? 'info' : 'neutral';
+    return `<tr><td class="mono text-muted">${idx}</td><td><span class="badge ${rb}">${escapeHtml(rt)}</span></td><td><span class="truncate" style="max-width:300px;display:block" title="${escapeHtml(rv)}">${escapeHtml(rv)}</span></td><td><span class="mono">${escapeHtml(rp)}</span></td></tr>`;
+  }).join('');
+  pg.style.display = 'flex';
+  document.getElementById('rules-pagination-info').textContent = `Showing ${start + 1}-${Math.min(start + rulesPerPage, filtered.length)} of ${filtered.length} rules`;
+  document.getElementById('rules-total-count').textContent = filtered.length > 0 ? `(${filtered.length})` : '';
+  document.getElementById('rules-pagination-controls').innerHTML =
+    `<button class="page-btn nav" onclick="goRulesPage(${rulesPage - 1})" ${rulesPage === 1 ? 'disabled' : ''}>‹</button>` +
+    (rulesPage > 1 ? `<button class="page-btn" onclick="goRulesPage(${rulesPage - 1})">${rulesPage - 1}</button>` : '') +
+    `<button class="page-btn active">${rulesPage}</button>` +
+    (rulesPage < totalPages ? `<button class="page-btn" onclick="goRulesPage(${rulesPage + 1})">${rulesPage + 1}</button>` : '') +
+    `<button class="page-btn nav" onclick="goRulesPage(${rulesPage + 1})" ${rulesPage >= totalPages ? 'disabled' : ''}>›</button>`;
+}
+
+// Rules (view-only, no add/delete)
+
+// Connections
+function startConnections() {
+  connPaused = false;
+  document.getElementById('btn-pause-conn').innerHTML = '<svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
+  loadConnections();
+  onConnRefreshChange();
+}
+
+function stopConnections() { if (connRefreshTimer) { clearInterval(connRefreshTimer); connRefreshTimer = null; } }
+
+function toggleConnPause() {
+  connPaused = !connPaused;
+  const btn = document.getElementById('btn-pause-conn');
+  btn.innerHTML = connPaused
+    ? '<svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.102v3.68a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l3.197-2.132V9.102"/></svg> Resume'
+    : '<svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
+}
+
+function onConnRefreshChange() {
+  const intervalEl = document.getElementById('conn-refresh-interval');
+  const interval = intervalEl ? parseInt(intervalEl.value) : 5000;
+  if (connRefreshTimer) { clearInterval(connRefreshTimer); connRefreshTimer = null; }
+  if (interval > 0) { connRefreshTimer = setInterval(loadConnections, interval); }
+}
+
+async function loadConnections() {
+  const l = document.getElementById('conn-loading'), t = document.getElementById('conn-table'), e = document.getElementById('conn-empty'), pg = document.getElementById('conn-pagination');
+  try {
+    const data = await api('GET', '/api/connections');
+    connections = data.connections || [];
+    let up = 0, dn = 0;
+    connections.forEach(c => { up += c.upload || 0; dn += c.download || 0; });
+    document.getElementById('conn-total').textContent = connections.length;
+    document.getElementById('conn-upload').textContent = formatBytes(up) + '/s';
+    document.getElementById('conn-download').textContent = formatBytes(dn) + '/s';
+    document.getElementById('conn-cumulative-upload').textContent = formatBytes(data.uploadTotal || 0);
+    document.getElementById('conn-cumulative-download').textContent = formatBytes(data.downloadTotal || 0);
+    if (connections.length === 0) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; pg.style.display = 'none'; return; }
+    l.style.display = 'none'; t.style.display = 'table'; e.style.display = 'none';
+    const totalPages = Math.max(1, Math.ceil(connections.length / connPageSize));
+    if (connPage > totalPages) connPage = totalPages;
+    const start = (connPage - 1) * connPageSize;
+    const items = connections.slice(start, start + connPageSize);
+    document.getElementById('conn-list').innerHTML = items.map((c, i) => {
+      const meta = c.metadata || {};
+      const src = (meta.sourceIP || '-') + (meta.sourcePort ? ':' + meta.sourcePort : '');
+      const dst = meta.host || ((meta.destinationIP || '-') + (meta.destinationPort ? ':' + meta.destinationPort : ''));
+      const proxyChain = c.chains && c.chains.length > 0 ? c.chains[c.chains.length - 1] : (meta.inboundName || '-');
+      const dur = c.start ? Math.round((Date.now() - new Date(c.start).getTime()) / 1000) : 0;
+      return `<tr onmouseenter="connPaused=true" onmouseleave="connPaused=false">
+        <td class="mono text-muted">${start + i + 1}</td>
+        <td><div class="conn-meta" title="${escapeHtml(src)}">${escapeHtml(truncate(src, 24))}</div></td>
+        <td><div class="conn-meta" title="${escapeHtml(dst)}">${escapeHtml(truncate(dst, 28))}</div></td>
+        <td><div class="conn-badge"><span class="badge neutral">${escapeHtml(truncate(proxyChain, 20))}</span></div></td>
+        <td class="mono" style="color:var(--success)">${formatBytes(c.upload || 0)}</td>
+        <td class="mono" style="color:var(--warning)">${formatBytes(c.download || 0)}</td>
+        <td class="mono text-muted">${formatDuration(dur)}</td>
+        <td><button class="btn xs danger" onclick="closeConnection('${escapeHtml(c.id)}')" title="Close this connection">Close</button></td>
+      </tr>`;
+    }).join('');
+    pg.style.display = 'flex';
+    document.getElementById('conn-pagination-info').textContent = `Showing ${start + 1}-${Math.min(start + connPageSize, connections.length)} of ${connections.length}`;
+    document.getElementById('conn-pagination-controls').innerHTML =
+      `<button class="page-btn nav" onclick="goConnPage(${connPage - 1})" ${connPage === 1 ? 'disabled' : ''}>‹</button>` +
+      (connPage > 1 ? `<button class="page-btn" onclick="goConnPage(${connPage - 1})">${connPage - 1}</button>` : '') +
+      `<button class="page-btn active">${connPage}</button>` +
+      (connPage < totalPages ? `<button class="page-btn" onclick="goConnPage(${connPage + 1})">${connPage + 1}</button>` : '') +
+      `<button class="page-btn nav" onclick="goConnPage(${connPage + 1})" ${connPage >= totalPages ? 'disabled' : ''}>›</button>`;
+  } catch (_) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load connections'; }
+}
+
+function goConnPage(p) { connPage = p; loadConnections(); }
+
+async function closeConnection(id) {
+  try { await api('DELETE', `/api/connections/${encodeURIComponent(id)}`); showToast('Connection closed'); loadConnections(); }
+  catch (e) { showToast('Failed to close: ' + e.message, 'error'); }
+}
+
+// Settings
+async function restartService() {
+  try { showToast('Restarting service...', 'warning'); await api('POST', '/api/service/stop'); await new Promise(r => setTimeout(r, 1500)); await api('POST', '/api/service/start'); showToast('Service restarted'); loadDashboard(); }
+  catch (e) { showToast('Failed to restart: ' + e.message, 'error'); }
+}
+
+async function loadSettings() {
+  try {
+    const resp = await api('GET', '/api/settings');
+    if (resp) {
+      const http = resp.http_port || 7890;
+      const socks = resp.socks_port || 7891;
+      const apip = resp.api_port || 9090;
+      const tunOn = !!resp.tun_enabled;
+      const latencyMode = resp.latency_test_mode || 'http';
+      // Update display spans
+      document.getElementById('port-http-display').textContent = http;
+      document.getElementById('port-socks5-display').textContent = socks;
+      document.getElementById('port-api-display').textContent = apip;
+      document.getElementById('tun-enabled-display').textContent = tunOn ? 'ON' : 'OFF';
+      document.getElementById('tun-enabled-display').style.color = tunOn ? 'var(--success)' : 'var(--text2)';
+      document.getElementById('latency-mode-display').textContent = latencyMode === 'ping' ? 'Ping (TCP)' : 'HTTP';
+      // Update input values (hidden until edit)
+      document.getElementById('port-http').value = http;
+      document.getElementById('port-socks5').value = socks;
+      document.getElementById('port-api').value = apip;
+      document.getElementById('tun-enabled-input').checked = tunOn;
+      document.getElementById('latency-mode-input').value = latencyMode;
+      const autoTest = resp.auto_test;
+      if (autoTest) {
+        document.getElementById('auto-test-enabled').checked = autoTest.enabled;
+        document.getElementById('auto-test-interval').value = String(autoTest.interval_minutes || 15);
+        document.getElementById('auto-test-interval').disabled = !autoTest.enabled;
+        const autoTestDisplay = document.getElementById('auto-test-display');
+        autoTestDisplay.textContent = autoTest.enabled
+          ? `${autoTest.interval_minutes} min interval`
+          : 'Off';
+      }
+    }
+  } catch (e) {
+    showToast('Failed to load settings: ' + e.message, 'error');
+  }
+}
+
+function editPorts() {
+  // Switch to edit mode: show inputs, hide displays
+  document.getElementById('ports-display').style.display = 'none';
+  document.getElementById('ports-edit').style.display = 'block';
+  // Toggle buttons
+  document.getElementById('editPortsBtn').style.display = 'none';
+  const saveBtn = document.getElementById('savePortsBtn');
+  saveBtn.style.display = '';
+  saveBtn.disabled = false;
+  saveBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
+  document.getElementById('cancelPortsBtn').style.display = '';
+}
+
+function cancelEditPorts() {
+  // Switch to display mode: show displays, hide inputs
+  document.getElementById('ports-display').style.display = 'block';
+  document.getElementById('ports-edit').style.display = 'none';
+  // Toggle buttons
+  document.getElementById('editPortsBtn').style.display = '';
+  const saveBtn = document.getElementById('savePortsBtn');
+  saveBtn.style.display = 'none';
+  saveBtn.disabled = false;
+  saveBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
+  document.getElementById('cancelPortsBtn').style.display = 'none';
+  // Reload to reset input values to current settings
+  loadSettings();
+}
+
+async function savePorts() {
+  const btn = document.getElementById('savePortsBtn');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M12 6v6l4 2"/></svg> Saving...';
+
+  try {
+    const http_port = parseInt(document.getElementById('port-http').value);
+    const socks_port = parseInt(document.getElementById('port-socks5').value);
+    const api_port = parseInt(document.getElementById('port-api').value);
+
+    // Validate ports
+    if (isNaN(http_port) || http_port < 1 || http_port > 65535) {
+      throw new Error('HTTP port must be between 1 and 65535');
+    }
+    if (isNaN(socks_port) || socks_port < 1 || socks_port > 65535) {
+      throw new Error('SOCKS5 port must be between 1 and 65535');
+    }
+    if (isNaN(api_port) || api_port < 1 || api_port > 65535) {
+      throw new Error('API port must be between 1 and 65535');
+    }
+
+    // Save settings and apply port changes (updates config.yaml + restarts Mihomo)
+    await api('PUT', '/api/settings', { http_port, socks_port, api_port });
+    await api('POST', '/api/settings/apply-ports', { http_port, socks_port });
+    showToast('Ports saved and Mihomo restarted', 'success');
+    // Reset to display mode and reload settings
+    loadSettings();
+    cancelEditPorts();
+    // Reset to display mode and reload settings
+    loadSettings();
+    cancelEditPorts();
+  } catch (e) {
+    showToast('Failed to save ports: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+  }
+}
+
+let logRefreshTimer = null;
+let dashRefreshTimer = null;
+
+function editTun() {
+  document.getElementById('tun-display').style.display = 'none';
+  document.getElementById('tun-edit').style.display = 'block';
+  document.getElementById('editTunBtn').style.display = 'none';
+  const saveBtn = document.getElementById('saveTunBtn');
+  saveBtn.style.display = '';
+  saveBtn.disabled = false;
+  saveBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
+  document.getElementById('cancelTunBtn').style.display = '';
+}
+
+function cancelEditTun() {
+  document.getElementById('tun-display').style.display = 'block';
+  document.getElementById('tun-edit').style.display = 'none';
+  document.getElementById('editTunBtn').style.display = '';
+  const saveBtn = document.getElementById('saveTunBtn');
+  saveBtn.style.display = 'none';
+  saveBtn.disabled = false;
+  saveBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
+  document.getElementById('cancelTunBtn').style.display = 'none';
+  loadSettings();
+}
+
+async function saveTun() {
+  const btn = document.getElementById('saveTunBtn');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = 'Saving...';
+  try {
+    const tun_enabled = document.getElementById('tun-enabled-input').checked;
+    await api('POST', '/api/settings/apply-tun', { tun_enabled });
+    showToast('TUN mode ' + (tun_enabled ? 'enabled' : 'disabled') + ', service restarting...');
+    cancelEditTun();
+    loadSettings();
+    // Reload page after short delay so Mihomo restart takes effect
+    setTimeout(() => location.reload(), 1500);
+  } catch (e) {
+    showToast('Failed to save TUN settings: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+  }
+}
+
+function editLatency() {
+  document.getElementById('latency-display').style.display = 'none';
+  document.getElementById('latency-edit').style.display = 'block';
+  document.getElementById('editLatencyBtn').style.display = 'none';
+  const saveBtn = document.getElementById('saveLatencyBtn');
+  saveBtn.style.display = '';
+  saveBtn.disabled = false;
+  saveBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
+  document.getElementById('cancelLatencyBtn').style.display = '';
+}
+
+function cancelEditLatency() {
+  document.getElementById('latency-display').style.display = 'block';
+  document.getElementById('latency-edit').style.display = 'none';
+  document.getElementById('editLatencyBtn').style.display = '';
+  const saveBtn = document.getElementById('saveLatencyBtn');
+  saveBtn.style.display = 'none';
+  saveBtn.disabled = false;
+  saveBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
+  document.getElementById('cancelLatencyBtn').style.display = 'none';
+}
+
+async function saveLatency() {
+  const btn = document.getElementById('saveLatencyBtn');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = 'Saving...';
+  try {
+    const latency_test_mode = document.getElementById('latency-mode-input').value;
+    const auto_test_enabled = document.getElementById('auto-test-enabled').checked;
+    const auto_test_interval = parseInt(document.getElementById('auto-test-interval').value) || 15;
+    await api('PUT', '/api/settings', {
+      latency_test_mode,
+      auto_test: { enabled: auto_test_enabled, interval_minutes: auto_test_interval, latency_test_mode },
+      http_port: parseInt(document.getElementById('port-http').value) || 7890,
+      socks_port: parseInt(document.getElementById('port-socks5').value) || 7891,
+      api_port: parseInt(document.getElementById('port-api').value) || 9090,
+      tun_enabled: document.getElementById('tun-enabled-input').checked,
+    });
+    showToast('Latency test mode saved');
+    cancelEditLatency();
+    loadSettings();
+  } catch (e) {
+    showToast('Failed to save latency settings: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+  }
+}
+
+function onAutoTestChange() {
+  const enabled = document.getElementById('auto-test-enabled').checked;
+  document.getElementById('auto-test-interval').disabled = !enabled;
+  if (!enabled) return;
+  saveAutoTestSettings();
+}
+
+function onAutoTestIntervalChange() {
+  if (!document.getElementById('auto-test-enabled').checked) return;
+  saveAutoTestSettings();
+}
+
+function onLatencyModeChange() {
+  // When latency mode changes, update auto_test config so it uses the new mode
+  if (!document.getElementById('auto-test-enabled').checked) return;
+  saveAutoTestSettings();
+}
+
+async function saveAutoTestSettings() {
+  const latency_test_mode = document.getElementById('latency-mode-input').value;
+  const auto_test_enabled = document.getElementById('auto-test-enabled').checked;
+  const auto_test_interval = parseInt(document.getElementById('auto-test-interval').value) || 15;
+  await api('PUT', '/api/settings', {
+    latency_test_mode,
+    auto_test: { enabled: auto_test_enabled, interval_minutes: auto_test_interval, latency_test_mode },
+    http_port: parseInt(document.getElementById('port-http').value) || 7890,
+    socks_port: parseInt(document.getElementById('port-socks5').value) || 7891,
+    api_port: parseInt(document.getElementById('port-api').value) || 9090,
+    tun_enabled: document.getElementById('tun-enabled-input') && document.getElementById('tun-enabled-input').checked || false,
+  });
+}
+
+function loadLogs() {
+  const source = document.getElementById('log-source').value;
+  const container = document.getElementById('logs-content');
+  fetch(`/api/logs?source=${source}&lines=300`)
+    .then(r => r.json())
+    .then(resp => {
+      if (resp && resp.data && resp.data.items) {
+        container.innerHTML = resp.data.items.map(line => {
+          const escaped = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          return `<div style="white-space:pre-wrap">${escaped}</div>`;
+        }).join('');
+        container.scrollTop = container.scrollHeight;
+      }
+    }).catch(() => { container.innerHTML = '<div style="white-space:pre-wrap;color:#f87171">Failed to load logs</div>'; });
+}
+
+function onLogRefreshChange() {
+  const interval = parseInt(document.getElementById('log-refresh-interval').value);
+  if (logRefreshTimer) { clearInterval(logRefreshTimer); logRefreshTimer = null; }
+  if (interval > 0) { logRefreshTimer = setInterval(loadLogs, interval); }
+}
+
+document.addEventListener('DOMContentLoaded', () => { loadDashboard(); });
+
+// ESC key closes modal
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeDeleteModal(); closeCronModal(); }
+});
+</script>
+</body>
+</html>

@@ -690,6 +690,7 @@ impl ServiceState {
         #[derive(serde::Deserialize)]
         struct ProfileItem {
             uid: String,
+            file: Option<String>,
             url: Option<String>,
             cron: Option<String>,
         }
@@ -707,7 +708,7 @@ impl ServiceState {
         for item in yaml.items {
             if let Some(cron_str) = item.cron {
                 if let Some(schedule) = Schedule::parse(&cron_str) {
-                    let job = ProfileCronJob::new(item.uid.clone(), item.url.clone(), schedule.clone());
+                    let job = ProfileCronJob::new(item.uid.clone(), item.file.clone(), item.url.clone(), schedule.clone());
                     tracing::info!("Loaded cron job: {} - {}", item.uid, schedule.description());
                     jobs.push(job);
                 } else {
@@ -738,7 +739,11 @@ impl ServiceState {
                     .unwrap_or_else(|| PathBuf::from("."));
 
                 let profiles_dir = exe_dir.join("profiles");
-                let profile_file = profiles_dir.join(format!("{}.yaml", profile_id));
+                // Use job.file if set (e.g. "302db1eb.yaml"), otherwise fall back to profile_id.yaml
+                let profile_file = match job.file.as_ref() {
+                    Some(f) => profiles_dir.join(f),
+                    None => profiles_dir.join(format!("{}.yaml", profile_id)),
+                };
 
                 if let Some(url) = url {
                     if profile_file.exists() {
@@ -2935,8 +2940,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Ensure settings.yaml exists (create with defaults if missing)
     ServiceState::ensure_settings_file();
 
-    // Load settings from settings.yaml
+    // Load settings from settings.yaml (also syncs auto_test.enabled)
     state.load_settings();
+
+    // Auto-start Mihomo if config.yaml exists and no --no-auto-start flag
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let config_path = exe_dir.join("config.yaml");
+    if config_path.exists() {
+        tracing::info!("Auto-starting Mihomo with config: {}", config_path.display());
+        match state.start(&config_path) {
+            Ok(_) => tracing::info!("Mihomo started successfully"),
+            Err(e) => tracing::warn!("Failed to auto-start Mihomo: {}", e),
+        }
+    } else {
+        tracing::info!("No config.yaml found, Mihomo will not auto-start");
+    }
 
     // Only start HTTP server when not in foreground mode (e2e tests use --foreground)
     if !args.foreground {

@@ -55,6 +55,8 @@ impl Schedule {
 #[derive(Debug)]
 pub struct ProfileCronJob {
     pub profile_id: String,
+    /// Resolved profile file path (relative filename, e.g. "302db1eb.yaml")
+    pub file: Option<String>,
     pub url: Option<String>,
     pub schedule: Schedule,
     pub last_run: Option<chrono::DateTime<chrono::Local>>,
@@ -63,10 +65,11 @@ pub struct ProfileCronJob {
 }
 
 impl ProfileCronJob {
-    pub fn new(profile_id: String, url: Option<String>, schedule: Schedule) -> Self {
+    pub fn new(profile_id: String, file: Option<String>, url: Option<String>, schedule: Schedule) -> Self {
         let next_run = chrono::Utc::now().timestamp() + schedule.next_run_seconds();
         Self {
             profile_id,
+            file,
             url,
             schedule,
             last_run: None,

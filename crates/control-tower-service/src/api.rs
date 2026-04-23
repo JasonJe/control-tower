@@ -280,7 +280,7 @@ pub async fn set_mode(
 
     let mode = body.mode.clone();
     let state = state.clone();
-    match task::spawn_blocking(move || state.set_mode(&mode, false)).await {
+    match task::spawn_blocking(move || state.set_mode(&mode)).await {
         Ok(Ok(())) => HttpResponse::Ok().json(ApiResponse::<()>::success(())),
         Ok(Err(e)) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e)),
         Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),
@@ -1138,6 +1138,12 @@ pub struct UpdateSettingsRequest {
     pub tun_enabled: Option<bool>,
     #[serde(rename = "log_level", default)]
     pub log_level: Option<String>,
+    #[serde(rename = "allow_lan", default)]
+    pub allow_lan: Option<bool>,
+    #[serde(rename = "ipv6", default)]
+    pub ipv6: Option<bool>,
+    #[serde(rename = "tcp_concurrent", default)]
+    pub tcp_concurrent: Option<bool>,
     #[serde(default)]
     pub mode: Option<String>,
     #[serde(rename = "latency_test_mode", default)]
@@ -1160,6 +1166,9 @@ pub async fn put_settings(
         service_port: body.service_port,
         tun_enabled: body.tun_enabled,
         log_level: body.log_level.clone(),
+        allow_lan: body.allow_lan,
+        ipv6: body.ipv6,
+        tcp_concurrent: body.tcp_concurrent,
         mode: body.mode.clone(),
         latency_test_mode: body.latency_test_mode.clone(),
         auto_test: body.auto_test.clone(),

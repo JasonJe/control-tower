@@ -349,6 +349,9 @@ impl ServiceState {
             service_port: Some(8080),
             tun_enabled: Some(false),
             log_level: Some("info".to_string()),
+            allow_lan: Some(true),
+            ipv6: Some(true),
+            tcp_concurrent: Some(false),
             mode: Some("rule".to_string()),
             latency_test_mode: Some("http".to_string()),
             auto_test: None,
@@ -394,6 +397,55 @@ impl ServiceState {
             .unwrap_or_else(|| "http".to_string())
     }
 
+    /// Hot-patch Mihomo via PATCH /configs for immediate effect.
+/// Fields not provided (None) are left unchanged.
+fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
+                     ipv6: Option<bool>, tcp_concurrent: Option<bool>) {
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Failed to create HTTP client: {}", e);
+            return;
+        }
+    };
+
+    let url = format!("{}/configs", self.get_api_url());
+    let mut body = serde_json::Map::new();
+
+    if let Some(v) = log_level {
+        body.insert("log-level".into(), v.into());
+    }
+    if let Some(v) = allow_lan {
+        body.insert("allow-lan".into(), serde_json::json!(v));
+    }
+    if let Some(v) = ipv6 {
+        body.insert("ipv6".into(), serde_json::json!(v));
+    }
+    if let Some(v) = tcp_concurrent {
+        body.insert("tcp-concurrent".into(), serde_json::json!(v));
+    }
+
+    if body.is_empty() {
+        return;
+    }
+
+    match client.patch(&url).json(&body).send() {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                tracing::info!("Hot-patched Mihomo configs");
+            } else {
+                tracing::warn!("PATCH /configs returned {}", resp.status());
+            }
+        }
+        Err(e) => {
+            tracing::warn!("PATCH /configs failed: {}", e);
+        }
+    }
+}
+
     /// Save settings to settings.yaml
     pub fn save_settings(&self, settings: &SettingsData) -> Result<(), String> {
         let exe_dir = std::env::current_exe()
@@ -403,6 +455,13 @@ impl ServiceState {
             .ok_or_else(|| "Failed to get exe parent".to_string())?;
 
         let settings_path = exe_dir.join("settings.yaml");
+
+        // Hot-patch runtime first for immediate effect
+        let log_level = settings.log_level.as_deref();
+        let allow_lan = settings.allow_lan;
+        let ipv6 = settings.ipv6;
+        let tcp_concurrent = settings.tcp_concurrent;
+        self.hot_patch_configs(log_level, allow_lan, ipv6, tcp_concurrent);
 
         let yaml_str = serde_yaml_ng::to_string(settings)
             .map_err(|e| format!("Failed to serialize settings: {}", e))?;
@@ -433,7 +492,10 @@ impl ServiceState {
             socks_port: Some(socks_port),
             service_port: Some(8080),
             tun_enabled,
-            log_level: Some("info".to_string()),
+            log_level: None,
+            allow_lan: None,
+            ipv6: None,
+            tcp_concurrent: None,
             mode: None,
             latency_test_mode: current_settings.latency_test_mode,
             auto_test: None,
@@ -489,7 +551,10 @@ impl ServiceState {
             socks_port,
             service_port: Some(8080),
             tun_enabled: Some(tun_enabled),
-            log_level: Some("info".to_string()),
+            log_level: None,
+            allow_lan: None,
+            ipv6: None,
+            tcp_concurrent: None,
             mode: current_settings.mode,
             latency_test_mode: current_settings.latency_test_mode,
             auto_test: current_settings.auto_test,
@@ -895,7 +960,7 @@ impl ServiceState {
 
         // Auto-restore saved mode if exists (skip_restart to avoid loop)
         if let Some(mode) = self.load_mode() {
-            if let Err(e) = self.set_mode(&mode, true) {
+            if let Err(e) = self.set_mode(&mode) {
                 tracing::warn!("Failed to restore mode {}: {}", mode, e);
             } else {
                 tracing::info!("Restored mode: {}", mode);
@@ -949,10 +1014,9 @@ impl ServiceState {
         settings.mode
     }
 
-    /// Set mode: update config.yaml + optionally restart Mihomo
-    /// If `skip_restart` is true, only hot-patches Mihomo without restarting
-    /// (used during startup restoration to avoid restart loops)
-    fn set_mode(&self, mode: &str, skip_restart: bool) -> Result<(), String> {
+    /// Set mode: update config.yaml + hot-patch Mihomo (no restart)
+    /// PATCH /configs is used for immediate effect, config.yaml for persistence.
+    fn set_mode(&self, mode: &str) -> Result<(), String> {
         // Step 1: Update config.yaml with new mode
         if let Err(e) = self.update_config_mode(mode) {
             return Err(format!("Failed to update config.yaml: {}", e));
@@ -966,17 +1030,14 @@ impl ServiceState {
         // Step 3: Hot-patch Mihomo for immediate effect
         let client = reqwest::blocking::Client::new();
         let url = format!("{}/configs", self.get_api_url());
-        let _ = client
+        let resp = client
             .patch(&url)
             .json(&serde_json::json!({ "mode": mode }))
             .timeout(std::time::Duration::from_secs(5))
-            .send();
-
-        // Step 4: Restart only if not skipped (skip during startup restoration)
-        if !skip_restart {
-            if let Err(e) = self.restart_mihomo() {
-                return Err(format!("Failed to restart Mihomo: {}", e));
-            }
+            .send()
+            .map_err(|e| format!("PATCH /configs failed: {}", e))?;
+        if !resp.status().is_success() {
+            tracing::warn!("PATCH /configs returned {}", resp.status());
         }
 
         Ok(())
@@ -1490,7 +1551,7 @@ pub fn handle_command_with_state(state: &ServiceState, cmd: IpcCommand) -> IpcRe
         }
         IpcCommand::SetMode { mode } => {
             tracing::info!("SetMode command: {}", mode);
-            match state.set_mode(&mode, false) {
+            match state.set_mode(&mode) {
                 Ok(()) => IpcResponse::success(),
                 Err(e) => IpcResponse::error(e),
             }

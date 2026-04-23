@@ -57,6 +57,12 @@ pub struct SettingsData {
     pub tun_enabled: Option<bool>,
     #[serde(rename = "log_level", default)]
     pub log_level: Option<String>,
+    #[serde(rename = "allow_lan", default)]
+    pub allow_lan: Option<bool>,
+    #[serde(rename = "ipv6", default)]
+    pub ipv6: Option<bool>,
+    #[serde(rename = "tcp_concurrent", default)]
+    pub tcp_concurrent: Option<bool>,
     #[serde(default)]
     pub mode: Option<String>,
     #[serde(rename = "latency_test_mode", default)]
@@ -75,6 +81,9 @@ impl Default for SettingsData {
             service_port: None,
             tun_enabled: None,
             log_level: None,
+            allow_lan: None,
+            ipv6: None,
+            tcp_concurrent: None,
             mode: None,
             latency_test_mode: None,
             auto_test: Some(AutoTestConfig::default()),

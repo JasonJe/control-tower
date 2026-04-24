@@ -20,6 +20,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use tracing_subscriber::fmt::time::ChronoLocal;
 use scheduler::{Schedule, ProfileCronJob};
 use chrono::Utc;
+use futures::stream::{self, StreamExt};
 
 /// IPC command types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1374,77 +1375,24 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
             return 0;
         }
 
-        let mut results: Vec<LatencyResult> = Vec::with_capacity(nodes_to_test.len());
+        // Step 8: Concurrent latency test — spawn async tasks with semaphore limit.
+        // 298 nodes × 8s = ~40min sequential; concurrent brings it to ~16s.
         let timeout_ms = 8000;
         let latency_mode = auto_test_cfg.latency_test_mode.as_deref().unwrap_or("http");
-
-        for node_name in &nodes_to_test {
-            // All modes use Mihomo's /proxies/{name}/delay API (no GLOBAL switching needed).
-            // - http mode: ?url=...&timeout=...  (HTTP test via proxy)
-            // - ping mode: ?timeout=...  (TCP ping, may not work for VLESS nodes)
-            let delay_url = if latency_mode == "http" {
-                format!(
-                    "{}/proxies/{}/delay?url={}&timeout={}",
-                    api_url,
-                    utf8_percent_encode(node_name, NON_ALPHANUMERIC),
-                    "http%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204",
-                    timeout_ms
-                )
-            } else {
-                format!(
-                    "{}/proxies/{}/delay?timeout={}",
-                    api_url,
-                    utf8_percent_encode(node_name, NON_ALPHANUMERIC),
-                    timeout_ms
-                )
-            };
-
-            match client.get(&delay_url).send() {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        match response.json::<serde_json::Value>() {
-                            Ok(data) => {
-                                let delay = data.get("delay").and_then(|v| v.as_i64()).unwrap_or(-1);
-                                if delay >= 0 {
-                                    results.push(LatencyResult {
-                                        name: (*node_name).to_string(),
-                                        latency: Some(delay),
-                                        error: None,
-                                    });
-                                } else {
-                                    results.push(LatencyResult {
-                                        name: (*node_name).to_string(),
-                                        latency: None,
-                                        error: Some("Negative delay".into()),
-                                    });
-                                }
-                            }
-                            Err(_) => {
-                                results.push(LatencyResult {
-                                    name: (*node_name).to_string(),
-                                    latency: None,
-                                    error: Some("Parse error".into()),
-                                });
-                            }
-                        }
-                    } else {
-                        let status_code = response.status().as_u16();
-                        results.push(LatencyResult {
-                            name: (*node_name).to_string(),
-                            latency: None,
-                            error: Some(format!("Mihomo error (HTTP {})", status_code)),
-                        });
-                    }
-                }
-                Err(_) => {
-                    results.push(LatencyResult {
-                        name: (*node_name).to_string(),
-                        latency: None,
-                        error: Some("Timeout".into()),
-                    });
-                }
+        let total_count = nodes_to_test.len();
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                tracing::error!("Failed to create tokio runtime for latency test: {}", e);
+                return 0;
             }
-        }
+        };
+        let results: Vec<LatencyResult> = rt.block_on(test_concurrent_latency(
+            api_url,
+            nodes_to_test,
+            timeout_ms,
+            latency_mode,
+        ));
 
         // Step 8: Find fastest (minimum non-null latency)
         let fastest_name = results.iter()
@@ -1465,10 +1413,136 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
         state.results = results;
 
         tracing::info!("Auto latency test completed, tested {} nodes, fastest: {}",
-            nodes_to_test.len(), fastest_name);
-        self.append_log(format!("Auto test: {} nodes tested, fastest={}", nodes_to_test.len(), fastest_name));
-        nodes_to_test.len()
+            total_count, fastest_name);
+        self.append_log(format!("Auto test: {} nodes tested, fastest={}", total_count, fastest_name));
+        total_count
     }
+}
+
+/// Test a single proxy node's latency asynchronously.
+async fn test_node_latency(
+    client: &reqwest::Client,
+    api_url: &str,
+    node_name: &str,
+    timeout_ms: u64,
+    latency_mode: &str,
+) -> LatencyResult {
+    let delay_url = if latency_mode == "http" {
+        format!(
+            "{}/proxies/{}/delay?url={}&timeout={}",
+            api_url,
+            utf8_percent_encode(node_name, NON_ALPHANUMERIC),
+            "http%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204",
+            timeout_ms
+        )
+    } else {
+        format!(
+            "{}/proxies/{}/delay?timeout={}",
+            api_url,
+            utf8_percent_encode(node_name, NON_ALPHANUMERIC),
+            timeout_ms
+        )
+    };
+
+    match client.get(&delay_url).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                match response.json::<serde_json::Value>().await {
+                    Ok(data) => {
+                        let delay = data.get("delay").and_then(|v| v.as_i64()).unwrap_or(-1);
+                        if delay >= 0 {
+                            LatencyResult {
+                                name: node_name.to_string(),
+                                latency: Some(delay),
+                                error: None,
+                            }
+                        } else {
+                            LatencyResult {
+                                name: node_name.to_string(),
+                                latency: None,
+                                error: Some("Negative delay".into()),
+                            }
+                        }
+                    }
+                    Err(_) => LatencyResult {
+                        name: node_name.to_string(),
+                        latency: None,
+                        error: Some("Parse error".into()),
+                    },
+                }
+            } else {
+                LatencyResult {
+                    name: node_name.to_string(),
+                    latency: None,
+                    error: Some(format!("Mihomo error (HTTP {})", response.status().as_u16())),
+                }
+            }
+        }
+        Err(_) => LatencyResult {
+            name: node_name.to_string(),
+            latency: None,
+            error: Some("Timeout".into()),
+        },
+    }
+}
+
+/// Run concurrent latency tests on all proxy nodes.
+/// Semaphore limits concurrency to MAX_CONCURRENT (avoids overwhelming Mihomo).
+async fn test_concurrent_latency(
+    api_url: String,
+    nodes_to_test: Vec<&str>,
+    timeout_ms: u64,
+    latency_mode: &str,
+) -> Vec<LatencyResult> {
+    const MAX_CONCURRENT: usize = 20;
+    let sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(timeout_ms as u64 + 3000))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Failed to create async HTTP client: {}", e);
+            return nodes_to_test
+                .iter()
+                .map(|name| LatencyResult {
+                    name: (*name).to_string(),
+                    latency: None,
+                    error: Some("Client init failed".into()),
+                })
+                .collect();
+        }
+    };
+
+    let api_url_for_task = api_url.clone();
+    let latency_mode_for_task = latency_mode.to_string();
+    let timeout_ms_for_task = timeout_ms;
+
+    let results: Vec<LatencyResult> = stream::iter(nodes_to_test)
+        .map(|node_name| {
+            let sem = sem.clone();
+            let client = client.clone();
+            let api_url = api_url_for_task.clone();
+            let latency_mode = latency_mode_for_task.clone();
+            let node_name = node_name.to_string();
+            async move {
+                let _permit = sem.acquire().await.expect("semaphore not closed");
+                test_node_latency(
+                    &client,
+                    &api_url,
+                    &node_name,
+                    timeout_ms_for_task,
+                    &latency_mode,
+                )
+                .await
+            }
+        })
+        .buffer_unordered(MAX_CONCURRENT)
+        .collect()
+        .await;
+
+    results
 }
 
 /// Handle an IPC command using shared service state

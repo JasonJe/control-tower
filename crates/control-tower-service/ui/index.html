@@ -966,6 +966,11 @@ function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Escape for JavaScript single-quote string context (e.g. onclick="func('${...}')")
+function escapeForJs(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 function truncate(s, len) { return (s && s.length > len) ? s.slice(0, len) + '...' : (s || '-'); }
 
 // Dashboard
@@ -1283,7 +1288,7 @@ function renderProxies() {
     const selBtnClass = p.selected ? 'btn xs secondary disabled' : 'btn xs primary';
     const selBtnTxt = p.selected ? '✓' : '◉';
     const fastestStyle = p.isFastest ? ' style="background:rgba(34,197,94,0.08)"' : '';
-    return `<tr class="cell-clickable"${fastestStyle} onclick="selectProxy('${escapeHtml(p.name)}')" title="Click to select ${name}">
+    return `<tr class="cell-clickable"${fastestStyle} onclick="selectProxy('${escapeForJs(p.name)}')" title="Click to select ${name}">
       <td class="text-muted" style="font-size:12px;text-align:center">${p.idx + 1}</td>
       <td><span class="mono">${name}</span></td>
       <td>${escapeHtml(p.type)}</td>
@@ -1291,7 +1296,7 @@ function renderProxies() {
       <td>${statusContent}</td>
       <td>
         <button class="btn xs secondary" onclick="event.stopPropagation();testProxy(${p.idx})" title="Test latency" style="width:28px;padding:0;text-align:center">⚡</button>
-        <button class="${selBtnClass}" onclick="event.stopPropagation();selectProxy('${escapeHtml(p.name)}')" title="${p.selected ? 'Selected' : 'Select ' + name}" style="width:28px;padding:0;text-align:center">${selBtnTxt}</button>
+        <button class="${selBtnClass}" onclick="event.stopPropagation();selectProxy('${escapeForJs(p.name)}')" title="${p.selected ? 'Selected' : 'Select ' + name}" style="width:28px;padding:0;text-align:center">${selBtnTxt}</button>
       </td>
     </tr>`;
   }).join('');
@@ -1471,8 +1476,8 @@ function renderProfiles() {
       <td><span class="mono truncate" style="max-width:280px;display:block" title="${escapeHtml(p.url || '')}">${escapeHtml(p.url || '-')}</span></td>
       <td>${st}</td>
       <td>${isActive && p.cron ? `<span class="mono text-sm">${escapeHtml(p.cron)} min</span>` : '<span class="text-muted text-sm">-</span>'}</td>
-      <td><span class="mono text-sm">${formatTimestamp(p.updated_at)}</span>${isActive ? `<button class="btn xs" onclick="refreshProfile('${p.uid.replace(/'/g, "\\'")}', false)" title="Refresh direct">↻D</button><button class="btn xs primary" onclick="refreshProfile('${p.uid.replace(/'/g, "\\'")}', true)" title="Refresh via proxy">↻P</button>` : ''}</td>
-      <td><div class="btn-group" style="gap:6px">${isActive ? `<button class="btn xs" onclick="openCronModal('${p.uid.replace(/'/g, "\\'")}','${escapeHtml(p.cron || '')}')" title="Edit update schedule">Edit</button>` : ''}${!isActive ? `<button class="btn xs success" id="btn-activate-${p.uid.replace(/'/g, "")}" onclick="activateProfile('${p.uid.replace(/'/g, "\\'")}', this)" title="Activate this profile">Activate</button>` : ''}<button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${p.uid}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
+      <td><span class="mono text-sm">${formatTimestamp(p.updated_at)}</span>${isActive ? `<button class="btn xs" onclick="refreshProfile('${escapeForJs(p.uid)}', false)" title="Refresh direct">↻D</button><button class="btn xs primary" onclick="refreshProfile('${escapeForJs(p.uid)}', true)" title="Refresh via proxy">↻P</button>` : ''}</td>
+      <td><div class="btn-group" style="gap:6px">${isActive ? `<button class="btn xs" onclick="openCronModal('${escapeForJs(p.uid)}','${escapeForJs(p.cron || '')}')" title="Edit update schedule">Edit</button>` : ''}${!isActive ? `<button class="btn xs success" id="btn-activate-${escapeHtml(p.uid)}" onclick="activateProfile('${escapeForJs(p.uid)}', this)" title="Activate this profile">Activate</button>` : ''}<button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${escapeForJs(p.uid)}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
     </tr>`;
   }).join('');
   pg.style.display = 'flex';
@@ -1661,7 +1666,7 @@ async function loadConnections() {
         <td class="mono" style="color:var(--success)">${formatBytes(c.upload || 0)}</td>
         <td class="mono" style="color:var(--warning)">${formatBytes(c.download || 0)}</td>
         <td class="mono text-muted">${formatDuration(dur)}</td>
-        <td><button class="btn xs danger" onclick="closeConnection('${escapeHtml(c.id)}')" title="Close this connection">Close</button></td>
+        <td><button class="btn xs danger" onclick="closeConnection('${escapeForJs(c.id)}')" title="Close this connection">Close</button></td>
       </tr>`;
     }).join('');
     pg.style.display = 'flex';

@@ -446,8 +446,8 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
     }
 }
 
-    /// Save settings to settings.yaml
-    pub fn save_settings(&self, settings: &SettingsData) -> Result<(), String> {
+    /// Save settings to settings.yaml (preserving existing values for None fields)
+    pub fn save_settings(&self, new_settings: &SettingsData) -> Result<(), String> {
         let exe_dir = std::env::current_exe()
             .map_err(|e| format!("Failed to get exe path: {}", e))?
             .parent()
@@ -457,13 +457,39 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
         let settings_path = exe_dir.join("settings.yaml");
 
         // Hot-patch runtime first for immediate effect
-        let log_level = settings.log_level.as_deref();
-        let allow_lan = settings.allow_lan;
-        let ipv6 = settings.ipv6;
-        let tcp_concurrent = settings.tcp_concurrent;
-        self.hot_patch_configs(log_level, allow_lan, ipv6, tcp_concurrent);
+        self.hot_patch_configs(
+            new_settings.log_level.as_deref(),
+            new_settings.allow_lan,
+            new_settings.ipv6,
+            new_settings.tcp_concurrent,
+        );
 
-        let yaml_str = serde_yaml_ng::to_string(settings)
+        // Merge with existing settings to preserve values for None fields
+        let mut merged = if settings_path.exists() {
+            match std::fs::read_to_string(&settings_path) {
+                Ok(c) => serde_yaml_ng::from_str::<SettingsData>(&c).unwrap_or_default(),
+                Err(_) => SettingsData::default(),
+            }
+        } else {
+            SettingsData::default()
+        };
+
+        // Apply non-None values from new_settings
+        if new_settings.api_host.is_some() { merged.api_host = new_settings.api_host.clone(); }
+        if new_settings.api_port.is_some() { merged.api_port = new_settings.api_port; }
+        if new_settings.http_port.is_some() { merged.http_port = new_settings.http_port; }
+        if new_settings.socks_port.is_some() { merged.socks_port = new_settings.socks_port; }
+        if new_settings.service_port.is_some() { merged.service_port = new_settings.service_port; }
+        if new_settings.tun_enabled.is_some() { merged.tun_enabled = new_settings.tun_enabled; }
+        if new_settings.log_level.is_some() { merged.log_level = new_settings.log_level.clone(); }
+        if new_settings.allow_lan.is_some() { merged.allow_lan = new_settings.allow_lan; }
+        if new_settings.ipv6.is_some() { merged.ipv6 = new_settings.ipv6; }
+        if new_settings.tcp_concurrent.is_some() { merged.tcp_concurrent = new_settings.tcp_concurrent; }
+        if new_settings.mode.is_some() { merged.mode = new_settings.mode.clone(); }
+        if new_settings.latency_test_mode.is_some() { merged.latency_test_mode = new_settings.latency_test_mode.clone(); }
+        if new_settings.auto_test.is_some() { merged.auto_test = new_settings.auto_test.clone(); }
+
+        let yaml_str = serde_yaml_ng::to_string(&merged)
             .map_err(|e| format!("Failed to serialize settings: {}", e))?;
 
         std::fs::write(&settings_path, yaml_str)

@@ -26,7 +26,7 @@ mod tests {
 pub struct AutoTestConfig {
     pub enabled: bool,
     pub interval_minutes: u32,
-    #[serde(rename = "latency_test_mode", default)]
+    #[serde(rename = "latency_test_mode", default, skip_serializing_if = "Option::is_none")]
     pub latency_test_mode: Option<String>,
 }
 
@@ -43,31 +43,31 @@ impl Default for AutoTestConfig {
 /// Settings data structure matching settings.yaml
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsData {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_host: Option<String>,
-    #[serde(rename = "api_port", default)]
+    #[serde(rename = "api_port", default, skip_serializing_if = "Option::is_none")]
     pub api_port: Option<u16>,
-    #[serde(rename = "http_port", default)]
+    #[serde(rename = "http_port", default, skip_serializing_if = "Option::is_none")]
     pub http_port: Option<u16>,
-    #[serde(rename = "socks_port", default)]
+    #[serde(rename = "socks_port", default, skip_serializing_if = "Option::is_none")]
     pub socks_port: Option<u16>,
-    #[serde(rename = "service_port", default)]
+    #[serde(rename = "service_port", default, skip_serializing_if = "Option::is_none")]
     pub service_port: Option<u16>,
-    #[serde(rename = "tun_enabled", default)]
+    #[serde(rename = "tun_enabled", default, skip_serializing_if = "Option::is_none")]
     pub tun_enabled: Option<bool>,
-    #[serde(rename = "log_level", default)]
+    #[serde(rename = "log_level", default, skip_serializing_if = "Option::is_none")]
     pub log_level: Option<String>,
-    #[serde(rename = "allow_lan", default)]
+    #[serde(rename = "allow_lan", default, skip_serializing_if = "Option::is_none")]
     pub allow_lan: Option<bool>,
-    #[serde(rename = "ipv6", default)]
+    #[serde(rename = "ipv6", default, skip_serializing_if = "Option::is_none")]
     pub ipv6: Option<bool>,
-    #[serde(rename = "tcp_concurrent", default)]
+    #[serde(rename = "tcp_concurrent", default, skip_serializing_if = "Option::is_none")]
     pub tcp_concurrent: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
-    #[serde(rename = "latency_test_mode", default)]
+    #[serde(rename = "latency_test_mode", default, skip_serializing_if = "Option::is_none")]
     pub latency_test_mode: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_test: Option<AutoTestConfig>,
 }
 

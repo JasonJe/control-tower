@@ -2,6 +2,15 @@
 
 use std::path::PathBuf;
 
+/// Return the directory containing the running executable.
+/// Falls back to "." if the exe path cannot be determined.
+pub fn exe_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 /// Unified paths model for Control Tower.
 ///
 /// All entry points (CLI, Web, service) should derive their paths from this

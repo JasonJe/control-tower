@@ -12,6 +12,6 @@ pub mod active_config;
 pub use state::{ServiceState, ServiceStatus};
 pub use mihomo::MihomoManager;
 #[allow(deprecated)]
-pub use config::{ServiceConfig, ControlTowerPaths};
+pub use config::{ServiceConfig, ControlTowerPaths, exe_dir};
 pub use installer::MihomoInstaller;
 pub use active_config::ActiveConfigStore;

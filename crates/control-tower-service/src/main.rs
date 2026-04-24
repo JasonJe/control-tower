@@ -266,10 +266,7 @@ impl ServiceState {
 
     /// Load api_host and api_port from settings.yaml, also sync AutoTestState
     pub fn load_settings(&self) {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
+        let exe_dir = control_tower_service_core::exe_dir();
 
         let settings_path = exe_dir.join("settings.yaml");
         if !settings_path.exists() {
@@ -330,10 +327,7 @@ impl ServiceState {
 
     /// Ensure settings.yaml exists with default values, create if missing
     pub fn ensure_settings_file() {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
+        let exe_dir = control_tower_service_core::exe_dir();
 
         let settings_path = exe_dir.join("settings.yaml");
 
@@ -373,10 +367,7 @@ impl ServiceState {
 
     /// Get all settings from settings.yaml
     pub fn get_settings(&self) -> SettingsData {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
+        let exe_dir = control_tower_service_core::exe_dir();
 
         let settings_path = exe_dir.join("settings.yaml");
         if !settings_path.exists() {
@@ -449,11 +440,7 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
 
     /// Save settings to settings.yaml (preserving existing values for None fields)
     pub fn save_settings(&self, new_settings: &SettingsData) -> Result<(), String> {
-        let exe_dir = std::env::current_exe()
-            .map_err(|e| format!("Failed to get exe path: {}", e))?
-            .parent()
-            .map(|p| p.to_path_buf())
-            .ok_or_else(|| "Failed to get exe parent".to_string())?;
+        let exe_dir = control_tower_service_core::exe_dir();
 
         let settings_path = exe_dir.join("settings.yaml");
 
@@ -544,10 +531,7 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
 
     /// Read current tun_enabled from settings.yaml
     fn load_tun_enabled(&self) -> Option<bool> {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
+        let exe_dir = control_tower_service_core::exe_dir();
         let settings_path = exe_dir.join("settings.yaml");
         if let Ok(content) = std::fs::read_to_string(&settings_path) {
             #[derive(serde::Deserialize)]
@@ -601,10 +585,7 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
     }
 
     fn load_http_port(&self) -> Option<u16> {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
+        let exe_dir = control_tower_service_core::exe_dir();
         let settings_path = exe_dir.join("settings.yaml");
         if let Ok(content) = std::fs::read_to_string(&settings_path) {
             #[derive(serde::Deserialize)]
@@ -620,10 +601,7 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
     }
 
     fn load_socks_port(&self) -> Option<u16> {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
+        let exe_dir = control_tower_service_core::exe_dir();
         let settings_path = exe_dir.join("settings.yaml");
         if let Ok(content) = std::fs::read_to_string(&settings_path) {
             #[derive(serde::Deserialize)]
@@ -640,11 +618,7 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
 
     /// Update tun section in config.yaml
     fn update_config_tun(&self, tun_enabled: bool) -> Result<(), String> {
-        let exe_dir = std::env::current_exe()
-            .map_err(|e| format!("Failed to get exe path: {}", e))?
-            .parent()
-            .map(|p| p.to_path_buf())
-            .ok_or_else(|| "Failed to get exe parent".to_string())?;
+        let exe_dir = control_tower_service_core::exe_dir();
 
         let config_path = exe_dir.join("config.yaml");
         if !config_path.exists() {
@@ -752,10 +726,7 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
         let mut jobs = self.cron_jobs.write();
 
         // Find profiles.yaml in working directory
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
+        let exe_dir = control_tower_service_core::exe_dir();
 
         let profiles_path = exe_dir.join("profiles.yaml");
 
@@ -825,10 +796,7 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
                 tracing::info!("Triggering scheduled profile update: {} ({})", profile_id, schedule_desc);
 
                 // Spawn a task to update the profile (non-blocking)
-                let exe_dir = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-                    .unwrap_or_else(|| PathBuf::from("."));
+                let exe_dir = control_tower_service_core::exe_dir();
 
                 let profiles_dir = exe_dir.join("profiles");
                 // Use job.file if set (e.g. "302db1eb.yaml"), otherwise fall back to profile_id.yaml
@@ -999,9 +967,7 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
 
     /// Load selected proxy from settings.yaml
     fn load_selected_proxy(&self) -> Option<String> {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))?;
+        let exe_dir = control_tower_service_core::exe_dir();
 
         let settings_path = exe_dir.join("settings.yaml");
         if !settings_path.exists() {
@@ -1021,9 +987,7 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
 
     /// Load mode from settings.yaml
     fn load_mode(&self) -> Option<String> {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))?;
+        let exe_dir = control_tower_service_core::exe_dir();
 
         let settings_path = exe_dir.join("settings.yaml");
         if !settings_path.exists() {
@@ -1072,11 +1036,7 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
 
     /// Save mode to settings.yaml (preserves all other settings)
     fn save_mode(&self, mode: &str) -> Result<(), String> {
-        let exe_dir = std::env::current_exe()
-            .map_err(|e| format!("Failed to get exe path: {}", e))?
-            .parent()
-            .map(|p| p.to_path_buf())
-            .ok_or_else(|| "Failed to get exe parent".to_string())?;
+        let exe_dir = control_tower_service_core::exe_dir();
 
         let settings_path = exe_dir.join("settings.yaml");
 
@@ -1099,11 +1059,7 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
 
     /// Update mode in config.yaml directly
     fn update_config_mode(&self, mode: &str) -> Result<(), String> {
-        let exe_dir = std::env::current_exe()
-            .map_err(|e| format!("Failed to get exe path: {}", e))?
-            .parent()
-            .map(|p| p.to_path_buf())
-            .ok_or_else(|| "Failed to get exe parent".to_string())?;
+        let exe_dir = control_tower_service_core::exe_dir();
 
         let config_path = exe_dir.join("config.yaml");
         if !config_path.exists() {
@@ -1132,11 +1088,7 @@ fn hot_patch_configs(&self, log_level: Option<&str>, allow_lan: Option<bool>,
 
     /// Update port settings in config.yaml (mixed-port, socks-port, redir-port, tproxy-port)
     fn update_config_ports(&self, http_port: u16, socks_port: u16) -> Result<(), String> {
-        let exe_dir = std::env::current_exe()
-            .map_err(|e| format!("Failed to get exe path: {}", e))?
-            .parent()
-            .map(|p| p.to_path_buf())
-            .ok_or_else(|| "Failed to get exe parent".to_string())?;
+        let exe_dir = control_tower_service_core::exe_dir();
 
         let config_path = exe_dir.join("config.yaml");
         if !config_path.exists() {
@@ -1796,10 +1748,9 @@ pub mod ipc_server {
                     // Write response using handle_command_with_state
                     let resp = handle_command_with_state(&state, cmd.clone());
                     let resp_bytes = serialize_response(&resp)?;
-                    resp_bytes.iter().for_each(|&b| {
-                        let _ = stream.write(&[b]);
-                    });
-                    let _ = stream.write(b"\n");
+                    stream.write_all(&resp_bytes).map_err(|e| e.to_string())?;
+                    stream.write_all(b"\n").map_err(|e| e.to_string())?;
+                    stream.flush().map_err(|e| e.to_string())?;
 
                     Ok(Some(cmd))
                 }
@@ -2917,10 +2868,7 @@ fn update_profile_subscription(url: &str, profile_file: &PathBuf) -> anyhow::Res
     std::fs::write(profile_file, &new_content)?;
 
     // Update the profiles.yaml updated_at timestamp
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
+    let exe_dir = control_tower_service_core::exe_dir();
 
     let profiles_path = exe_dir.join("profiles.yaml");
 
@@ -2952,7 +2900,9 @@ fn update_profile_subscription(url: &str, profile_file: &PathBuf) -> anyhow::Res
                     }
                 }
                 if let Ok(new_content) = serde_yaml_ng::to_string(&yaml) {
-                    let _ = std::fs::write(&profiles_path, new_content);
+                    if let Err(e) = std::fs::write(&profiles_path, new_content) {
+                        tracing::error!("Failed to update profiles.yaml updated_at: {}", e);
+                    }
                 }
             }
         }
@@ -2963,14 +2913,7 @@ fn update_profile_subscription(url: &str, profile_file: &PathBuf) -> anyhow::Res
 
 /// Get the service HTTP port from settings.yaml, defaulting to 8080
 fn get_service_port() -> u16 {
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-
-    let settings_path = exe_dir
-        .map(|p| p.join("settings.yaml"))
-        .filter(|p| p.exists())
-        .unwrap_or_else(|| std::path::PathBuf::from("settings.yaml"));
+    let settings_path = control_tower_service_core::exe_dir().join("settings.yaml");
 
     if settings_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&settings_path) {
@@ -2992,10 +2935,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     // Determine working directory from executable location
-    let work_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let work_dir = control_tower_service_core::exe_dir();
 
     // Build shared paths model
     let paths = control_tower_service_core::ControlTowerPaths::from_settings(
@@ -3105,10 +3045,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.load_settings();
 
     // Auto-start Mihomo if config.yaml exists and no --no-auto-start flag
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let exe_dir = control_tower_service_core::exe_dir();
     let config_path = exe_dir.join("config.yaml");
     if config_path.exists() {
         tracing::info!("Auto-starting Mihomo with config: {}", config_path.display());

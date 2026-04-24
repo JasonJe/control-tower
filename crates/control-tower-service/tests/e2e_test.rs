@@ -43,7 +43,7 @@ impl IpcClient {
 fn start_service(socket_path: &PathBuf) -> Child {
     let _ = std::fs::remove_file(socket_path); // Clean up old socket
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_ctsvc"))
+    let child = Command::new(env!("CARGO_BIN_EXE_ctsvc"))
         .arg("--foreground")
         .arg("--socket")
         .arg(socket_path.to_str().unwrap())

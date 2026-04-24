@@ -13,6 +13,7 @@ use tokio::time::{timeout, Duration};
 use tokio::task;
 
 use crate::ServiceState;
+use control_tower_service_core::ProfilesYaml;
 
 /// Standard API response wrapper
 #[derive(Debug, Serialize)]
@@ -160,25 +161,7 @@ fn get_control_tower_paths() -> control_tower_service_core::ControlTowerPaths {
 
 /// Parse profiles.yaml into a JSON-friendly structure
 fn parse_profiles_yaml_full(content: &str) -> serde_json::Value {
-    #[derive(serde::Deserialize)]
-    #[allow(dead_code)]
-    struct ProfilesYaml {
-        current: Option<String>,
-        items: Vec<ProfileItem>,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct ProfileItem {
-        uid: String,
-        name: Option<String>,
-        #[serde(rename = "file")]
-        file: Option<String>,
-        url: Option<String>,
-        cron: Option<String>,
-        #[serde(rename = "updated_at")]
-        updated_at: Option<i64>,
-    }
-
+    use control_tower_service_core::ProfilesYaml;
     match serde_yaml_ng::from_str::<ProfilesYaml>(content) {
         Ok(yaml) => {
             let items: Vec<serde_json::Value> = yaml
@@ -512,34 +495,16 @@ pub async fn add_profile(
         String::new()
     };
 
-    #[derive(serde::Deserialize, serde::Serialize)]
-    #[allow(dead_code)]
-    struct ProfilesYaml {
-        #[serde(default)]
-        current: Option<String>,
-        items: Vec<ProfileItem>,
-    }
+    use control_tower_service_core::{ProfileItem, ProfilesYaml};
 
-    #[derive(serde::Deserialize, serde::Serialize)]
-    struct ProfileItem {
-        uid: String,
-        name: String,
-        #[serde(rename = "file")]
-        file: Option<String>,
-        url: Option<String>,
-        cron: Option<String>,
-        #[serde(rename = "updated_at")]
-        updated_at: Option<i64>,
-    }
-
-    let mut yaml: ProfilesYaml = serde_yaml_ng::from_str(&profiles_content).unwrap_or(ProfilesYaml {
+    let mut yaml = serde_yaml_ng::from_str::<ProfilesYaml>(&profiles_content).unwrap_or(ProfilesYaml {
         current: None,
         items: Vec::new(),
     });
 
     let new_item = ProfileItem {
         uid: uid.clone(),
-        name,
+        name: Some(name),
         file: Some(format!("{}.yaml", &uid[..8])),
         url: Some(body.url.clone()),
         cron: None,
@@ -580,24 +545,6 @@ pub async fn activate_profile(
                 .json(ApiResponse::<()>::error(format!("Failed to read profiles.yaml: {}", e)))
         }
     };
-
-    #[derive(serde::Deserialize)]
-    #[allow(dead_code)]
-    struct ProfilesYaml {
-        #[serde(default)]
-        current: Option<String>,
-        items: Vec<ProfileItem>,
-    }
-
-    #[derive(serde::Deserialize)]
-    #[allow(dead_code)]
-    struct ProfileItem {
-        uid: String,
-        name: Option<String>,
-        #[serde(rename = "file")]
-        file: Option<String>,
-        url: Option<String>,
-    }
 
     let yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
         Ok(y) => y,
@@ -668,26 +615,7 @@ pub async fn activate_profile(
     }
 
     // Re-parse with Serialize for writing back
-    #[derive(serde::Deserialize, serde::Serialize)]
-    #[allow(dead_code)]
-    struct ProfilesYamlWrite {
-        #[serde(default)]
-        current: Option<String>,
-        items: Vec<ProfileItemWrite>,
-    }
-
-    #[derive(serde::Deserialize, serde::Serialize)]
-    struct ProfileItemWrite {
-        uid: String,
-        name: Option<String>,
-        #[serde(rename = "file")]
-        file: Option<String>,
-        url: Option<String>,
-        cron: Option<String>,
-        #[serde(rename = "updated_at")]
-        updated_at: Option<i64>,
-    }
-
+    use control_tower_service_core::ProfilesYaml as ProfilesYamlWrite;
     let mut yaml_write: ProfilesYamlWrite = match serde_yaml_ng::from_str(&content) {
         Ok(y) => y,
         Err(e) => {
@@ -747,31 +675,11 @@ pub async fn update_profile(
         }
     };
 
-    #[derive(serde::Deserialize, serde::Serialize)]
-    #[allow(dead_code)]
-    struct ProfilesYaml {
-        #[serde(default)]
-        current: Option<String>,
-        items: Vec<ProfileItem>,
-    }
-
-    #[derive(serde::Deserialize, serde::Serialize)]
-    struct ProfileItem {
-        uid: String,
-        name: Option<String>,
-        #[serde(rename = "file")]
-        file: Option<String>,
-        url: Option<String>,
-        cron: Option<String>,
-        #[serde(rename = "updated_at")]
-        updated_at: Option<i64>,
-    }
-
-    let mut yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
+    let mut yaml = match serde_yaml_ng::from_str::<ProfilesYaml>(&content) {
         Ok(y) => y,
         Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(ApiResponse::<()>::error(format!("Failed to parse profiles.yaml: {}", e)))
+            return HttpResponse::BadRequest()
+                .json(ApiResponse::<()>::error(format!("Invalid profiles.yaml: {}", e)))
         }
     };
 
@@ -840,19 +748,7 @@ pub async fn refresh_profile(
         }
     };
 
-    #[derive(serde::Deserialize)]
-    struct ProfileItemRead {
-        uid: String,
-        url: Option<String>,
-        #[serde(rename = "file")]
-        file: Option<String>,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct ProfilesYamlRead {
-        items: Vec<ProfileItemRead>,
-    }
-
+    use control_tower_service_core::ProfilesYaml as ProfilesYamlRead;
     let yaml: ProfilesYamlRead = match serde_yaml_ng::from_str(&content) {
         Ok(y) => y,
         Err(e) => {
@@ -938,26 +834,8 @@ pub async fn refresh_profile(
         std::fs::write(&profile_file_clone, &new_content)?;
 
         // Update updated_at in profiles.yaml
-        #[derive(serde::Deserialize, serde::Serialize)]
-        struct ProfilesYaml {
-            current: Option<String>,
-            items: Vec<ProfileItem2>,
-        }
-
-        #[derive(serde::Deserialize, serde::Serialize)]
-        struct ProfileItem2 {
-            uid: String,
-            name: Option<String>,
-            #[serde(rename = "file")]
-            file: Option<String>,
-            url: Option<String>,
-            cron: Option<String>,
-            #[serde(rename = "updated_at")]
-            updated_at: Option<i64>,
-        }
-
         let content = std::fs::read_to_string(&profiles_path_clone)?;
-        let mut yaml: ProfilesYaml = serde_yaml_ng::from_str(&content)?;
+        let mut yaml = serde_yaml_ng::from_str::<ProfilesYaml>(&content)?;
 
         let now = chrono::Utc::now().timestamp();
         for item in &mut yaml.items {
@@ -1010,31 +888,11 @@ pub async fn delete_profile(
         }
     };
 
-    #[derive(serde::Deserialize, serde::Serialize)]
-    #[allow(dead_code)]
-    struct ProfilesYaml {
-        #[serde(default)]
-        current: Option<String>,
-        items: Vec<ProfileItem>,
-    }
-
-    #[derive(serde::Deserialize, serde::Serialize)]
-    struct ProfileItem {
-        uid: String,
-        name: Option<String>,
-        #[serde(rename = "file")]
-        file: Option<String>,
-        url: Option<String>,
-        cron: Option<String>,
-        #[serde(rename = "updated_at")]
-        updated_at: Option<i64>,
-    }
-
-    let mut yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
+    let mut yaml = match serde_yaml_ng::from_str::<ProfilesYaml>(&content) {
         Ok(y) => y,
         Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(ApiResponse::<()>::error(format!("Failed to parse profiles.yaml: {}", e)))
+            return HttpResponse::BadRequest()
+                .json(ApiResponse::<()>::error(format!("Invalid profiles.yaml: {}", e)))
         }
     };
 

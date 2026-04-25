@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use crate::ServiceState;
+
 /// Simplified cron schedule (minutes only)
 #[derive(Debug, Clone)]
 pub struct Schedule {
@@ -143,4 +145,140 @@ mod tests {
         let s = Schedule { minutes: 1 };
         assert_eq!(s.description(), "Every 1 minute");
     }
+}
+
+impl ServiceState {
+    /// Load cron jobs from profiles.yaml
+    pub fn load_cron_jobs(&self) {
+        let mut jobs = self.cron_jobs.write();
+        let exe_dir = control_tower_service_core::exe_dir();
+        let profiles_path = exe_dir.join("profiles.yaml");
+
+        if !profiles_path.exists() {
+            tracing::info!("No profiles.yaml found, no cron jobs to load");
+            return;
+        }
+
+        let content = match std::fs::read_to_string(&profiles_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Failed to read profiles.yaml: {}", e);
+                return;
+            }
+        };
+
+        #[derive(serde::Deserialize)]
+        struct ProfilesYaml {
+            items: Vec<ProfileItem>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct ProfileItem {
+            uid: String,
+            file: Option<String>,
+            url: Option<String>,
+            cron: Option<String>,
+        }
+
+        let yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
+            Ok(y) => y,
+            Err(e) => {
+                tracing::warn!("Failed to parse profiles.yaml: {}", e);
+                return;
+            }
+        };
+
+        jobs.clear();
+
+        for item in yaml.items {
+            if let Some(cron_str) = item.cron {
+                if let Some(schedule) = Schedule::parse(&cron_str) {
+                    let job = ProfileCronJob::new(item.uid.clone(), item.file.clone(), item.url.clone(), schedule.clone());
+                    tracing::info!("Loaded cron job: {} - {}", item.uid, schedule.description());
+                    jobs.push(job);
+                } else {
+                    tracing::warn!("Invalid cron expression for profile {}: {}", item.uid, cron_str);
+                }
+            }
+        }
+
+        tracing::info!("Loaded {} cron jobs", jobs.len());
+    }
+
+    /// Check and run due cron jobs
+    pub fn check_and_run_crons(&self) {
+        let mut jobs = self.cron_jobs.write();
+
+        for job in jobs.iter_mut() {
+            if job.check_and_update() {
+                let profile_id = job.profile_id.clone();
+                let url = job.url.clone();
+                let schedule_desc = job.schedule.description();
+
+                tracing::info!("Triggering scheduled profile update: {} ({})", profile_id, schedule_desc);
+
+                let exe_dir = control_tower_service_core::exe_dir();
+                let profiles_dir = exe_dir.join("profiles");
+                let profile_file = match job.file.as_ref() {
+                    Some(f) => profiles_dir.join(f),
+                    None => profiles_dir.join(format!("{}.yaml", profile_id)),
+                };
+
+                if let Some(url) = url {
+                    if profile_file.exists() {
+                        std::thread::spawn(move || {
+                            if let Err(e) = update_profile_subscription(&url, &profile_file) {
+                                tracing::error!("Failed to update profile {}: {}", profile_id, e);
+                            } else {
+                                tracing::info!("Profile {} updated successfully", profile_id);
+                            }
+                        });
+                    } else {
+                        tracing::warn!("Profile file not found: {:?}", profile_file);
+                    }
+                } else {
+                    tracing::warn!("No URL configured for profile: {}", profile_id);
+                }
+            }
+        }
+    }
+}
+
+/// Update a profile subscription (download new content and write to file).
+/// Used by cron job auto-update.
+pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::Path) -> Result<(), String> {
+    use reqwest::blocking::Client as BlockingClient;
+    use std::time::Duration as StdDuration;
+
+    let response = BlockingClient::new()
+        .get(url)
+        .timeout(StdDuration::from_secs(60))
+        .send()
+        .map_err(|e| format!("Failed to fetch subscription: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Subscription fetch failed: {}", response.status()));
+    }
+
+    let new_content = response.text()
+        .map_err(|e| format!("Failed to read subscription content: {}", e))?;
+
+    // Basic validation: reject HTML responses (common for errors / CAPTCHAs)
+    let trimmed = new_content.trim_start();
+    if trimmed.starts_with('<') || trimmed.starts_with("<!") {
+        return Err("Subscription returned HTML — likely a block page".to_string());
+    }
+
+    // Basic YAML structure check
+    if !new_content.contains("proxies:")
+       && !new_content.contains("proxy-providers:")
+       && !new_content.contains("mixed-port:")
+    {
+        return Err("Subscription content does not look like a Clash config".to_string());
+    }
+
+    std::fs::write(profile_file, &new_content)
+        .map_err(|e| format!("Failed to write profile file: {}", e))?;
+
+    Ok(())
 }

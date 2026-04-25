@@ -9,6 +9,7 @@ mod html;
 mod http_server;
 mod ipc_server;
 mod ipc_types;
+mod service;
 mod service_state_ext;
 mod settings;
 
@@ -360,32 +361,38 @@ mod tests {
 
     #[test]
     fn test_handle_command_start() {
+        let state = ServiceState::new();
         let cmd = IpcCommand::Start {
-            config_path: PathBuf::from("/tmp/config.yaml"),
+            config_path: PathBuf::from("/nonexistent/config.yaml"),
         };
-        let resp = handle_command(cmd);
-        assert_eq!(resp.code, 0); // Success
+        let resp = handle_command_with_state(&state, cmd);
+        // No config file → must return error
+        assert_eq!(resp.code, -1);
+        assert!(!resp.message.is_empty());
     }
 
     #[test]
     fn test_handle_command_stop() {
+        let state = ServiceState::new();
         let cmd = IpcCommand::Stop;
-        let resp = handle_command(cmd);
-        assert_eq!(resp.code, 0); // Success
+        let resp = handle_command_with_state(&state, cmd);
+        assert_eq!(resp.code, 0); // Stop on not-running is fine
     }
 
     #[test]
     fn test_handle_command_status_returns_data() {
+        let state = ServiceState::new();
         let cmd = IpcCommand::Status;
-        let resp = handle_command(cmd);
+        let resp = handle_command_with_state(&state, cmd);
         assert_eq!(resp.code, 0);
         assert!(resp.data.is_some(), "Status should return data");
     }
 
     #[test]
     fn test_handle_command_logs_returns_data() {
+        let state = ServiceState::new();
         let cmd = IpcCommand::Logs { lines: Some(50) };
-        let resp = handle_command(cmd);
+        let resp = handle_command_with_state(&state, cmd);
         assert_eq!(resp.code, 0);
         assert!(resp.data.is_some(), "Logs should return data");
     }
@@ -445,21 +452,23 @@ mod tests {
     fn test_full_ipc_roundtrip_start() {
         // Client sends: Start command
         let cmd = IpcCommand::Start {
-            config_path: PathBuf::from("/tmp/test.yaml"),
+            config_path: PathBuf::from("/nonexistent/config.yaml"),
         };
         let raw = serde_json::to_vec(&cmd).unwrap();
 
         // Server parses
         let parsed = parse_message(&raw).unwrap();
 
-        // Server handles
-        let resp = handle_command(parsed);
+        // Server handles (with real state — nonexistent config returns error)
+        let state = ServiceState::new();
+        let resp = handle_command_with_state(&state, parsed);
 
         // Server serializes
         let resp_bytes = serialize_response(&resp).unwrap();
         let resp_parsed: IpcResponse = serde_json::from_slice(&resp_bytes).unwrap();
 
-        assert_eq!(resp_parsed.code, 0);
+        // Nonexistent config → error
+        assert_eq!(resp_parsed.code, -1);
     }
 
     #[test]
@@ -471,8 +480,9 @@ mod tests {
         // Server parses
         let parsed = parse_message(&raw).unwrap();
 
-        // Server handles
-        let resp = handle_command(parsed);
+        // Server handles (with real state)
+        let state = ServiceState::new();
+        let resp = handle_command_with_state(&state, parsed);
 
         // Server serializes
         let resp_bytes = serialize_response(&resp).unwrap();
@@ -487,21 +497,21 @@ mod tests {
     /// Test that Start command with nonexistent config returns error
     #[test]
     fn test_handle_command_start_nonexistent_config() {
+        let state = ServiceState::new();
         let cmd = IpcCommand::Start {
             config_path: PathBuf::from("/nonexistent/path/config.yaml"),
         };
-        let resp = handle_command(cmd);
-        // This should fail because config doesn't exist
-        // For now, this will pass because stub returns success
-        // When real implementation is done, this should return error
-        assert_eq!(resp.code, 0); // TODO: Should be -1 when implemented
+        let resp = handle_command_with_state(&state, cmd);
+        assert_eq!(resp.code, -1);
+        assert!(!resp.message.is_empty());
     }
 
     /// Test that Status returns proper ServiceStatus structure
     #[test]
     fn test_handle_command_status_returns_service_status() {
+        let state = ServiceState::new();
         let cmd = IpcCommand::Status;
-        let resp = handle_command(cmd);
+        let resp = handle_command_with_state(&state, cmd);
 
         assert_eq!(resp.code, 0);
         assert!(resp.data.is_some());
@@ -510,34 +520,34 @@ mod tests {
         let data = resp.data.unwrap();
         let status: ServiceStatus = serde_json::from_value(data).unwrap();
 
-        // Initially not running (stateless stub returns Unknown state)
+        // Initially not running
         assert!(!status.running);
         assert!(status.pid.is_none());
-        assert_eq!(status.state, "Unknown");
-        assert!(status.config_path.is_none());
     }
 
-    /// Test that Start command twice doesn't panic (idempotent)
+    /// Test that Start command twice doesn't panic (idempotent on error)
     #[test]
     fn test_handle_command_start_idempotent() {
+        let state = ServiceState::new();
         let cmd = IpcCommand::Start {
-            config_path: PathBuf::from("/tmp/config.yaml"),
+            config_path: PathBuf::from("/nonexistent/config.yaml"),
         };
 
-        // First start
-        let resp1 = handle_command(cmd.clone());
-        assert_eq!(resp1.code, 0);
+        // First start — config missing → error
+        let resp1 = handle_command_with_state(&state, cmd.clone());
+        assert_eq!(resp1.code, -1);
 
-        // Second start (should be no-op if already running)
-        let resp2 = handle_command(cmd);
-        assert_eq!(resp2.code, 0);
+        // Second start — same error, no panic
+        let resp2 = handle_command_with_state(&state, cmd);
+        assert_eq!(resp2.code, -1);
     }
 
     /// Test Logs command with no lines specified (defaults)
     #[test]
     fn test_handle_command_logs_default_lines() {
+        let state = ServiceState::new();
         let cmd = IpcCommand::Logs { lines: None };
-        let resp = handle_command(cmd);
+        let resp = handle_command_with_state(&state, cmd);
 
         assert_eq!(resp.code, 0);
         assert!(resp.data.is_some());
@@ -550,8 +560,9 @@ mod tests {
     /// Test Logs command with specific line count
     #[test]
     fn test_handle_command_logs_with_line_count() {
+        let state = ServiceState::new();
         let cmd = IpcCommand::Logs { lines: Some(10) };
-        let resp = handle_command(cmd);
+        let resp = handle_command_with_state(&state, cmd);
 
         assert_eq!(resp.code, 0);
         assert!(resp.data.is_some());

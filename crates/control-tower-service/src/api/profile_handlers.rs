@@ -350,6 +350,15 @@ pub async fn update_profile(
     let is_active = yaml.current.as_ref() == Some(&uid);
     let old_url = item.url.clone();
 
+    // Normalize file field to uid[..8].yaml so all code paths find the same file.
+    // Historical bug: item.file may contain full uid instead of uid[..8].
+    if uid.len() > 8 {
+        let correct_file = format!("{}.yaml", &uid[..8]);
+        if item.file.as_ref() != Some(&correct_file) {
+            item.file = Some(correct_file);
+        }
+    }
+
     // Apply cron: cron_provided means the key was present (even if null/empty → clear)
     if cron_provided {
         let cron_trimmed = cron.as_ref().map(|s| s.trim()).unwrap_or("");

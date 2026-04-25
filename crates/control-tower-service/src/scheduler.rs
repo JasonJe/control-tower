@@ -219,23 +219,31 @@ impl ServiceState {
 
                 let exe_dir = control_tower_service_core::exe_dir();
                 let profiles_dir = exe_dir.join("profiles");
-                let profile_file = match job.file.as_ref() {
-                    Some(f) => profiles_dir.join(f),
-                    None => profiles_dir.join(format!("{}.yaml", profile_id)),
+                // Resolve profile file path: try job.file first, then fallback to uid[..8].yaml
+                // (profiles created before a past update may have file=full_uid.yaml instead of uid[..8].yaml)
+                let profile_file = if let Some(f) = job.file.as_ref() {
+                    let p = profiles_dir.join(f);
+                    if p.exists() {
+                        p
+                    } else if profile_id.len() > 8 {
+                        profiles_dir.join(format!("{}.yaml", &profile_id[..8]))
+                    } else {
+                        p
+                    }
+                } else if profile_id.len() > 8 {
+                    profiles_dir.join(format!("{}.yaml", &profile_id[..8]))
+                } else {
+                    profiles_dir.join(format!("{}.yaml", profile_id))
                 };
 
                 if let Some(url) = url {
-                    if profile_file.exists() {
-                        std::thread::spawn(move || {
-                            if let Err(e) = update_profile_subscription(&url, &profile_file) {
-                                tracing::error!("Failed to update profile {}: {}", profile_id, e);
-                            } else {
-                                tracing::info!("Profile {} updated successfully", profile_id);
-                            }
-                        });
-                    } else {
-                        tracing::warn!("Profile file not found: {:?}", profile_file);
-                    }
+                    std::thread::spawn(move || {
+                        if let Err(e) = update_profile_subscription(&url, &profile_file) {
+                            tracing::error!("Failed to update profile {}: {}", profile_id, e);
+                        } else {
+                            tracing::info!("Profile {} updated successfully", profile_id);
+                        }
+                    });
                 } else {
                     tracing::warn!("No URL configured for profile: {}", profile_id);
                 }

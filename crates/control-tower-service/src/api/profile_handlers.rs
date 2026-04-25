@@ -7,7 +7,7 @@ use tokio::task;
 use crate::ServiceState;
 use control_tower_service_core::ProfilesYaml;
 
-use super::{ApiResponse, AddProfileRequest, UpdateProfileRequest, RefreshRequest};
+use super::{ApiResponse, AddProfileRequest, RefreshRequest};
 
 /// GET /api/profiles - Returns list of profiles
 pub async fn get_profiles() -> HttpResponse {
@@ -267,18 +267,57 @@ pub async fn activate_profile(
     }
 }
 
-/// PATCH /api/profiles/{id} - Update cron schedule for a profile (only active profile)
+/// PATCH /api/profiles/{id} - Update name, URL, and/or cron schedule for a profile.
+/// If the URL is changed, the subscription content is re-downloaded and the profile
+/// file is overwritten. If the profile is currently active, Mihomo is restarted.
 pub async fn update_profile(
     state: web::Data<Arc<ServiceState>>,
     path: web::Path<String>,
-    body: web::Json<UpdateProfileRequest>,
+    body: web::Json<serde_json::Value>,
 ) -> HttpResponse {
     let uid = path.into_inner();
     let paths = super::get_control_tower_paths();
     let profiles_path = &paths.profiles_path;
+    let profiles_dir = paths.config_dir.join("profiles");
 
     if !profiles_path.exists() {
         return HttpResponse::NotFound().json(ApiResponse::<()>::error("profiles.yaml not found"));
+    }
+
+    // Parse body as serde_json::Value to distinguish "key absent" from "key = null" from "key = ''"
+    let obj = match body.as_object() {
+        Some(o) => o,
+        None => {
+            return HttpResponse::BadRequest()
+                .json(ApiResponse::<()>::error("Request body must be a JSON object".to_string()))
+        }
+    };
+
+    // Returns (value_str, was_explicitly_provided)
+    fn get_string_field(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> (Option<String>, bool) {
+        if let Some(v) = obj.get(key) {
+            if v.is_null() {
+                return (None, true); // explicitly null → clear
+            }
+            if let Some(s) = v.as_str() {
+                return (Some(s.to_string()), true); // present with value
+            }
+        }
+        (None, false) // absent or wrong type
+    }
+
+    let (name, name_provided) = get_string_field(obj, "name");
+    let (url, url_provided) = get_string_field(obj, "url");
+    let (cron, cron_provided) = get_string_field(obj, "cron");
+
+    // Validate URL if explicitly provided (even as empty string → clear not allowed for URL)
+    if url_provided {
+        if let Some(ref u) = url {
+            if u.trim().is_empty() {
+                return HttpResponse::BadRequest()
+                    .json(ApiResponse::<()>::error("URL cannot be empty".to_string()));
+            }
+        }
     }
 
     // Read profiles.yaml
@@ -298,13 +337,7 @@ pub async fn update_profile(
         }
     };
 
-    // Only allow updating the active profile
-    if yaml.current.as_ref() != Some(&uid) {
-        return HttpResponse::BadRequest()
-            .json(ApiResponse::<()>::error("Only the active profile can be updated".to_string()));
-    }
-
-    // Find and update the profile item
+    // Find the profile item
     let item = yaml.items.iter_mut().find(|i| i.uid == uid);
     let item = match item {
         Some(i) => i,
@@ -314,28 +347,157 @@ pub async fn update_profile(
         }
     };
 
-    // Validate cron if provided
-    if let Some(ref cron_str) = body.cron {
-        if !cron_str.trim().is_empty() {
-            if cron_str.trim().parse::<u32>().is_err() || cron_str.trim().parse::<u32>().ok().map(|n| n < 1).unwrap_or(true) {
-                return HttpResponse::BadRequest()
-                    .json(ApiResponse::<()>::error("Cron must be a positive integer (minutes)".to_string()));
+    let is_active = yaml.current.as_ref() == Some(&uid);
+    let old_url = item.url.clone();
+
+    // Apply cron: cron_provided means the key was present (even if null/empty → clear)
+    if cron_provided {
+        let cron_trimmed = cron.as_ref().map(|s| s.trim()).unwrap_or("");
+        if cron_trimmed.is_empty() {
+            item.cron = None; // null or "" → clear
+        } else {
+            match cron_trimmed.parse::<u32>() {
+                Ok(n) if n >= 1 => { item.cron = Some(cron_trimmed.to_string()); }
+                _ => {
+                    return HttpResponse::BadRequest()
+                        .json(ApiResponse::<()>::error("Cron must be a positive integer (minutes)".to_string()));
+                }
             }
         }
-        item.cron = if cron_str.trim().is_empty() { None } else { Some(cron_str.trim().to_string()) };
     }
 
-    // Write back profiles.yaml
-    if let Err(e) = std::fs::write(profiles_path, serde_yaml_ng::to_string(&yaml).unwrap_or_default()) {
-        return HttpResponse::InternalServerError()
-            .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
+    // Apply name: null or "" → clear, otherwise update
+    if name_provided {
+        item.name = name.filter(|s| !s.trim().is_empty());
     }
 
-    tracing::info!("Profile {} cron updated", uid);
+    // Apply URL: null or "" → clear, otherwise update (but re-download only if changed)
+    let url_changed = url_provided && url.as_ref() != old_url.as_ref();
+    if url_provided {
+        if url.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+            return HttpResponse::BadRequest()
+                .json(ApiResponse::<()>::error("URL cannot be empty".to_string()));
+        }
+    }
 
-    // Reload cron jobs so the scheduler picks up the new schedule
+    let profile_file = {
+        let file_name = item.file.as_ref().unwrap_or(&uid);
+        let base = profiles_dir.join(file_name);
+        if base.exists() {
+            base
+        } else if uid.len() > 8 {
+            profiles_dir.join(format!("{}.yaml", &uid[..8]))
+        } else {
+            base
+        }
+    };
+
+    // If URL changed, download new content in a blocking task
+    if url_changed {
+        let download_url = url.clone().unwrap(); // url_changed means url_provided && Some
+        let uid_clone = uid.clone();
+        let profile_file_clone = profile_file.clone();
+        let profiles_path_clone = profiles_path.clone();
+
+        let result = tokio::task::spawn_blocking(move || {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
+
+            let response = client
+                .get(&download_url)
+                .header("User-Agent", "clash-verge/v2.4.7")
+                .send()
+                .map_err(|e| anyhow::anyhow!("Failed to download: {}", e))?;
+
+            if !response.status().is_success() {
+                anyhow::bail!("Download failed: {}", response.status());
+            }
+
+            let new_content = response
+                .text()
+                .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
+
+            // Validate it's YAML (not HTML error page)
+            if new_content.trim().starts_with('<') {
+                anyhow::bail!("Downloaded content looks like HTML, not a valid subscription");
+            }
+
+            // Write new content to profile file
+            std::fs::write(&profile_file_clone, &new_content)?;
+
+            // Update updated_at and url in profiles.yaml
+            let content = std::fs::read_to_string(&profiles_path_clone)?;
+            let mut yaml = serde_yaml_ng::from_str::<ProfilesYaml>(&content)?;
+
+            let now = chrono::Utc::now().timestamp();
+            for item in &mut yaml.items {
+                if item.uid == uid_clone {
+                    item.updated_at = Some(now);
+                    item.url = Some(download_url.clone());
+                    break;
+                }
+            }
+
+            let new_content_str = serde_yaml_ng::to_string(&yaml)?;
+            std::fs::write(&profiles_path_clone, new_content_str)?;
+
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+
+        match result {
+            Ok(Ok(())) => {
+                tracing::info!("Profile {} URL updated and subscription re-downloaded", uid);
+            }
+            Ok(Err(e)) => {
+                tracing::error!("Failed to update subscription for profile {}: {}", uid, e);
+                return HttpResponse::BadRequest()
+                    .json(ApiResponse::<()>::error(format!("Failed to download new subscription: {}", e)));
+            }
+            Err(e) => {
+                return HttpResponse::InternalServerError()
+                    .json(ApiResponse::<()>::error(format!("Task error: {}", e)));
+            }
+        }
+
+        // If this profile is currently active, replace active config and restart Mihomo
+        if is_active {
+            let store = control_tower_service_core::ActiveConfigStore::new(paths.clone());
+            if let Err(e) = store.replace_from_profile(&profile_file) {
+                return HttpResponse::InternalServerError()
+                    .json(ApiResponse::<()>::error(format!("Failed to update active config: {}", e)));
+            }
+
+            let config_path = paths.active_config_path.clone();
+            let state = state.clone();
+            match task::spawn_blocking(move || state.restart_with_config(&config_path)).await {
+                Ok(Ok(())) => {
+                    tracing::info!("Profile {} activated with new URL, Mihomo restarted", uid);
+                }
+                Ok(Err(e)) => {
+                    return HttpResponse::InternalServerError()
+                        .json(ApiResponse::<()>::error(format!("Mihomo restart failed: {}", e)));
+                }
+                Err(e) => {
+                    return HttpResponse::InternalServerError()
+                        .json(ApiResponse::<()>::error(format!("Task error: {}", e)));
+                }
+            }
+        }
+    } else {
+        // No URL change — just write back profiles.yaml with name/cron updates
+        if let Err(e) = std::fs::write(profiles_path, serde_yaml_ng::to_string(&yaml).unwrap_or_default()) {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
+        }
+    }
+
+    // Reload cron jobs so the scheduler picks up any new schedule
     state.load_cron_jobs();
 
+    tracing::info!("Profile {} updated", uid);
     HttpResponse::Ok().json(ApiResponse::<()>::success(()))
 }
 

@@ -89,11 +89,6 @@ pub struct AddProfileRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateProfileRequest {
-    pub cron: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct RefreshRequest {
     pub use_proxy: Option<bool>,
 }

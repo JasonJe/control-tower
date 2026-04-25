@@ -832,20 +832,30 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 </div>
 
 <div class="modal" id="cronModal">
-  <div class="modal-content" style="max-width:380px">
+  <div class="modal-content" style="max-width:480px">
     <div class="modal-header">
-      <h3 class="modal-title">Edit Update Schedule</h3>
+      <h3 class="modal-title">Edit Profile</h3>
       <button class="modal-close" onclick="closeCronModal()" title="Close (ESC)">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
       </button>
     </div>
     <div class="modal-body">
-      <p class="text-sm text-muted" style="margin-bottom:16px">Set how often this profile updates automatically (in minutes). Leave empty to disable.</p>
-      <div style="display:flex;align-items:center;gap:8px">
-        <input type="number" id="cronMinutes" class="form-input" min="1" max="10080" placeholder="e.g. 60" style="width:120px">
-        <span class="text-muted text-sm">minutes</span>
+      <div class="form-group">
+        <label class="form-label">Profile Name</label>
+        <input type="text" id="editProfileName" class="form-input" placeholder="My Subscription">
       </div>
-      <p class="text-sm text-muted" style="margin-top:8px">Valid range: 1–10080 (max 1 week)</p>
+      <div class="form-group" style="margin-top:12px">
+        <label class="form-label">Subscription URL</label>
+        <input type="text" id="editProfileUrl" class="form-input" placeholder="https://example.com/subscription.yaml">
+      </div>
+      <div class="form-group" style="margin-top:12px">
+        <label class="form-label">Auto Update Interval</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="number" id="cronMinutes" class="form-input" min="1" max="10080" placeholder="Disabled" style="width:120px">
+          <span class="text-muted text-sm">minutes (leave empty to disable)</span>
+        </div>
+        <p class="text-sm text-muted" style="margin-top:4px">Valid range: 1–10080 (max 1 week). Changes take effect after saving.</p>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn secondary" onclick="closeCronModal()">Cancel</button>
@@ -1477,7 +1487,7 @@ function renderProfiles() {
       <td>${st}</td>
       <td>${isActive && p.cron ? `<span class="mono text-sm">${escapeHtml(p.cron)} min</span>` : '<span class="text-muted text-sm">-</span>'}</td>
       <td><span class="mono text-sm">${formatTimestamp(p.updated_at)}</span>${isActive ? `<button class="btn xs" onclick="refreshProfile('${escapeForJs(p.uid)}', false)" title="Refresh direct">↻D</button><button class="btn xs primary" onclick="refreshProfile('${escapeForJs(p.uid)}', true)" title="Refresh via proxy">↻P</button>` : ''}</td>
-      <td><div class="btn-group" style="gap:6px">${isActive ? `<button class="btn xs" onclick="openCronModal('${escapeForJs(p.uid)}','${escapeForJs(p.cron || '')}')" title="Edit update schedule">Edit</button>` : ''}${!isActive ? `<button class="btn xs success" id="btn-activate-${escapeHtml(p.uid)}" onclick="activateProfile('${escapeForJs(p.uid)}', this)" title="Activate this profile">Activate</button>` : ''}<button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${escapeForJs(p.uid)}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
+      <td><div class="btn-group" style="gap:6px">${!isActive ? `<button class="btn xs success" id="btn-activate-${escapeHtml(p.uid)}" onclick="activateProfile('${escapeForJs(p.uid)}', this)" title="Activate this profile">Activate</button>` : ''}<button class="btn xs" onclick="openCronModal('${escapeForJs(p.uid)}')" title="Edit profile name, URL, or cron">Edit</button><button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${escapeForJs(p.uid)}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
     </tr>`;
   }).join('');
   pg.style.display = 'flex';
@@ -1538,29 +1548,45 @@ document.getElementById('deleteModalBtn').addEventListener('click', async () => 
 function closeDeleteModal() { document.getElementById('deleteModal').classList.remove('show'); document.getElementById('deleteModalBtn').dataset.target = ''; }
 
 let cronEditUid = '';
-function openCronModal(uid, currentCron) {
+let cronEditOriginal = {}; // stores original values at modal open time
+function openCronModal(uid) {
   cronEditUid = uid;
-  document.getElementById('cronMinutes').value = currentCron || '';
+  const profile = profiles.find(p => p.uid === uid);
+  cronEditOriginal = {
+    name: profile ? (profile.name || '') : '',
+    url: profile ? (profile.url || '') : '',
+    cron: profile && profile.cron ? profile.cron : '',
+  };
+  document.getElementById('editProfileName').value = cronEditOriginal.name;
+  document.getElementById('editProfileUrl').value = cronEditOriginal.url;
+  document.getElementById('cronMinutes').value = cronEditOriginal.cron;
   document.getElementById('cronModal').classList.add('show');
-  document.getElementById('cronMinutes').focus();
+  document.getElementById('editProfileName').focus();
 }
 function closeCronModal() { document.getElementById('cronModal').classList.remove('show'); cronEditUid = ''; }
 
 document.getElementById('cronModalSaveBtn').addEventListener('click', async () => {
   if (!cronEditUid) { console.error('cronEditUid is empty'); return; }
-  const val = document.getElementById('cronMinutes').value.trim();
-  const cron = val ? String(val) : '';
+  const name = document.getElementById('editProfileName').value.trim();
+  const url = document.getElementById('editProfileUrl').value.trim();
+  const cronVal = document.getElementById('cronMinutes').value.trim();
   const uid = cronEditUid;
   closeCronModal();
   try {
-    const res = await fetch('/api/profiles/' + uid, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ cron: cron || null }) });
+    const body = {};
+    if (name !== cronEditOriginal.name) body.name = name || null;
+    if (url !== cronEditOriginal.url) body.url = url || null;
+    if (cronVal !== cronEditOriginal.cron) body.cron = cronVal || null;
+    const res = await fetch('/api/profiles/' + uid, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
     const json = await res.json();
     if (json.code !== 0) throw new Error(json.message);
-    showToast('Update schedule saved');
+    showToast('Profile updated');
     loadProfiles();
   } catch (e) { showToast('Failed: ' + e.message, 'error'); }
 });
 
+document.getElementById('editProfileName').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cronModalSaveBtn').click(); });
+document.getElementById('editProfileUrl').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cronModalSaveBtn').click(); });
 document.getElementById('cronMinutes').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cronModalSaveBtn').click(); });
 
 // Rules

@@ -44,6 +44,36 @@ impl ServiceState {
             }
         }
 
+        // Ensure allow-lan=true at runtime so proxy ports bind to all interfaces.
+        // We must read allow-lan from config.yaml (active config), not settings.yaml,
+        // because settings.yaml may have stale allow_lan values from before the
+        // profile was activated, which would override the profile's own setting.
+        let allow_lan = {
+            let exe_dir = control_tower_service_core::exe_dir();
+            let config_path = exe_dir.join("config.yaml");
+            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                #[derive(Deserialize)]
+                struct Config {
+                    #[serde(rename = "allow-lan", default)]
+                    allow_lan: Option<bool>,
+                }
+                serde_yaml_ng::from_str::<Config>(&content)
+                    .ok()
+                    .and_then(|c| c.allow_lan)
+            } else {
+                None
+            }
+        };
+
+        if let Some(allow_lan_val) = allow_lan {
+            self.hot_patch_runtime(None, Some(allow_lan_val), None, None);
+            tracing::info!("Hot-patched runtime allow-lan={} from config.yaml", allow_lan_val);
+        } else {
+            // Default to allow-lan=true for external proxy access
+            self.hot_patch_runtime(None, Some(true), None, None);
+            tracing::info!("Hot-patched runtime allow-lan=true (default)");
+        }
+
         Ok(())
     }
 

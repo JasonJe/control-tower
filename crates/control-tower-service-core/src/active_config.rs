@@ -34,6 +34,9 @@ impl ActiveConfigStore {
     /// then overlay any user-customized fields from the previous config (mode, port, etc.)
     /// so that activating a profile does not wipe out manual overrides.
     ///
+    /// Network accessibility fields (`allow-lan`, `bind-address`) are always taken
+    /// from the profile — they are NOT preserved from the old config.
+    ///
     /// This is called when a user activates a subscription profile.
     pub fn replace_from_profile(&self, profile_path: &PathBuf) -> Result<()> {
         let new_content = std::fs::read_to_string(profile_path)?;
@@ -62,7 +65,12 @@ impl ActiveConfigStore {
     }
 
     /// Extract fields the user may have manually customized that should survive
-    /// a profile switch: mode, mixed-port, redir-port, tproxy-port, allow-lan, bind-address, dns.
+    /// a profile switch.
+    ///
+    /// NOTE: `allow-lan` and `bind-address` are deliberately excluded — they
+    /// control network accessibility and must come from the profile, otherwise
+    /// a stale `allow-lan: false` in the old config would silently override the
+    /// profile's `allow-lan: true`, blocking external proxy access.
     fn extract_user_overrides(content: &str) -> serde_yaml_ng::Mapping {
         let Ok(yaml) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(content) else {
             return serde_yaml_ng::Mapping::new();
@@ -75,8 +83,6 @@ impl ActiveConfigStore {
             "mixed-port",
             "redir-port",
             "tproxy-port",
-            "allow-lan",
-            "bind-address",
             "log-level",
             "dns",
             "socks-port",

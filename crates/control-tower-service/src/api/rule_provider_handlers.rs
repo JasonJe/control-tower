@@ -1,5 +1,7 @@
 //! Rule provider handlers: list, add, update, delete, refresh
 
+use std::sync::Arc;
+
 use actix_web::{web, HttpResponse};
 use tokio::task;
 
@@ -308,8 +310,7 @@ pub async fn delete_rule_provider(
 }
 
 /// POST /api/rule-providers/refresh-all — Force refresh all rule providers
-pub async fn refresh_all_rule_providers() -> HttpResponse {
-    let state = ServiceState::new();
+pub async fn refresh_all_rule_providers(state: web::Data<Arc<ServiceState>>) -> HttpResponse {
     match task::spawn_blocking(move || state.reload_config()).await {
         Ok(Ok(())) => {
             tracing::info!("All rule providers refreshed via API");

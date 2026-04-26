@@ -2,6 +2,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Default port constants for Mihomo and Control Tower service.
+pub mod consts {
+    /// Mihomo external controller port (Secret API port)
+    pub const DEFAULT_MIHOMO_API_PORT: u16 = 9090;
+    /// Mihomo HTTP proxy port
+    pub const DEFAULT_MIHOMO_HTTP_PORT: u16 = 7890;
+    /// Mihomo SOCKS5 proxy port
+    pub const DEFAULT_MIHOMO_SOCKS_PORT: u16 = 7891;
+    /// Control Tower service HTTP port
+    pub const DEFAULT_SERVICE_PORT: u16 = 8080;
+    /// Maximum cron schedule interval in minutes (7 days)
+    pub const MAX_CRON_INTERVAL_MINS: u32 = 10080;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

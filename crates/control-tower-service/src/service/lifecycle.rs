@@ -178,6 +178,7 @@ impl ServiceState {
             }
         };
 
+        tracing::warn!("Mihomo restart: connections will be dropped");
         let _ = self.stop();
         self.start(&config_path)
     }
@@ -186,6 +187,7 @@ impl ServiceState {
     pub fn restart_with_config(&self, config_path: &Path) -> Result<(), String> {
         let path_buf = config_path.to_path_buf();
         *self.last_config_path.write() = Some(path_buf.clone());
+        tracing::warn!("Mihomo restart: connections will be dropped");
         let _ = self.stop();
         self.start(&path_buf)
     }

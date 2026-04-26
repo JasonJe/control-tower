@@ -5,6 +5,7 @@
 
 mod scheduler;
 mod api;
+mod cli;
 mod html;
 mod http_server;
 mod ipc_server;
@@ -18,9 +19,10 @@ use std::collections::VecDeque;
 pub use crate::ipc_types::SHUTDOWN;
 
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
-use serde;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::thread;
 use std::time::Duration;
 use parking_lot::RwLock;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -946,47 +948,6 @@ mod tests {
 
 // ============ Main Function Implementation ============
 
-use clap::Parser;
-use std::sync::atomic::Ordering;
-
-/// Command line arguments for the service
-#[derive(Parser, Debug)]
-#[command(name = "control-tower-service")]
-#[command(version = "0.1.0")]
-#[command(about = "Control Tower Service - IPC server for proxy management")]
-struct Args {
-    /// Socket path for IPC (default: ctsvc.sock in executable directory)
-    #[arg(short, long)]
-    socket: Option<std::path::PathBuf>,
-
-    /// Log level (default: info)
-    #[arg(short, long, default_value = "info")]
-    log_level: String,
-
-    /// Run in foreground (don't daemonize)
-    #[arg(short, long, default_value = "false")]
-    foreground: bool,
-}
-
-/// Global shutdown flag
-
-/// Setup signal handlers for SIGTERM and SIGINT
-fn setup_signal_handlers() {
-    SHUTDOWN.store(false, Ordering::SeqCst);
-
-    // Use low-level register with a closure that sets the flag
-    unsafe {
-        signal_hook::low_level::register(signal_hook::consts::SIGTERM, || {
-            SHUTDOWN.store(true, Ordering::SeqCst);
-        }).ok();
-        signal_hook::low_level::register(signal_hook::consts::SIGINT, || {
-            SHUTDOWN.store(true, Ordering::SeqCst);
-        }).ok();
-    }
-
-    tracing::info!("Signal handlers registered (SIGTERM, SIGINT)");
-}
-
 /// Main server loop
 fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Result<(), String> {
     server.start()?;
@@ -1004,7 +965,7 @@ fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Re
 
     // Main loop - keep accepting connections until shutdown
     // Note: In production, this should use proper async I/O with tokio
-    while !SHUTDOWN.load(Ordering::SeqCst) {
+    while !cli::SHUTDOWN.load(Ordering::SeqCst) {
         // Check if it's time to check cron jobs
         if last_cron_check.elapsed() >= CRON_CHECK_INTERVAL {
             state.check_and_run_crons();
@@ -1012,78 +973,45 @@ fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Re
             // Check if auto latency test is due
             {
                 let should_run = {
-                    let auto_test = state.auto_test.read();
-                    let last = auto_test.last_test_at.unwrap_or(0);
-                    let interval = auto_test.interval_secs.max(60) as i64;
-                    let now = Utc::now().timestamp();
-                    !auto_test.running && now - last >= interval
+                    let mut auto_test = state.auto_test.write();
+                    if auto_test.running {
+                        false
+                    } else {
+                        let last = auto_test.last_test_at.unwrap_or(0);
+                        let interval = auto_test.interval_secs.max(60) as i64;
+                        let now = Utc::now().timestamp();
+                        if now - last >= interval {
+                            auto_test.running = true;
+                            true
+                        } else {
+                            false
+                        }
+                    }
                 };
                 if should_run {
-                    {
-                        let mut auto_test = state.auto_test.write();
-                        auto_test.running = true;
-                    }
-                    state.run_auto_latency_test();
-                    {
-                        let mut auto_test = state.auto_test.write();
-                        auto_test.running = false;
-                    }
+                    let test_state = state.clone();
+                    std::thread::spawn(move || {
+                        let _span = tracing::info_span!("auto_latency_test");
+                        test_state.run_auto_latency_test();
+                    });
                 }
             }
 
             last_cron_check = std::time::Instant::now();
         }
 
-        match server.handle_one() {
-            Ok(Some(cmd)) => {
-                tracing::debug!("Handled command: {:?}", cmd);
-            }
-            Ok(None) => {
-                // No connection available, small sleep to avoid busy loop
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(e) => {
-                tracing::warn!("Error handling request: {}", e);
-                // Continue running even on error
-            }
-        }
+        // Sleep briefly to avoid busy-waiting
+        thread::sleep(Duration::from_millis(100));
     }
 
-    tracing::info!("Shutting down server...");
+    tracing::info!("Shutting down IPC server...");
     server.stop();
-
-    // Stop Mihomo if running
-    if state.is_running() {
-        tracing::info!("Stopping Mihomo...");
-        state.stop().ok();
-    }
-
-    tracing::info!("Control Tower Service stopped");
     Ok(())
-}
-
-/// Get the service HTTP port from settings.yaml, defaulting to 8080
-fn get_service_port() -> u16 {
-    let settings_path = control_tower_service_core::exe_dir().join("settings.yaml");
-
-    if settings_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&settings_path) {
-            if let Ok(settings) = serde_yaml_ng::from_str::<Settings>(&content) {
-                return settings.service_port.unwrap_or(8080);
-            }
-        }
-    }
-    8080 // default
-}
-
-#[derive(serde::Deserialize)]
-struct Settings {
-    service_port: Option<u16>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
-    let args = Args::parse();
+    let args = cli::Args::parse();
 
     // Determine working directory from executable location
     let work_dir = control_tower_service_core::exe_dir();
@@ -1149,7 +1077,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Determine socket path and service port
     let socket_path = args.socket.unwrap_or_else(|| paths.socket_path.clone());
-    let service_port = get_service_port();
+    let service_port = cli::get_service_port();
 
     tracing::info!("Socket path: {}", socket_path.display());
 
@@ -1212,6 +1140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !args.foreground {
         let http_state = state.clone();
         std::thread::spawn(move || {
+            let _span = tracing::info_span!("http_server", port = service_port);
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime for HTTP server");
             rt.block_on(async move {
                 if let Err(e) = http_server::start_http_server(service_port, http_state).await {
@@ -1228,7 +1157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server = ipc_server::IpcServer::new(socket_path, state.clone());
 
     // Setup signal handlers
-    setup_signal_handlers();
+    cli::setup_signal_handlers();
 
     // Run server
     run_server(server, state)?;

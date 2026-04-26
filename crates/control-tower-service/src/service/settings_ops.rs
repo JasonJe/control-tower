@@ -3,6 +3,10 @@
 use serde::Deserialize;
 
 use crate::ServiceState;
+use crate::settings::consts::{
+    DEFAULT_MIHOMO_API_PORT, DEFAULT_MIHOMO_HTTP_PORT,
+    DEFAULT_MIHOMO_SOCKS_PORT, DEFAULT_SERVICE_PORT,
+};
 
 impl ServiceState {
     /// Load api_host and api_port from settings.yaml, also sync AutoTestState
@@ -68,10 +72,10 @@ impl ServiceState {
 
         let default_settings = crate::SettingsData {
             api_host: Some("127.0.0.1".to_string()),
-            api_port: Some(9090),
-            http_port: Some(7890),
-            socks_port: Some(7891),
-            service_port: Some(8080),
+            api_port: Some(DEFAULT_MIHOMO_API_PORT),
+            http_port: Some(DEFAULT_MIHOMO_HTTP_PORT),
+            socks_port: Some(DEFAULT_MIHOMO_SOCKS_PORT),
+            service_port: Some(DEFAULT_SERVICE_PORT),
             tun_enabled: Some(false),
             log_level: Some("info".to_string()),
             allow_lan: Some(true),
@@ -85,7 +89,7 @@ impl ServiceState {
         let yaml = serde_yaml_ng::to_string(&default_settings)
             .unwrap_or_else(|e| {
                 tracing::error!("Serialized settings failed: {}", e);
-                "api_host: 127.0.0.1\napi_port: 9090\nhttp_port: 7890\nsocks_port: 7891\nservice_port: 8080\ntun_enabled: false\nlog_level: info\nmode: rule\n".to_string()
+                format!("api_host: 127.0.0.1\napi_port: {DEFAULT_MIHOMO_API_PORT}\nhttp_port: {DEFAULT_MIHOMO_HTTP_PORT}\nsocks_port: {DEFAULT_MIHOMO_SOCKS_PORT}\nservice_port: {DEFAULT_SERVICE_PORT}\ntun_enabled: false\nlog_level: info\nmode: rule\n")
             });
 
         if let Err(e) = std::fs::write(&settings_path, yaml) {

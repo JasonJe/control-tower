@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use parking_lot::RwLock;
 
 use crate::ServiceState;
+use crate::settings::consts::DEFAULT_MIHOMO_API_PORT;
 
 /// Max log lines to keep in the ring buffer
 const LOG_LINES: usize = 100;
@@ -18,7 +19,7 @@ impl ServiceState {
             cron_jobs: RwLock::new(Vec::new()),
             last_config_path: RwLock::new(None),
             api_host: RwLock::new("127.0.0.1".to_string()),
-            api_port: RwLock::new(9090),
+            api_port: RwLock::new(DEFAULT_MIHOMO_API_PORT),
             auto_test: RwLock::new(crate::AutoTestState::default()),
         }
     }

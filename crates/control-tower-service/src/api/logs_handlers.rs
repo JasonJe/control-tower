@@ -8,7 +8,8 @@ use super::{ApiResponse, LogsQuery};
 pub async fn get_logs(
     query: web::Query<LogsQuery>,
 ) -> HttpResponse {
-    let log_dir = std::path::PathBuf::from("/opt/ctsvc/logs");
+    let exe_dir = control_tower_service_core::exe_dir();
+    let log_dir = exe_dir.join("logs");
     let lines = query.lines.unwrap_or(200).min(1000);
 
     let file_path = match query.source.as_deref() {

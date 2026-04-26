@@ -4,27 +4,25 @@ use actix_web::{web, HttpResponse};
 
 use super::{ApiResponse, AddRuleRequest};
 
-/// GET /api/config - Returns verge.yaml as JSON
+/// GET /api/config - Returns the active Mihomo config.yaml as JSON
 pub async fn get_config() -> HttpResponse {
     let paths = super::get_control_tower_paths();
-    let verge_path = &paths.verge_config_path;
+    let config_path = &paths.active_config_path;
 
-    if !verge_path.exists() {
-        // Return empty config instead of 404 so the UI handles it gracefully
+    if !config_path.exists() {
         return HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({})));
     }
 
-    match std::fs::read_to_string(verge_path) {
+    match std::fs::read_to_string(config_path) {
         Ok(content) => {
-            // Parse YAML to JSON
             match serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&content) {
                 Ok(json) => HttpResponse::Ok().json(ApiResponse::success(json)),
                 Err(e) => HttpResponse::InternalServerError()
-                    .json(ApiResponse::<()>::error(format!("Failed to parse verge.yaml: {}", e))),
+                    .json(ApiResponse::<()>::error(format!("Failed to parse config.yaml: {}", e))),
             }
         }
         Err(e) => HttpResponse::InternalServerError()
-            .json(ApiResponse::<()>::error(format!("Failed to read verge.yaml: {}", e))),
+            .json(ApiResponse::<()>::error(format!("Failed to read config.yaml: {}", e))),
     }
 }
 

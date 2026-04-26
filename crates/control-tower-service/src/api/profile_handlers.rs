@@ -1,6 +1,7 @@
 //! Profile handlers: list, add, activate, update, refresh, delete
 
 use actix_web::{web, HttpResponse};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::task;
 
@@ -8,6 +9,28 @@ use crate::ServiceState;
 use control_tower_service_core::ProfilesYaml;
 
 use super::{ApiResponse, AddProfileRequest, RefreshRequest};
+
+/// Resolve the on-disk path for a profile file.
+///
+/// Tries in order:
+///   1. `profiles_dir/file_name` (if file_name is set)
+///   2. `profiles_dir/{uid[..8]}.yaml` (canonical fallback)
+///   3. `profiles_dir/{uid}.yaml` (legacy fallback for old buggy data)
+fn resolve_profile_file(profiles_dir: &PathBuf, uid: &str, file_name: Option<&str>) -> PathBuf {
+    if let Some(f) = file_name {
+        let p = profiles_dir.join(f);
+        if p.exists() {
+            return p;
+        }
+    }
+    if uid.len() > 8 {
+        let short = profiles_dir.join(format!("{}.yaml", &uid[..8]));
+        if short.exists() {
+            return short;
+        }
+    }
+    profiles_dir.join(format!("{}.yaml", uid))
+}
 
 /// GET /api/profiles - Returns list of profiles
 pub async fn get_profiles() -> HttpResponse {
@@ -177,28 +200,8 @@ pub async fn activate_profile(
         }
     };
 
-    let file_name = match &profile_item.file {
-        Some(f) => f.clone(),
-        None => {
-            return HttpResponse::BadRequest()
-                .json(ApiResponse::<()>::error(format!("Profile {} has no file path", uid)));
-        }
-    };
-
     let profiles_dir = paths.config_dir.join("profiles");
-    let profile_file = profiles_dir.join(&file_name);
-
-    // Fallback: if file field path doesn't exist, try uid[..8].yaml (for profiles created with truncated filename)
-    let actual_file = if !profile_file.exists() && uid.len() > 8 {
-        let fallback = profiles_dir.join(format!("{}.yaml", &uid[..8]));
-        if fallback.exists() {
-            fallback
-        } else {
-            return HttpResponse::NotFound().json(ApiResponse::<()>::error(format!("Profile file {} not found", file_name)));
-        }
-    } else {
-        profile_file
-    };
+    let actual_file = resolve_profile_file(&profiles_dir, &uid, profile_item.file.as_deref());
 
     // Validate profile content before activation
     let profile_content = match std::fs::read_to_string(&actual_file) {
@@ -389,17 +392,7 @@ pub async fn update_profile(
         }
     }
 
-    let profile_file = {
-        let file_name = item.file.as_ref().unwrap_or(&uid);
-        let base = profiles_dir.join(file_name);
-        if base.exists() {
-            base
-        } else if uid.len() > 8 {
-            profiles_dir.join(format!("{}.yaml", &uid[..8]))
-        } else {
-            base
-        }
-    };
+    let profile_file = resolve_profile_file(&profiles_dir, &uid, item.file.as_deref());
 
     // If URL changed, download new content in a blocking task
     if url_changed {
@@ -554,21 +547,8 @@ pub async fn refresh_profile(
         }
     };
 
-    // Determine profile file path: use file field if present, fallback to uid[..8].yaml
-    let profile_file = if let Some(ref file_name) = profile_item.file {
-        let pf = profiles_dir.join(file_name);
-        if pf.exists() {
-            pf
-        } else if uid.len() > 8 {
-            profiles_dir.join(format!("{}.yaml", &uid[..8]))
-        } else {
-            pf
-        }
-    } else if uid.len() > 8 {
-        profiles_dir.join(format!("{}.yaml", &uid[..8]))
-    } else {
-        profiles_dir.join(format!("{}.yaml", uid))
-    };
+    // Determine profile file path using helper
+    let profile_file = resolve_profile_file(&profiles_dir, &uid, profile_item.file.as_deref());
 
     if !profile_file.exists() {
         return HttpResponse::NotFound()
@@ -677,29 +657,16 @@ pub async fn delete_profile(
         }
     };
 
-    // Find the profile to get its file path
-    let file_name = match yaml.items.iter().find(|item| item.uid == uid) {
-        Some(item) => item.file.clone(),
+    // Find the profile item to get its file path
+    let profile_item = match yaml.items.iter().find(|item| item.uid == uid) {
+        Some(item) => item,
         None => {
             return HttpResponse::NotFound().json(ApiResponse::<()>::error(format!("Profile {} not found", uid)));
         }
     };
 
-    // Determine actual file path: use file field if present, fallback to uid[..8].yaml
-    let profile_file = if let Some(ref f) = file_name {
-        let pf = profiles_dir.join(f);
-        if pf.exists() {
-            pf
-        } else if uid.len() > 8 {
-            profiles_dir.join(format!("{}.yaml", &uid[..8]))
-        } else {
-            pf
-        }
-    } else if uid.len() > 8 {
-        profiles_dir.join(format!("{}.yaml", &uid[..8]))
-    } else {
-        profiles_dir.join(format!("{}.yaml", uid))
-    };
+    // Determine actual file path using helper
+    let profile_file = resolve_profile_file(&profiles_dir, &uid, profile_item.file.as_deref());
 
     // Remove from items
     yaml.items.retain(|item| item.uid != uid);

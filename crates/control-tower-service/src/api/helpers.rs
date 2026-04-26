@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use crate::settings::consts::DEFAULT_MIHOMO_HTTP_PORT;
+
 /// Find settings.yaml path (same logic as CLI's settings.rs)
 pub fn find_settings_path() -> Option<PathBuf> {
     // First check executable directory
@@ -28,7 +30,7 @@ pub fn find_settings_path() -> Option<PathBuf> {
         .map(|p| p.join("settings.yaml"))
 }
 
-/// Get Mihomo HTTP proxy port from settings.yaml, defaulting to 7890
+/// Get Mihomo HTTP proxy port from settings.yaml, defaulting to DEFAULT_MIHOMO_HTTP_PORT
 pub fn get_mihomo_http_port() -> u16 {
     #[derive(serde::Deserialize)]
     struct Settings {
@@ -38,11 +40,11 @@ pub fn get_mihomo_http_port() -> u16 {
     if let Some(path) = find_settings_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             if let Ok(settings) = serde_yaml_ng::from_str::<Settings>(&content) {
-                return settings.http_port.unwrap_or(7890);
+                return settings.http_port.unwrap_or(DEFAULT_MIHOMO_HTTP_PORT);
             }
         }
     }
-    7890
+    DEFAULT_MIHOMO_HTTP_PORT
 }
 
 /// Get ControlTowerPaths from settings

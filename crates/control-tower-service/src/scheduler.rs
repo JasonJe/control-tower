@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use crate::ServiceState;
+use crate::settings::consts::MAX_CRON_INTERVAL_MINS;
 
 /// Simplified cron schedule (minutes only)
 #[derive(Debug, Clone)]
@@ -25,7 +26,7 @@ impl Schedule {
         }
 
         let minutes: u32 = s.parse().ok()?;
-        if minutes < 1 || minutes > 10080 {
+        if minutes < 1 || minutes > MAX_CRON_INTERVAL_MINS {
             return None;
         }
 
@@ -53,6 +54,9 @@ impl Schedule {
     }
 }
 
+/// Maximum backoff interval in seconds (6 hours)
+const MAX_BACKOFF_SECS: i64 = 6 * 60 * 60;
+
 /// Profile cron entry
 #[derive(Debug)]
 pub struct ProfileCronJob {
@@ -64,6 +68,10 @@ pub struct ProfileCronJob {
     pub last_run: Option<chrono::DateTime<chrono::Local>>,
     /// Next scheduled run timestamp
     next_run: i64,
+    /// Number of consecutive failures since last success
+    failure_count: u32,
+    /// Last error message from subscription fetch
+    pub last_error: Option<String>,
 }
 
 impl ProfileCronJob {
@@ -76,20 +84,40 @@ impl ProfileCronJob {
             schedule,
             last_run: None,
             next_run,
+            failure_count: 0,
+            last_error: None,
         }
     }
 
-    /// Check if job should run now and update last_run if so
-    pub fn check_and_update(&mut self) -> bool {
-        let now = chrono::Utc::now().timestamp();
+    /// Called when a scheduled run fails. Applies exponential backoff and records the error.
+    fn mark_failure(&mut self, error: String) {
+        self.last_error = Some(error);
+        self.failure_count += 1;
+        let base = self.schedule.next_run_seconds();
+        let backoff = base * (2_i64.pow(self.failure_count.min(20) as u32));
+        self.next_run = chrono::Utc::now().timestamp() + backoff.min(MAX_BACKOFF_SECS);
+    }
 
-        if now >= self.next_run {
-            self.last_run = Some(chrono::Local::now());
-            self.next_run = now + self.schedule.next_run_seconds();
-            true
-        } else {
-            false
-        }
+    /// Called when a scheduled run succeeds. Resets failure state.
+    fn mark_success(&mut self) {
+        self.last_error = None;
+        self.failure_count = 0;
+        self.last_run = Some(chrono::Local::now());
+        self.next_run = chrono::Utc::now().timestamp() + self.schedule.next_run_seconds();
+    }
+
+    /// Check if job should run now.
+    /// Note: caller must call mark_success() or mark_failure() after the update attempt
+    /// to properly update last_run / next_run / failure_count.
+    pub fn is_due(&self) -> bool {
+        let now = chrono::Utc::now().timestamp();
+        now >= self.next_run
+    }
+
+    #[allow(dead_code)]
+    /// Legacy alias for is_due — kept to avoid breaking callers.
+    pub fn check_and_update(&mut self) -> bool {
+        self.is_due()
     }
 }
 
@@ -207,20 +235,21 @@ impl ServiceState {
 
     /// Check and run due cron jobs
     pub fn check_and_run_crons(&self) {
-        let mut jobs = self.cron_jobs.write();
+        // Collect due jobs first to avoid holding the write lock during HTTP requests.
+        let due_jobs: Vec<(usize, String, Option<String>, String)> = {
+            let mut jobs = self.cron_jobs.write();
+            let exe_dir = control_tower_service_core::exe_dir();
+            let profiles_dir = exe_dir.join("profiles");
 
-        for job in jobs.iter_mut() {
-            if job.check_and_update() {
+            let due: Vec<_> = jobs.iter_mut().enumerate().filter(|(_, j)| j.is_due()).collect();
+
+            due.into_iter().map(|(idx, job)| {
                 let profile_id = job.profile_id.clone();
                 let url = job.url.clone();
                 let schedule_desc = job.schedule.description();
-
                 tracing::info!("Triggering scheduled profile update: {} ({})", profile_id, schedule_desc);
 
-                let exe_dir = control_tower_service_core::exe_dir();
-                let profiles_dir = exe_dir.join("profiles");
                 // Resolve profile file path: try job.file first, then fallback to uid[..8].yaml
-                // (profiles created before a past update may have file=full_uid.yaml instead of uid[..8].yaml)
                 let profile_file = if let Some(f) = job.file.as_ref() {
                     let p = profiles_dir.join(f);
                     if p.exists() {
@@ -235,17 +264,37 @@ impl ServiceState {
                 } else {
                     profiles_dir.join(format!("{}.yaml", profile_id))
                 };
+                (idx, profile_id, url, profile_file.to_string_lossy().into_owned())
+            }).collect()
+        };
 
-                if let Some(url) = url {
-                    std::thread::spawn(move || {
-                        if let Err(e) = update_profile_subscription(&url, &profile_file) {
-                            tracing::error!("Failed to update profile {}: {}", profile_id, e);
-                        } else {
-                            tracing::info!("Profile {} updated successfully", profile_id);
-                        }
-                    });
+        // Execute HTTP requests outside the lock.
+        let results: Vec<(usize, Result<(), String>)> = due_jobs
+            .into_iter()
+            .map(|(idx, _profile_id, url, profile_file)| {
+                let result = if let Some(url) = url {
+                    let path = std::path::PathBuf::from(&profile_file);
+                    update_profile_subscription(&url, &path)
                 } else {
-                    tracing::warn!("No URL configured for profile: {}", profile_id);
+                    Err("No URL configured".to_string())
+                };
+                (idx, result)
+            })
+            .collect();
+
+        // Update job states under a single write lock.
+        let mut jobs = self.cron_jobs.write();
+        for (idx, result) in results {
+            if let Some(job) = jobs.get_mut(idx) {
+                match result {
+                    Ok(()) => {
+                        tracing::info!("Profile {} updated successfully", job.profile_id);
+                        job.mark_success();
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to update profile {}: {}", job.profile_id, e);
+                        job.mark_failure(e);
+                    }
                 }
             }
         }
@@ -260,6 +309,7 @@ pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::P
 
     let response = BlockingClient::new()
         .get(url)
+        .header("User-Agent", "clash-verge/v2.4.7")
         .timeout(StdDuration::from_secs(60))
         .send()
         .map_err(|e| format!("Failed to fetch subscription: {}", e))?;

@@ -5,6 +5,7 @@ use serde::Deserialize;
 use reqwest::blocking::Client as BlockingClient;
 
 use crate::ServiceState;
+use crate::settings::consts::DEFAULT_SERVICE_PORT;
 
 /// Hot-patch Mihomo via PATCH /configs for immediate effect (runtime-only, no file write).
 fn hot_patch_configs(api_url: &str, log_level: Option<&str>, allow_lan: Option<bool>,
@@ -164,14 +165,14 @@ impl ServiceState {
     pub fn apply_port_settings(&self, http_port: u16, socks_port: u16) -> Result<(), String> {
         self.update_config_ports(http_port, socks_port)?;
 
-        let tun_enabled = self.load_tun_enabled();
+        let (_, _, tun_enabled) = self.load_settings_ports();
         let current_settings = self.get_settings();
         let settings = crate::SettingsData {
             api_host: Some("127.0.0.1".to_string()),
             api_port: Some(*self.api_port.read()),
             http_port: Some(http_port),
             socks_port: Some(socks_port),
-            service_port: Some(8080),
+            service_port: Some(DEFAULT_SERVICE_PORT),
             tun_enabled,
             log_level: None,
             allow_lan: None,
@@ -194,23 +195,8 @@ impl ServiceState {
         Ok(())
     }
 
-    fn load_tun_enabled(&self) -> Option<bool> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let settings_path = exe_dir.join("settings.yaml");
-        if let Ok(content) = std::fs::read_to_string(&settings_path) {
-            #[derive(Deserialize)]
-            struct Settings {
-                #[serde(rename = "tun_enabled", default)]
-                tun_enabled: Option<bool>,
-            }
-            if let Ok(settings) = serde_yaml_ng::from_str::<Settings>(&content) {
-                return settings.tun_enabled;
-            }
-        }
-        None
-    }
-
-    fn load_http_port(&self) -> Option<u16> {
+    /// Load http_port, socks_port, and tun_enabled from settings.yaml in a single read.
+    fn load_settings_ports(&self) -> (Option<u16>, Option<u16>, Option<bool>) {
         let exe_dir = control_tower_service_core::exe_dir();
         let settings_path = exe_dir.join("settings.yaml");
         if let Ok(content) = std::fs::read_to_string(&settings_path) {
@@ -218,28 +204,16 @@ impl ServiceState {
             struct Settings {
                 #[serde(rename = "http_port", default)]
                 http_port: Option<u16>,
-            }
-            if let Ok(settings) = serde_yaml_ng::from_str::<Settings>(&content) {
-                return settings.http_port;
-            }
-        }
-        None
-    }
-
-    fn load_socks_port(&self) -> Option<u16> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let settings_path = exe_dir.join("settings.yaml");
-        if let Ok(content) = std::fs::read_to_string(&settings_path) {
-            #[derive(Deserialize)]
-            struct Settings {
                 #[serde(rename = "socks_port", default)]
                 socks_port: Option<u16>,
+                #[serde(rename = "tun_enabled", default)]
+                tun_enabled: Option<bool>,
             }
             if let Ok(settings) = serde_yaml_ng::from_str::<Settings>(&content) {
-                return settings.socks_port;
+                return (settings.http_port, settings.socks_port, settings.tun_enabled);
             }
         }
-        None
+        (None, None, None)
     }
 
     /// Update tun section in config.yaml
@@ -321,15 +295,14 @@ impl ServiceState {
     pub fn apply_tun_settings(&self, tun_enabled: bool) -> Result<(), String> {
         self.update_config_tun(tun_enabled)?;
 
-        let http_port = self.load_http_port();
-        let socks_port = self.load_socks_port();
+        let (http_port, socks_port, _) = self.load_settings_ports();
         let current_settings = self.get_settings();
         let settings = crate::SettingsData {
             api_host: Some("127.0.0.1".to_string()),
             api_port: Some(*self.api_port.read()),
             http_port,
             socks_port,
-            service_port: Some(8080),
+            service_port: Some(DEFAULT_SERVICE_PORT),
             tun_enabled: Some(tun_enabled),
             log_level: None,
             allow_lan: None,

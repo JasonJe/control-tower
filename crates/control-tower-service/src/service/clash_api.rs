@@ -97,4 +97,20 @@ impl ServiceState {
         }
         Ok(())
     }
+
+    /// Trigger Mihomo config hot-reload via PUT /configs?force=true
+    pub fn reload_config(&self) -> Result<(), String> {
+        drop(self.manager.read());
+        let url = format!("{}/configs?force=true", self.get_api_url());
+        let response = BlockingClient::new()
+            .put(&url)
+            .json(&serde_json::json!({}))
+            .send()
+            .map_err(|e| format!("Reload failed: {}", e))?;
+        if !response.status().is_success() {
+            return Err(format!("Reload failed: {}", response.status()));
+        }
+        tracing::info!("Mihomo config hot-reloaded successfully");
+        Ok(())
+    }
 }

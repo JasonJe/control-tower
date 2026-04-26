@@ -42,3 +42,17 @@ pub async fn service_stop(
         Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),
     }
 }
+
+/// POST /api/service/reload - Trigger Mihomo config hot-reload
+pub async fn service_reload(
+    state: web::Data<Arc<ServiceState>>,
+) -> HttpResponse {
+    let state = state.clone();
+    match task::spawn_blocking(move || state.reload_config()).await {
+        Ok(Ok(())) => HttpResponse::Ok().json(ApiResponse::<()>::success(())),
+        Ok(Err(e)) => HttpResponse::InternalServerError()
+            .json(ApiResponse::<()>::error(format!("Reload failed: {}", e))),
+        Err(e) => HttpResponse::InternalServerError()
+            .json(ApiResponse::<()>::error(format!("Reload task error: {}", e))),
+    }
+}

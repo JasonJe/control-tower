@@ -26,7 +26,29 @@ pub use delay_handlers::*;
 pub use logs_handlers::*;
 
 use actix_web::web;
-use actix_web::Scope;
+use actix_web::{HttpResponse, Scope};
+
+/// GET /api/config - Returns the active Mihomo config.yaml as JSON
+async fn get_config() -> HttpResponse {
+    let paths = get_control_tower_paths();
+    let config_path = &paths.active_config_path;
+
+    if !config_path.exists() {
+        return HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({})));
+    }
+
+    match std::fs::read_to_string(config_path) {
+        Ok(content) => {
+            match serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&content) {
+                Ok(json) => HttpResponse::Ok().json(ApiResponse::success(json)),
+                Err(e) => HttpResponse::InternalServerError()
+                    .json(ApiResponse::<()>::error(format!("Failed to parse config.yaml: {}", e))),
+            }
+        }
+        Err(e) => HttpResponse::InternalServerError()
+            .json(ApiResponse::<()>::error(format!("Failed to read config.yaml: {}", e))),
+    }
+}
 
 /// Returns all HTTP API routes as a Scope for use with App::service()
 pub fn configure_routes() -> Scope {
@@ -35,6 +57,7 @@ pub fn configure_routes() -> Scope {
         .route("/status", web::get().to(service_status))
         .route("/service/start", web::post().to(service_start))
         .route("/service/stop", web::post().to(service_stop))
+        .route("/service/reload", web::post().to(service_reload))
         // Proxies
         .route("/proxies", web::get().to(get_proxies))
         .route("/proxies/select", web::post().to(select_proxy))
@@ -54,7 +77,7 @@ pub fn configure_routes() -> Scope {
         .route("/rules", web::get().to(get_rules))
         .route("/rules", web::post().to(add_rule))
         .route("/rules", web::delete().to(clear_rules))
-        .route("/rules/{index}", web::delete().to(delete_rule))
+        .route("/rules/{source}/{index}", web::delete().to(delete_rule))
         // Profiles
         .route("/profiles", web::get().to(get_profiles))
         .route("/profiles", web::post().to(add_profile))

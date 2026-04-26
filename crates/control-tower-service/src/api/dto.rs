@@ -80,6 +80,12 @@ pub struct AddRuleRequest {
     pub proxy: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DeleteRulesRequest {
+    #[serde(rename = "source", default)]
+    pub source: String,
+}
+
 // ============ Profile DTOs ============
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +111,8 @@ pub struct UpdateSettingsRequest {
     pub http_port: Option<u16>,
     #[serde(rename = "socks_port", default)]
     pub socks_port: Option<u16>,
+    #[serde(rename = "mixed_port", default)]
+    pub mixed_port: Option<u16>,
     #[serde(rename = "service_port", default)]
     pub service_port: Option<u16>,
     #[serde(rename = "tun_enabled", default)]
@@ -123,6 +131,8 @@ pub struct UpdateSettingsRequest {
     pub latency_test_mode: Option<String>,
     #[serde(default)]
     pub auto_test: Option<crate::settings::AutoTestConfig>,
+    #[serde(rename = "custom-rules", default)]
+    pub custom_rules: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -527,6 +527,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
               <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
               Refresh
             </button>
+            <button class="btn ghost sm" onclick="clearCustomRules()" style="color:#f87171">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/></svg>
+              Clear Custom Rules
+            </button>
           </div>
         </div>
 
@@ -534,10 +538,25 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           <input type="text" id="rules-search" class="search-input" placeholder="Filter rules..." oninput="renderRules()">
         </div>
 
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+          <select id="rule-type" class="form-select" style="width:130px">
+            <option value="DOMAIN">DOMAIN</option>
+            <option value="DOMAIN-SUFFIX">DOMAIN-SUFFIX</option>
+            <option value="DOMAIN-KEYWORD">DOMAIN-KEYWORD</option>
+            <option value="IP-CIDR">IP-CIDR</option>
+            <option value="GEOIP">GEOIP</option>
+            <option value="PROCESS-NAME">PROCESS-NAME</option>
+            <option value="RULE-SET">RULE-SET</option>
+          </select>
+          <input type="text" id="rule-value" class="search-input" placeholder="Value (e.g. google.com)" style="flex:1">
+          <input type="text" id="rule-proxy" class="search-input" placeholder="Proxy (e.g. Mikasa)" style="flex:1">
+          <button class="btn primary sm" onclick="submitAddRule()">Add Rule</button>
+        </div>
+
         <div class="table-wrap">
           <div id="rules-loading" class="loading"><div class="spinner"></div>Loading rules...</div>
           <table class="table" id="rules-table" style="display:none">
-            <thead><tr><th style="width:60px">#</th><th>Type</th><th>Value</th><th>Proxy</th></tr></thead>
+            <thead><tr><th style="width:60px">#</th><th>Type</th><th>Value</th><th>Proxy</th><th style="width:80px">Source</th><th style="width:60px">Actions</th></tr></thead>
             <tbody id="rules-list"></tbody>
           </table>
           <div id="rules-empty" class="empty-state" style="display:none">
@@ -596,6 +615,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
             <div class="stat-icon purple"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg></div>
             <div class="stat-info"><div class="stat-value mono text-sm" id="conn-cumulative-download">0 B</div><div class="stat-label">Cumulative Download</div></div>
           </div>
+        </div>
+
+        <div class="search-wrap" style="margin-bottom:12px">
+          <input type="text" id="conn-search" class="search-input" placeholder="Search by source, target or proxy..." oninput="filterConnections()">
         </div>
 
         <div class="table-wrap">
@@ -880,6 +903,7 @@ let profilePage = 1;
 let profilePageSize = PROFILE_PAGE_SIZE;
 let currentProfileUid = null;
 let rules = [];
+let profileRulesCount = 0;
 let rulesPage = 1;
 const rulesPerPage = 50;
 let connections = [];
@@ -1594,15 +1618,23 @@ async function loadRules() {
   const l = document.getElementById('rules-loading'), t = document.getElementById('rules-table'), e = document.getElementById('rules-empty');
   l.style.display = 'flex'; t.style.display = 'none'; e.style.display = 'none';
   document.getElementById('rules-pagination').style.display = 'none';
-  try { rules = (await api('GET', '/api/rules')) || []; rulesPage = 1; renderRules(); }
-  catch (_) { rules = []; l.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load rules'; }
+  try {
+    const json = await api('GET', '/api/rules');
+    // API returns { rules: [{index, rule, source}, ...], profile_rules_count, custom_rules_count }
+    rules = json.rules || [];
+    profileRulesCount = json.profile_rules_count || 0;
+    rulesPage = 1;
+    renderRules();
+  }
+  catch (_) { rules = []; profileRulesCount = 0; l.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load rules'; }
 }
 
 function renderRules() {
   const l = document.getElementById('rules-loading'), t = document.getElementById('rules-table'), e = document.getElementById('rules-empty'), pg = document.getElementById('rules-pagination');
   const q = document.getElementById('rules-search').value.toLowerCase();
   const filtered = q ? rules.filter(r => {
-    const parts = typeof r === 'string' ? r.split(',') : [];
+    const ruleStr = typeof r === 'object' ? r.rule : r;
+    const parts = typeof ruleStr === 'string' ? ruleStr.split(',') : [];
     return parts.join(',').toLowerCase().includes(q);
   }) : rules;
   if (rules.length === 0) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; pg.style.display = 'none'; document.getElementById('rules-total-count').textContent = ''; return; }
@@ -1610,20 +1642,24 @@ function renderRules() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / rulesPerPage));
   if (rulesPage > totalPages) rulesPage = totalPages;
   const start = (rulesPage - 1) * rulesPerPage;
-  const pageRules = [...filtered].reverse().slice(start, start + rulesPerPage);
-  const pageOrigIdx = pageRules.map((_, i) => {
-    const reversedIdx = filtered.length - 1 - (start + i);
-    const ruleItem = rules.indexOf(filtered[reversedIdx]);
-    return ruleItem >= 0 ? ruleItem + 1 : reversedIdx + 1;
-  });
+  const pageRules = [...filtered].slice(start, start + rulesPerPage);
   document.getElementById('rules-list').innerHTML = pageRules.map((r, i) => {
-    const idx = start + i + 1, parts = typeof r === 'string' ? r.split(',') : [];
+    const ruleStr = typeof r === 'object' ? r.rule : r;
+    const idx = r.index || (start + i + 1);
+    const source = typeof r === 'object' ? r.source : 'profile';
+    const parts = typeof ruleStr === 'string' ? ruleStr.split(',') : [];
     const rt = parts[0] || '', rv = parts.slice(1, -1).join(','), rp = parts[parts.length - 1] || '';
     const rb = rt === 'RULE-SET' ? 'info' : 'neutral';
-    return `<tr><td class="mono text-muted">${idx}</td><td><span class="badge ${rb}">${escapeHtml(rt)}</span></td><td><span class="truncate" style="max-width:300px;display:block" title="${escapeHtml(rv)}">${escapeHtml(rv)}</span></td><td><span class="mono">${escapeHtml(rp)}</span></td></tr>`;
+    const isCustom = source === 'custom';
+    const sourceLabel = isCustom ? '<span class="badge" style="background:#1a3a1a;color:#4ade80">Custom</span>' : '<span class="badge neutral">Profile</span>';
+    const delBtn = isCustom
+      ? `<button class="btn ghost xs" onclick="deleteRule('${source}', ${idx})" title="Delete custom rule"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/><path d="M10,11v6M14,11v6"/></svg></button>`
+      : '<span class="text-muted text-xs">—</span>';
+    const rowStyle = isCustom ? '' : 'opacity:0.6';
+    return `<tr style="${rowStyle}"><td class="mono text-muted">${idx}</td><td><span class="badge ${rb}">${escapeHtml(rt)}</span></td><td><span class="truncate" style="max-width:300px;display:block" title="${escapeHtml(rv)}">${escapeHtml(rv)}</span></td><td><span class="mono">${escapeHtml(rp)}</span></td><td>${sourceLabel}</td><td>${delBtn}</td></tr>`;
   }).join('');
   pg.style.display = 'flex';
-  document.getElementById('rules-pagination-info').textContent = `Showing ${start + 1}-${Math.min(start + rulesPerPage, filtered.length)} of ${filtered.length} rules`;
+  document.getElementById('rules-pagination-info').textContent = `Showing ${start + 1}-${Math.min(start + rulesPerPage, filtered.length)} of ${filtered.length} rules (${profileRulesCount} profile, ${rules.length - profileRulesCount} custom)`;
   document.getElementById('rules-total-count').textContent = filtered.length > 0 ? `(${filtered.length})` : '';
   document.getElementById('rules-pagination-controls').innerHTML =
     `<button class="page-btn nav" onclick="goRulesPage(${rulesPage - 1})" ${rulesPage === 1 ? 'disabled' : ''}>‹</button>` +
@@ -1633,7 +1669,42 @@ function renderRules() {
     `<button class="page-btn nav" onclick="goRulesPage(${rulesPage + 1})" ${rulesPage >= totalPages ? 'disabled' : ''}>›</button>`;
 }
 
-// Rules (view-only, no add/delete)
+// Rules — view-only, no add/delete (add/delete handled below)
+
+async function submitAddRule() {
+  const type = document.getElementById('rule-type').value;
+  const value = document.getElementById('rule-value').value.trim();
+  const proxy = document.getElementById('rule-proxy').value.trim();
+  if (!value) { showToast('Rule value is required', 'error'); return; }
+  if (!proxy) { showToast('Proxy is required', 'error'); return; }
+  try {
+    await api('POST', '/api/rules', { type, value, proxy });
+    showToast('Rule added');
+    document.getElementById('rule-value').value = '';
+    document.getElementById('rule-proxy').value = '';
+    loadRules();
+  } catch (e) { showToast('Failed to add rule: ' + e.message, 'error'); }
+}
+
+async function deleteRule(source, displayIndex) {
+  if (source !== 'custom') { showToast('Profile rules cannot be deleted', 'error'); return; }
+  if (!confirm('Delete this custom rule?')) return;
+  const customIndex = displayIndex - 1;
+  try {
+    await api('DELETE', `/api/rules/custom/${customIndex}`);
+    showToast('Rule deleted');
+    loadRules();
+  } catch (e) { showToast('Failed to delete rule: ' + e.message, 'error'); }
+}
+
+async function clearCustomRules() {
+  if (!confirm('Clear all custom rules? Profile rules will remain.')) return;
+  try {
+    await api('DELETE', '/api/rules', { source: 'custom' });
+    showToast('Custom rules cleared');
+    loadRules();
+  } catch (e) { showToast('Failed to clear rules: ' + e.message, 'error'); }
+}
 
 // Connections
 function startConnections() {
@@ -1665,19 +1736,27 @@ async function loadConnections() {
   try {
     const data = await api('GET', '/api/connections');
     connections = data.connections || [];
+    const q = document.getElementById('conn-search').value.toLowerCase();
+    const filtered = q ? connections.filter(c => {
+      const meta = c.metadata || {};
+      const src = ((meta.sourceIP || '') + (meta.sourcePort ? ':' + meta.sourcePort : '')).toLowerCase();
+      const dst = ((meta.host || '') + (meta.destinationIP || '') + (meta.destinationPort ? ':' + meta.destinationPort : '')).toLowerCase();
+      const chain = (c.chains || []).join(' ').toLowerCase();
+      return src.includes(q) || dst.includes(q) || chain.includes(q);
+    }) : connections;
     let up = 0, dn = 0;
     connections.forEach(c => { up += c.upload || 0; dn += c.download || 0; });
-    document.getElementById('conn-total').textContent = connections.length;
+    document.getElementById('conn-total').textContent = filtered.length + (q ? '/' + connections.length : '');
     document.getElementById('conn-upload').textContent = formatBytes(up) + '/s';
     document.getElementById('conn-download').textContent = formatBytes(dn) + '/s';
     document.getElementById('conn-cumulative-upload').textContent = formatBytes(data.uploadTotal || 0);
     document.getElementById('conn-cumulative-download').textContent = formatBytes(data.downloadTotal || 0);
-    if (connections.length === 0) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; pg.style.display = 'none'; return; }
+    if (filtered.length === 0) { l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; pg.style.display = 'none'; e.querySelector('p').textContent = q ? 'No matching connections' : 'No connections'; return; }
     l.style.display = 'none'; t.style.display = 'table'; e.style.display = 'none';
-    const totalPages = Math.max(1, Math.ceil(connections.length / connPageSize));
+    const totalPages = Math.max(1, Math.ceil(filtered.length / connPageSize));
     if (connPage > totalPages) connPage = totalPages;
     const start = (connPage - 1) * connPageSize;
-    const items = connections.slice(start, start + connPageSize);
+    const items = filtered.slice(start, start + connPageSize);
     document.getElementById('conn-list').innerHTML = items.map((c, i) => {
       const meta = c.metadata || {};
       const src = (meta.sourceIP || '-') + (meta.sourcePort ? ':' + meta.sourcePort : '');
@@ -1696,7 +1775,7 @@ async function loadConnections() {
       </tr>`;
     }).join('');
     pg.style.display = 'flex';
-    document.getElementById('conn-pagination-info').textContent = `Showing ${start + 1}-${Math.min(start + connPageSize, connections.length)} of ${connections.length}`;
+    document.getElementById('conn-pagination-info').textContent = `Showing ${start + 1}-${Math.min(start + connPageSize, filtered.length)} of ${filtered.length}${q ? ' (filtered from ' + connections.length + ')' : ''}`;
     document.getElementById('conn-pagination-controls').innerHTML =
       `<button class="page-btn nav" onclick="goConnPage(${connPage - 1})" ${connPage === 1 ? 'disabled' : ''}>‹</button>` +
       (connPage > 1 ? `<button class="page-btn" onclick="goConnPage(${connPage - 1})">${connPage - 1}</button>` : '') +
@@ -1707,6 +1786,8 @@ async function loadConnections() {
 }
 
 function goConnPage(p) { connPage = p; loadConnections(); }
+
+function filterConnections() { connPage = 1; loadConnections(); }
 
 async function closeConnection(id) {
   try { await api('DELETE', `/api/connections/${encodeURIComponent(id)}`); showToast('Connection closed'); loadConnections(); }

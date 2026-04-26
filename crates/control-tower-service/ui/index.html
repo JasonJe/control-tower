@@ -161,6 +161,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .latency-bad{color:var(--danger)}
 .latency-timeout{color:var(--text3)}
 .sortable-th:hover{color:var(--success)}
+.sort-ind{font-size:10px;color:var(--text3)}
 
 /* Toast */
 .toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:1000;display:none;animation:slideIn 200ms ease;max-width:360px;font-size:13px;font-weight:500}
@@ -624,7 +625,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
         <div class="table-wrap">
           <div id="conn-loading" class="loading"><div class="spinner"></div>Loading connections...</div>
           <table class="table" id="conn-table" style="display:none">
-            <thead><tr><th style="width:50px">#</th><th>Source</th><th>Target</th><th>Proxy</th><th style="width:80px">Upload</th><th style="width:80px">Download</th><th style="width:70px">Duration</th><th style="width:70px">Action</th></tr></thead>
+            <thead><tr><th style="width:50px">#</th><th class="sortable-th" onclick="sortConnBy('src')" style="cursor:pointer">Source <span class="sort-ind" data-col="src"></span></th><th class="sortable-th" onclick="sortConnBy('dst')" style="cursor:pointer">Target <span class="sort-ind" data-col="dst"></span></th><th class="sortable-th" onclick="sortConnBy('proxy')" style="cursor:pointer">Proxy <span class="sort-ind" data-col="proxy"></span></th><th class="sortable-th" onclick="sortConnBy('upload')" style="cursor:pointer">Upload <span class="sort-ind" data-col="upload"></span></th><th class="sortable-th" onclick="sortConnBy('download')" style="cursor:pointer">Download <span class="sort-ind" data-col="download"></span></th><th class="sortable-th" onclick="sortConnBy('duration')" style="cursor:pointer">Duration <span class="sort-ind" data-col="duration"></span></th><th style="width:70px">Action</th></tr></thead>
             <tbody id="conn-list"></tbody>
           </table>
           <div id="conn-empty" class="empty-state" style="display:none">
@@ -911,6 +912,8 @@ let connPage = 1;
 const connPageSize = CONN_PAGE_SIZE;
 let connRefreshTimer = null;
 let connPaused = false;
+let connSortCol = null; // column key: 'src'|'dst'|'proxy'|'upload'|'download'|'duration'
+let connSortDir = 'asc'; // 'asc' or 'desc'
 let currentMode = '';
 
 function saveProxyLatencies() {
@@ -1736,6 +1739,7 @@ function onConnRefreshChange() {
 async function loadConnections() {
   const l = document.getElementById('conn-loading'), t = document.getElementById('conn-table'), e = document.getElementById('conn-empty'), pg = document.getElementById('conn-pagination');
   try {
+    updateConnSortIndicators();
     const data = await api('GET', '/api/connections');
     connections = data.connections || [];
     const q = document.getElementById('conn-search').value.toLowerCase();
@@ -1746,6 +1750,33 @@ async function loadConnections() {
       const chain = (c.chains || []).join(' ').toLowerCase();
       return src.includes(q) || dst.includes(q) || chain.includes(q);
     }) : connections;
+
+    // Apply sorting
+    if (connSortCol) {
+      filtered.sort((a, b) => {
+        const metaA = a.metadata || {}, metaB = b.metadata || {};
+        const srcA = ((metaA.sourceIP || '') + (metaA.sourcePort ? ':' + metaA.sourcePort : ''));
+        const srcB = ((metaB.sourceIP || '') + (metaB.sourcePort ? ':' + metaB.sourcePort : ''));
+        const dstA = metaA.host || ((metaA.destinationIP || '') + (metaA.destinationPort ? ':' + metaA.destinationPort : ''));
+        const dstB = metaB.host || ((metaB.destinationIP || '') + (metaB.destinationPort ? ':' + metaB.destinationPort : ''));
+        const proxyA = (a.chains && a.chains.length > 0 ? a.chains[a.chains.length - 1] : (metaA.inboundName || ''));
+        const proxyB = (b.chains && b.chains.length > 0 ? b.chains[b.chains.length - 1] : (metaB.inboundName || ''));
+        let va = 0, vb = 0;
+        switch (connSortCol) {
+          case 'src': va = srcA; vb = srcB; break;
+          case 'dst': va = dstA; vb = dstB; break;
+          case 'proxy': va = proxyA; vb = proxyB; break;
+          case 'upload': va = a.upload || 0; vb = b.upload || 0; break;
+          case 'download': va = a.download || 0; vb = b.download || 0; break;
+          case 'duration': va = a.start ? new Date(a.start).getTime() : 0; vb = b.start ? new Date(b.start).getTime() : 0; break;
+        }
+        if (typeof va === 'number') {
+          return connSortDir === 'asc' ? va - vb : vb - va;
+        }
+        return connSortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+      });
+    }
+
     let up = 0, dn = 0;
     connections.forEach(c => { up += c.upload || 0; dn += c.download || 0; });
     document.getElementById('conn-total').textContent = filtered.length + (q ? '/' + connections.length : '');
@@ -1788,6 +1819,26 @@ async function loadConnections() {
 }
 
 function goConnPage(p) { connPage = p; loadConnections(); }
+
+function sortConnBy(col) {
+  if (connSortCol === col) {
+    connSortDir = connSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    connSortCol = col;
+    connSortDir = 'asc';
+  }
+  updateConnSortIndicators();
+  connPage = 1;
+  loadConnections();
+}
+
+function updateConnSortIndicators() {
+  document.querySelectorAll('.conn-sort-ind').forEach(el => el.textContent = '');
+  if (connSortCol) {
+    const el = document.querySelector(`.sort-ind[data-col="${connSortCol}"]`);
+    if (el) el.textContent = connSortDir === 'asc' ? ' ↑' : ' ↓';
+  }
+}
 
 function filterConnections() { connPage = 1; loadConnections(); }
 

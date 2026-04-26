@@ -1777,6 +1777,7 @@ function switchRulesTab(tab) {
   document.getElementById('rules-tab').style.display = tab === 'rules' ? '' : 'none';
   document.getElementById('providers-tab').style.display = tab === 'providers' ? '' : 'none';
   if (tab === 'providers') loadProviders();
+  if (tab === 'rules') loadRules();
 }
 
 async function loadProviders() {
@@ -1841,25 +1842,31 @@ async function submitAddProvider() {
   const interval = (parseInt(document.getElementById('provider-interval').value) || 1440) * 60;
   if (!name) { showToast('Provider name is required', 'error'); return; }
   if (type === 'http' && !url) { showToast('URL is required for HTTP providers', 'error'); return; }
+  // Show loading state
+  const btn = document.querySelector('#providers-tab .btn.primary');
+  const loadingEl = document.getElementById('providers-loading');
+  if (btn) btn.disabled = true;
+  if (loadingEl) loadingEl.style.display = 'flex';
   try {
     await api('POST', '/api/rule-providers', { name, type: type, behavior, url: url || null, interval });
     showToast('Provider added');
     document.getElementById('provider-name').value = '';
     document.getElementById('provider-url').value = '';
     loadProviders();
-    // Reload rules to reflect new RULE-SET entries
-    if (rulesTab === 'rules') loadRules();
-  } catch (e) { showToast('Failed to add provider: ' + e, 'error'); }
+    loadRules();
+  } catch (e) { showToast('Failed to add provider: ' + e, 'error'); if (loadingEl) loadingEl.style.display = 'none'; if (btn) btn.disabled = false; }
 }
 
 async function deleteProvider(name) {
   if (!confirm('Delete provider "' + name + '"?')) return;
+  const loadingEl = document.getElementById('providers-loading');
+  if (loadingEl) loadingEl.style.display = 'flex';
   try {
     await api('DELETE', '/api/rule-providers/' + encodeURIComponent(name));
     showToast('Provider deleted');
     loadProviders();
-    if (rulesTab === 'rules') loadRules();
-  } catch (e) { showToast('Failed to delete provider: ' + e, 'error'); }
+    loadRules();
+  } catch (e) { showToast('Failed to delete provider: ' + e, 'error'); if (loadingEl) loadingEl.style.display = 'none'; }
 }
 
 async function refreshProviders() {
@@ -2344,10 +2351,6 @@ async function saveLatency() {
     await api('PUT', '/api/settings', {
       latency_test_mode,
       auto_test: { enabled: auto_test_enabled, interval_minutes: auto_test_interval, latency_test_mode },
-      http_port: parseInt(document.getElementById('port-http').value) || 7890,
-      socks_port: parseInt(document.getElementById('port-socks5').value) || 7891,
-      api_port: parseInt(document.getElementById('port-api').value) || 9090,
-      tun_enabled: document.getElementById('tun-enabled-input').checked,
     });
     showToast('Latency test mode saved');
     cancelEditLatency();
@@ -2384,10 +2387,6 @@ async function saveAutoTestSettings() {
   await api('PUT', '/api/settings', {
     latency_test_mode,
     auto_test: { enabled: auto_test_enabled, interval_minutes: auto_test_interval, latency_test_mode },
-    http_port: parseInt(document.getElementById('port-http').value) || 7890,
-    socks_port: parseInt(document.getElementById('port-socks5').value) || 7891,
-    api_port: parseInt(document.getElementById('port-api').value) || 9090,
-    tun_enabled: document.getElementById('tun-enabled-input') && document.getElementById('tun-enabled-input').checked || false,
   });
 }
 

@@ -46,6 +46,8 @@ pub async fn put_settings(
         // Preserve rules-related fields — managed by rules subsystem
         custom_rules: current.custom_rules.clone(),
         profile_rules_count: current.profile_rules_count,
+        auto_update_on_startup: current.auto_update_on_startup,
+        rule_providers: current.rule_providers.clone(),
     };
 
     let state = state.clone();

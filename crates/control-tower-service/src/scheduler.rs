@@ -301,6 +301,100 @@ impl ServiceState {
     }
 }
 
+impl ServiceState {
+    /// Check and update ALL profiles with subscription URLs (used for startup auto-update).
+    /// Returns a list of (profile_uid, success) for each profile that was checked.
+    pub fn check_and_update_all_profiles(&self) -> Vec<(String, bool)> {
+        check_and_update_all_profiles()
+    }
+}
+
+/// Check and update ALL profiles with subscription URLs (used for startup auto-update).
+/// Returns a list of (profile_uid, success) for each profile that was updated.
+pub fn check_and_update_all_profiles() -> Vec<(String, bool)> {
+    let exe_dir = control_tower_service_core::exe_dir();
+    let profiles_path = exe_dir.join("profiles.yaml");
+    let profiles_dir = exe_dir.join("profiles");
+
+    if !profiles_path.exists() {
+        tracing::info!("No profiles.yaml found, skipping startup profile check");
+        return vec![];
+    }
+
+    let content = match std::fs::read_to_string(&profiles_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Failed to read profiles.yaml for startup check: {}", e);
+            return vec![];
+        }
+    };
+
+    #[derive(serde::Deserialize)]
+    struct ProfilesYaml {
+        items: Vec<ProfileItem>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ProfileItem {
+        uid: String,
+        file: Option<String>,
+        url: Option<String>,
+    }
+
+    let yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
+        Ok(y) => y,
+        Err(e) => {
+            tracing::warn!("Failed to parse profiles.yaml for startup check: {}", e);
+            return vec![];
+        }
+    };
+
+    let mut results = vec![];
+
+    for item in yaml.items {
+        let url = match &item.url {
+            Some(u) if !u.is_empty() => u.clone(),
+            _ => {
+                // No URL, skip
+                results.push((item.uid, false));
+                continue;
+            }
+        };
+
+        // Resolve profile file path
+        let profile_file = if let Some(f) = item.file.as_ref() {
+            let p = profiles_dir.join(f);
+            if p.exists() || !f.is_empty() {
+                p
+            } else if item.uid.len() > 8 {
+                profiles_dir.join(format!("{}.yaml", &item.uid[..8]))
+            } else {
+                profiles_dir.join(format!("{}.yaml", item.uid))
+            }
+        } else if item.uid.len() > 8 {
+            profiles_dir.join(format!("{}.yaml", &item.uid[..8]))
+        } else {
+            profiles_dir.join(format!("{}.yaml", item.uid))
+        };
+
+        tracing::info!("Checking profile {} ({}) for updates", item.uid, url);
+
+        let path = std::path::PathBuf::from(&profile_file);
+        match update_profile_subscription(&url, &path) {
+            Ok(()) => {
+                tracing::info!("Profile {} updated successfully", item.uid);
+                results.push((item.uid, true));
+            }
+            Err(e) => {
+                tracing::warn!("Failed to update profile {}: {}", item.uid, e);
+                results.push((item.uid, false));
+            }
+        }
+    }
+
+    results
+}
+
 /// Update a profile subscription (download new content and write to file).
 /// Used by cron job auto-update.
 pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::Path) -> Result<(), String> {

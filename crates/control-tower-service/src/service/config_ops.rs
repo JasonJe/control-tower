@@ -184,6 +184,8 @@ impl ServiceState {
             auto_test: None,
             custom_rules: current_settings.custom_rules,
             profile_rules_count: current_settings.profile_rules_count,
+            auto_update_on_startup: current_settings.auto_update_on_startup,
+            rule_providers: current_settings.rule_providers.clone(),
         };
         self.save_settings(&settings)?;
 
@@ -317,6 +319,8 @@ impl ServiceState {
             auto_test: current_settings.auto_test,
             custom_rules: current_settings.custom_rules,
             profile_rules_count: current_settings.profile_rules_count,
+            auto_update_on_startup: current_settings.auto_update_on_startup,
+            rule_providers: current_settings.rule_providers.clone(),
         };
         self.save_settings(&settings)?;
 

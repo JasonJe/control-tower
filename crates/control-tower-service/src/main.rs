@@ -960,6 +960,20 @@ fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Re
     // Load cron jobs on startup
     state.load_cron_jobs();
 
+    // Run startup profile auto-update if enabled
+    {
+        let settings = state.get_settings();
+        if settings.auto_update_on_startup.unwrap_or(false) {
+            tracing::info!("Auto-update on startup enabled, checking all profile subscriptions");
+            let state_clone = state.clone();
+            thread::spawn(move || {
+                let results = state_clone.check_and_update_all_profiles();
+                let updated = results.iter().filter(|(_, s)| *s).count();
+                tracing::info!("Startup profile update complete: {}/{} profiles updated", updated, results.len());
+            });
+        }
+    }
+
     let mut last_cron_check = std::time::Instant::now();
     const CRON_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -994,6 +1008,34 @@ fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Re
                         let _span = tracing::info_span!("auto_latency_test");
                         test_state.run_auto_latency_test();
                     });
+                }
+            }
+
+            // Periodic rule provider refresh — force Mihomo to re-evaluate
+            // providers that have built-in update intervals
+            {
+                let settings = state.get_settings();
+                if let Some(ref providers) = settings.rule_providers {
+                    if !providers.is_empty() {
+                        let api_port = *state.api_port.read();
+                        let url = format!("http://127.0.0.1:{}/configs?force=true", api_port);
+                        match reqwest::blocking::Client::new()
+                            .put(&url)
+                            .json(&serde_json::json!({}))
+                            .timeout(std::time::Duration::from_secs(10))
+                            .send()
+                        {
+                            Ok(res) if res.status().is_success() => {
+                                tracing::info!("Periodic rule provider refresh triggered");
+                            }
+                            Ok(res) => {
+                                tracing::warn!("Periodic provider refresh returned: {}", res.status());
+                            }
+                            Err(e) => {
+                                tracing::warn!("Periodic provider refresh failed: {}", e);
+                            }
+                        }
+                    }
                 }
             }
 

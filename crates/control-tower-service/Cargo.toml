@@ -27,6 +27,7 @@ clap = { workspace = true }
 reqwest = { workspace = true }
 actix-web = { workspace = true }
 actix-rt = { workspace = true }
+actix-cors = "0.7"
 uuid = { workspace = true }
 signal-hook = "0.3"
 percent-encoding = "2"

@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use actix_web::{web, HttpResponse};
-use tokio::task;
 
 use crate::ServiceState;
 use control_tower_service_core::profiles::RuleProviderConfig;
@@ -92,6 +91,7 @@ pub struct RuleProviderUpdateRequest {
 
 /// POST /api/rule-providers — Add or update a rule provider
 pub async fn add_rule_provider(
+    shared_state: web::Data<Arc<ServiceState>>,
     body: web::Json<RuleProviderRequest>,
 ) -> HttpResponse {
     let req = body.into_inner();
@@ -128,6 +128,7 @@ pub async fn add_rule_provider(
     let paths = get_control_tower_paths();
     let config_store = ActiveConfigStore::new(paths.clone());
     let state = ServiceState::new();
+    state.load_settings();
 
     let result = tokio::task::spawn_blocking(move || {
         let mut settings = state.get_settings();
@@ -162,9 +163,19 @@ pub async fn add_rule_provider(
 
     match result {
         Ok(Ok(())) => {
-            let state = ServiceState::new();
-            if let Err(e) = task::spawn_blocking(move || state.reload_config()).await {
-                tracing::error!("Reload failed: {}", e);
+            // Reload using the shared state's api_port
+            let api_port = *shared_state.api_port.read();
+            let url = format!("http://127.0.0.1:{}/configs?force=true", api_port);
+            match reqwest::Client::new().put(&url).json(&serde_json::json!({})).send().await {
+                Ok(res) if res.status().is_success() => {
+                    tracing::info!("Mihomo config hot-reloaded");
+                }
+                Ok(res) => {
+                    tracing::warn!("Reload returned status: {}", res.status());
+                }
+                Err(e) => {
+                    tracing::warn!("Reload failed: {}", e);
+                }
             }
             tracing::info!("Rule provider '{}' added/updated", req.name);
             HttpResponse::Ok().json(ApiResponse::<()>::success(()))
@@ -182,6 +193,7 @@ pub async fn add_rule_provider(
 
 /// PUT /api/rule-providers/{name} — Update interval for a rule provider
 pub async fn update_rule_provider(
+    shared_state: web::Data<Arc<ServiceState>>,
     path: web::Path<String>,
     body: web::Json<RuleProviderUpdateRequest>,
 ) -> HttpResponse {
@@ -192,6 +204,7 @@ pub async fn update_rule_provider(
     let paths = get_control_tower_paths();
     let config_store = ActiveConfigStore::new(paths.clone());
     let state = ServiceState::new();
+    state.load_settings();
 
     let result = tokio::task::spawn_blocking(move || {
         let mut settings = state.get_settings();
@@ -218,9 +231,19 @@ pub async fn update_rule_provider(
 
     match result {
         Ok(Ok(())) => {
-            let state = ServiceState::new();
-            if let Err(e) = task::spawn_blocking(move || state.reload_config()).await {
-                tracing::error!("Reload failed: {}", e);
+            // Use the shared state's api_port for the reload URL
+            let api_port = *shared_state.api_port.read();
+            let url = format!("http://127.0.0.1:{}/configs?force=true", api_port);
+            match reqwest::Client::new().put(&url).json(&serde_json::json!({})).send().await {
+                Ok(res) if res.status().is_success() => {
+                    tracing::info!("Mihomo config hot-reloaded");
+                }
+                Ok(res) => {
+                    tracing::warn!("Reload returned status: {}", res.status());
+                }
+                Err(e) => {
+                    tracing::warn!("Reload failed: {}", e);
+                }
             }
             tracing::info!("Rule provider '{}' updated", name);
             HttpResponse::Ok().json(ApiResponse::<()>::success(()))
@@ -242,6 +265,7 @@ pub async fn update_rule_provider(
 
 /// DELETE /api/rule-providers/{name} — Delete a rule provider
 pub async fn delete_rule_provider(
+    shared_state: web::Data<Arc<ServiceState>>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let name = path.into_inner();
@@ -250,6 +274,7 @@ pub async fn delete_rule_provider(
     let paths = get_control_tower_paths();
     let config_store = ActiveConfigStore::new(paths.clone());
     let state = ServiceState::new();
+    state.load_settings();
 
     let result = tokio::task::spawn_blocking(move || {
         let mut settings = state.get_settings();
@@ -287,9 +312,19 @@ pub async fn delete_rule_provider(
 
     match result {
         Ok(Ok(())) => {
-            let state = ServiceState::new();
-            if let Err(e) = task::spawn_blocking(move || state.reload_config()).await {
-                tracing::error!("Reload failed: {}", e);
+            // Use the shared state's api_port for the reload URL
+            let api_port = *shared_state.api_port.read();
+            let url = format!("http://127.0.0.1:{}/configs?force=true", api_port);
+            match reqwest::Client::new().put(&url).json(&serde_json::json!({})).send().await {
+                Ok(res) if res.status().is_success() => {
+                    tracing::info!("Mihomo config hot-reloaded");
+                }
+                Ok(res) => {
+                    tracing::warn!("Reload returned status: {}", res.status());
+                }
+                Err(e) => {
+                    tracing::warn!("Reload failed: {}", e);
+                }
             }
             tracing::info!("Rule provider '{}' deleted", name);
             HttpResponse::Ok().json(ApiResponse::<()>::success(()))
@@ -311,18 +346,20 @@ pub async fn delete_rule_provider(
 
 /// POST /api/rule-providers/refresh-all — Force refresh all rule providers
 pub async fn refresh_all_rule_providers(state: web::Data<Arc<ServiceState>>) -> HttpResponse {
-    match task::spawn_blocking(move || state.reload_config()).await {
-        Ok(Ok(())) => {
+    let port = *state.api_port.read();
+    let url = format!("http://127.0.0.1:{}/configs?force=true", port);
+    match reqwest::Client::new().put(&url).json(&serde_json::json!({})).send().await {
+        Ok(res) if res.status().is_success() => {
             tracing::info!("All rule providers refreshed via API");
             HttpResponse::Ok().json(ApiResponse::<()>::success(()))
         }
-        Ok(Err(e)) => {
+        Ok(res) => {
             HttpResponse::InternalServerError()
-                .json(ApiResponse::<()>::error(format!("Reload failed: {}", e)))
+                .json(ApiResponse::<()>::error(format!("Reload failed: {}", res.status())))
         }
         Err(e) => {
             HttpResponse::InternalServerError()
-                .json(ApiResponse::<()>::error(format!("Task error: {}", e)))
+                .json(ApiResponse::<()>::error(format!("Reload failed: {}", e)))
         }
     }
 }

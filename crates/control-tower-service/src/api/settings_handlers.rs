@@ -4,6 +4,8 @@ use actix_web::{web, HttpResponse};
 use std::sync::Arc;
 use tokio::task;
 
+use crate::settings::SettingsData;
+
 use crate::ServiceState;
 
 use super::{ApiResponse, UpdateSettingsRequest, ApplyPortsRequest, ApplyTunRequest};
@@ -22,11 +24,12 @@ pub async fn put_settings(
     body: web::Json<UpdateSettingsRequest>,
 ) -> HttpResponse {
     // Build SettingsData from request
-    let settings = crate::settings::SettingsData {
+    let settings = SettingsData {
         api_host: body.api_host.clone(),
         api_port: body.api_port,
         http_port: body.http_port,
         socks_port: body.socks_port,
+        mixed_port: body.mixed_port,
         service_port: body.service_port,
         tun_enabled: body.tun_enabled,
         log_level: body.log_level.clone(),
@@ -36,6 +39,8 @@ pub async fn put_settings(
         mode: body.mode.clone(),
         latency_test_mode: body.latency_test_mode.clone(),
         auto_test: body.auto_test.clone(),
+        custom_rules: body.custom_rules.clone(),
+        profile_rules_count: None,
     };
 
     let state = state.clone();

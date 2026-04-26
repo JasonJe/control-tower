@@ -75,6 +75,7 @@ impl ServiceState {
             api_port: Some(DEFAULT_MIHOMO_API_PORT),
             http_port: Some(DEFAULT_MIHOMO_HTTP_PORT),
             socks_port: Some(DEFAULT_MIHOMO_SOCKS_PORT),
+            mixed_port: None,
             service_port: Some(DEFAULT_SERVICE_PORT),
             tun_enabled: Some(false),
             log_level: Some("info".to_string()),
@@ -84,6 +85,8 @@ impl ServiceState {
             mode: Some("rule".to_string()),
             latency_test_mode: Some("http".to_string()),
             auto_test: None,
+            custom_rules: None,
+            profile_rules_count: None,
         };
 
         let yaml = serde_yaml_ng::to_string(&default_settings)

@@ -1669,6 +1669,8 @@ function renderRules() {
     `<button class="page-btn nav" onclick="goRulesPage(${rulesPage + 1})" ${rulesPage >= totalPages ? 'disabled' : ''}>›</button>`;
 }
 
+function goRulesPage(p) { rulesPage = p; renderRules(); }
+
 // Rules — view-only, no add/delete (add/delete handled below)
 
 async function submitAddRule() {

@@ -281,10 +281,13 @@ impl ActiveConfigStore {
             })
             .unwrap_or_default();
 
-        // Split at profile_rules_count: these are the profile rules (come after custom)
+        // existing_rules = [custom rules (0..custom_count)) + profile rules (custom_count..)]
+        // custom_count = total - profile_rules_count
+        // profile_rules are AFTER custom rules, so skip the custom portion
+        let custom_count = existing_rules.len().saturating_sub(profile_rules_count);
         let profile_rules: Vec<String> = existing_rules
             .iter()
-            .take(profile_rules_count)
+            .skip(custom_count)
             .cloned()
             .collect();
 

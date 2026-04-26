@@ -23,7 +23,11 @@ pub async fn put_settings(
     state: web::Data<Arc<ServiceState>>,
     body: web::Json<UpdateSettingsRequest>,
 ) -> HttpResponse {
-    // Build SettingsData from request
+    // Read current settings to preserve custom_rules and profile_rules_count
+    // These are maintained by the rules/profile subsystems and must not be
+    // cleared when the user saves settings from the UI.
+    let current = state.get_settings();
+
     let settings = SettingsData {
         api_host: body.api_host.clone(),
         api_port: body.api_port,
@@ -39,8 +43,9 @@ pub async fn put_settings(
         mode: body.mode.clone(),
         latency_test_mode: body.latency_test_mode.clone(),
         auto_test: body.auto_test.clone(),
-        custom_rules: body.custom_rules.clone(),
-        profile_rules_count: None,
+        // Preserve rules-related fields — managed by rules subsystem
+        custom_rules: current.custom_rules.clone(),
+        profile_rules_count: current.profile_rules_count,
     };
 
     let state = state.clone();

@@ -132,6 +132,7 @@ pub struct UpdateSettingsRequest {
     #[serde(default)]
     pub auto_test: Option<crate::settings::AutoTestConfig>,
     #[serde(rename = "custom-rules", default)]
+    #[allow(unused)]
     pub custom_rules: Option<Vec<String>>,
 }
 

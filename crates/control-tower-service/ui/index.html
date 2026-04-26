@@ -1825,13 +1825,19 @@ document.getElementById('intervalModalMins').addEventListener('keydown', e => { 
 document.getElementById('intervalModalSaveBtn').addEventListener('click', async () => {
   const mins = parseInt(document.getElementById('intervalModalMins').value);
   if (!mins || mins < 1 || mins > 10080) { showToast('Enter a value between 1 and 10080 minutes', 'error'); return; }
-  const name = intervalEditName; // capture before closing modal
+  const name = intervalEditName;
+  const btn = document.getElementById('intervalModalSaveBtn');
+  btn.disabled = true;
+  btn.innerHTML = 'Saving...';
   closeIntervalModal();
+  showToast('Updating interval...');
   try {
     await api('PUT', '/api/rule-providers/' + encodeURIComponent(name), { interval: mins * 60 });
     showToast('Interval updated');
     loadProviders();
-  } catch (e) { showToast('Failed to update: ' + e, 'error'); loadProviders(); }
+  } catch (e) { showToast('Failed to update: ' + e, 'error'); }
+  btn.disabled = false;
+  btn.innerHTML = 'Save';
 });
 
 async function submitAddProvider() {

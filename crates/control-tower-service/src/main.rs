@@ -977,6 +977,9 @@ fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Re
     let mut last_cron_check = std::time::Instant::now();
     const CRON_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
+    // Track last provider refresh separately — respects provider's configured interval
+    let mut last_provider_refresh = std::time::Instant::now();
+
     // Main loop - keep accepting connections until shutdown
     // Note: In production, this should use proper async I/O with tokio
     while !cli::SHUTDOWN.load(Ordering::SeqCst) {
@@ -1011,29 +1014,41 @@ fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Re
                 }
             }
 
-            // Periodic rule provider refresh — force Mihomo to re-evaluate
-            // providers that have built-in update intervals
+            // Periodic rule provider refresh — respects each provider's configured interval.
+            // Only triggers PUT /configs?force=true when the minimum interval across all
+            // providers has elapsed since the last refresh.
             {
                 let settings = state.get_settings();
                 if let Some(ref providers) = settings.rule_providers {
                     if !providers.is_empty() {
-                        let api_port = *state.api_port.read();
-                        let url = format!("http://127.0.0.1:{}/configs?force=true", api_port);
-                        match reqwest::blocking::Client::new()
-                            .put(&url)
-                            .json(&serde_json::json!({}))
-                            .timeout(std::time::Duration::from_secs(10))
-                            .send()
-                        {
-                            Ok(res) if res.status().is_success() => {
-                                tracing::info!("Periodic rule provider refresh triggered");
+                        // Find the shortest interval among all providers
+                        let min_interval_secs = providers.iter()
+                            .map(|p| p.interval)
+                            .filter(|&i| i > 0)
+                            .min()
+                            .unwrap_or(3600)     // default 1h if no interval set
+                            .max(60) as u64;      // at least every 60s
+                        let elapsed = last_provider_refresh.elapsed().as_secs();
+                        if elapsed >= min_interval_secs {
+                            let api_port = *state.api_port.read();
+                            let url = format!("http://127.0.0.1:{}/configs?force=true", api_port);
+                            match reqwest::blocking::Client::new()
+                                .put(&url)
+                                .json(&serde_json::json!({}))
+                                .timeout(std::time::Duration::from_secs(10))
+                                .send()
+                            {
+                                Ok(res) if res.status().is_success() => {
+                                    tracing::info!("Periodic rule provider refresh triggered (min interval {}s)", min_interval_secs);
+                                }
+                                Ok(res) => {
+                                    tracing::warn!("Periodic provider refresh returned: {}", res.status());
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Periodic provider refresh failed: {}", e);
+                                }
                             }
-                            Ok(res) => {
-                                tracing::warn!("Periodic provider refresh returned: {}", res.status());
-                            }
-                            Err(e) => {
-                                tracing::warn!("Periodic provider refresh failed: {}", e);
-                            }
+                            last_provider_refresh = std::time::Instant::now();
                         }
                     }
                 }

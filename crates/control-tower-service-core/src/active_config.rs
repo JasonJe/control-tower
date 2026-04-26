@@ -150,6 +150,8 @@ impl ActiveConfigStore {
             "http-port",
             "external-controller",
             "tun",
+            // NOTE: "rule-providers" is NOT preserved here — it is loaded separately
+            // from settings.yaml and injected via set_rule_providers after replace_from_profile.
             // NOTE: "rules" is NOT preserved here — rules come from the profile file
             // and custom user rules are appended separately via custom_rules parameter.
         ];
@@ -185,6 +187,37 @@ impl ActiveConfigStore {
         // Get or create the rules array
         let rules = Self::get_or_create_rules_array(&mut yaml)?;
         rules.push(serde_yaml_ng::Value::String(rule.to_string()));
+
+        self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)
+    }
+
+    /// Prepend a single rule to the rules array (insert at top, highest priority).
+    pub fn prepend_rule(&self, rule: &str) -> Result<()> {
+        let content = std::fs::read_to_string(&self.paths.active_config_path)?;
+        let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)?;
+
+        let rules = Self::get_or_create_rules_array(&mut yaml)?;
+        rules.insert(0, serde_yaml_ng::Value::String(rule.to_string()));
+
+        self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)
+    }
+
+    /// Remove a rule from the rules array by its string content.
+    pub fn remove_rule_by_content(&self, rule_content: &str) -> Result<()> {
+        let content = std::fs::read_to_string(&self.paths.active_config_path)?;
+        let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)?;
+
+        let rules = yaml
+            .get_mut("rules")
+            .and_then(|v| v.as_sequence_mut())
+            .ok_or_else(|| anyhow::anyhow!("No rules found in config"))?;
+
+        let original_len = rules.len();
+        rules.retain(|r| !r.as_str().map_or(false, |s| s == rule_content));
+
+        if rules.len() == original_len {
+            anyhow::bail!("Rule not found: {}", rule_content);
+        }
 
         self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)
     }
@@ -329,6 +362,47 @@ impl ActiveConfigStore {
         yaml.get_mut("rules")
             .and_then(|v| v.as_sequence_mut())
             .ok_or_else(|| anyhow::anyhow!("rules is not an array"))
+    }
+
+    /// Set the entire `rule-providers` section in the active config.yaml.
+    /// Writes as a map keyed by provider name (Mihomo format), replacing any existing section.
+    pub fn set_rule_providers(&self, providers: &[crate::profiles::RuleProviderConfig]) -> Result<()> {
+        
+        let content = if self.paths.active_config_path.exists() {
+            std::fs::read_to_string(&self.paths.active_config_path)?
+        } else {
+            String::new()
+        };
+        let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)
+            .unwrap_or(serde_yaml_ng::Value::Mapping(serde_yaml_ng::Mapping::new()));
+
+        // Build a map keyed by provider name (Mihomo format)
+        let rp_map: serde_yaml_ng::Mapping = providers
+            .iter()
+            .map(|p| {
+                let key = serde_yaml_ng::Value::String(p.name.clone());
+                let value = serde_yaml_ng::to_value(p)
+                    .unwrap_or(serde_yaml_ng::Value::Mapping(serde_yaml_ng::Mapping::new()));
+                (key, value)
+            })
+            .collect();
+
+        if let Some(map) = yaml.as_mapping_mut() {
+            map.insert("rule-providers".into(), serde_yaml_ng::Value::Mapping(rp_map));
+        }
+        self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)
+    }
+
+    /// Remove a specific rule provider by name from the active config.yaml.
+    pub fn remove_rule_provider(&self, name: &str) -> Result<()> {
+        let content = std::fs::read_to_string(&self.paths.active_config_path)?;
+        let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)?;
+        if let Some(map) = yaml.as_mapping_mut() {
+            if let Some(rp) = map.get_mut("rule-providers").and_then(|v| v.as_mapping_mut()) {
+                rp.remove(&serde_yaml_ng::Value::String(name.into()));
+            }
+        }
+        self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)
     }
 }
 

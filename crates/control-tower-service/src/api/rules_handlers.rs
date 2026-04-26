@@ -9,7 +9,6 @@
 use actix_web::{web, HttpResponse};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::task;
 
 use crate::ServiceState;
 use crate::settings::SettingsData;
@@ -298,17 +297,10 @@ pub async fn add_rule(
             .json(ApiResponse::<()>::error(format!("Failed to merge rules: {}", e)));
     }
 
-    // Hot-reload Mihomo via API
-    let state = state.clone();
-    match task::spawn_blocking(move || state.reload_config()).await {
-        Ok(Ok(())) => HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
+    // Config.yaml updated — Mihomo will pick up on next hot-reload or manual refresh
+    HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
             "rule": rule
-        }))),
-        Ok(Err(e)) => HttpResponse::InternalServerError()
-            .json(ApiResponse::<()>::error(format!("Rule saved but reload failed: {}", e))),
-        Err(e) => HttpResponse::InternalServerError()
-            .json(ApiResponse::<()>::error(format!("Reload task error: {}", e))),
-    }
+    })))
 }
 
 /// DELETE /api/rules/{source}/{index} - Remove a custom rule
@@ -316,7 +308,7 @@ pub async fn add_rule(
 /// - source="profile" → 400 error (profile rules cannot be deleted)
 /// - source="custom"  → delete custom-rules[index] (0-based), merge and hot-reload
 pub async fn delete_rule(
-    state: web::Data<Arc<ServiceState>>,
+    _state: web::Data<Arc<ServiceState>>,
     path: web::Path<(String, usize)>,
 ) -> HttpResponse {
     let (source, index) = path.into_inner();
@@ -385,16 +377,9 @@ pub async fn delete_rule(
             .json(ApiResponse::<()>::error(format!("Failed to merge rules: {}", e)));
     }
 
-    let state = state.clone();
-    match task::spawn_blocking(move || state.reload_config()).await {
-        Ok(Ok(())) => HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
+    HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
             "removed": removed
-        }))),
-        Ok(Err(e)) => HttpResponse::InternalServerError()
-            .json(ApiResponse::<()>::error(format!("Rule removed but reload failed: {}", e))),
-        Err(e) => HttpResponse::InternalServerError()
-            .json(ApiResponse::<()>::error(format!("Reload task error: {}", e))),
-    }
+    })))
 }
 
 /// DELETE /api/rules - Clear custom rules
@@ -402,7 +387,7 @@ pub async fn delete_rule(
 /// - body.source="profile" → 400 error
 /// - body.source="custom"  → clear custom-rules, merge and hot-reload
 pub async fn clear_rules(
-    state: web::Data<Arc<ServiceState>>,
+    _state: web::Data<Arc<ServiceState>>,
     body: web::Json<super::DeleteRulesRequest>,
 ) -> HttpResponse {
     if body.source == "profile" {
@@ -460,14 +445,7 @@ pub async fn clear_rules(
             .json(ApiResponse::<()>::error(format!("Failed to merge rules: {}", e)));
     }
 
-    let state = state.clone();
-    match task::spawn_blocking(move || state.reload_config()).await {
-        Ok(Ok(())) => HttpResponse::Ok().json(ApiResponse::<()>::success(())),
-        Ok(Err(e)) => HttpResponse::InternalServerError()
-            .json(ApiResponse::<()>::error(format!("Rules cleared but reload failed: {}", e))),
-        Err(e) => HttpResponse::InternalServerError()
-            .json(ApiResponse::<()>::error(format!("Reload task error: {}", e))),
-    }
+    HttpResponse::Ok().json(ApiResponse::<()>::success(()))
 }
 
 /// Write the custom-rules list into settings.yaml, preserving all other fields.

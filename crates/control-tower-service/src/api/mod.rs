@@ -13,6 +13,7 @@ mod profile_handlers;
 mod settings_handlers;
 mod delay_handlers;
 mod logs_handlers;
+mod rule_provider_handlers;
 
 pub use dto::*;
 pub use helpers::*;
@@ -24,6 +25,7 @@ pub use profile_handlers::*;
 pub use settings_handlers::*;
 pub use delay_handlers::*;
 pub use logs_handlers::*;
+pub use rule_provider_handlers::*;
 
 use actix_web::web;
 use actix_web::{HttpResponse, Scope};
@@ -78,6 +80,12 @@ pub fn configure_routes() -> Scope {
         .route("/rules", web::post().to(add_rule))
         .route("/rules", web::delete().to(clear_rules))
         .route("/rules/{source}/{index}", web::delete().to(delete_rule))
+        // Rule Providers
+        .route("/rule-providers", web::get().to(get_rule_providers))
+        .route("/rule-providers", web::post().to(add_rule_provider))
+        .route("/rule-providers/{name}", web::put().to(update_rule_provider))
+        .route("/rule-providers/{name}", web::delete().to(delete_rule_provider))
+        .route("/rule-providers/refresh-all", web::post().to(refresh_all_rule_providers))
         // Profiles
         .route("/profiles", web::get().to(get_profiles))
         .route("/profiles", web::post().to(add_profile))
@@ -85,6 +93,7 @@ pub fn configure_routes() -> Scope {
         .route("/profiles/{id}", web::patch().to(update_profile))
         .route("/profiles/{id}/refresh", web::post().to(refresh_profile))
         .route("/profiles/{id}", web::delete().to(delete_profile))
+        .route("/profiles/check-updates", web::post().to(check_all_profiles))
         // Settings
         .route("/settings", web::get().to(get_settings))
         .route("/settings", web::put().to(put_settings))

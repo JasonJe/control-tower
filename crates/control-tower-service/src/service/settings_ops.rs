@@ -87,6 +87,8 @@ impl ServiceState {
             auto_test: None,
             custom_rules: None,
             profile_rules_count: None,
+            auto_update_on_startup: None,
+            rule_providers: None,
         };
 
         let yaml = serde_yaml_ng::to_string(&default_settings)
@@ -161,6 +163,10 @@ impl ServiceState {
         if new_settings.mode.is_some() { merged.mode = new_settings.mode.clone(); }
         if new_settings.latency_test_mode.is_some() { merged.latency_test_mode = new_settings.latency_test_mode.clone(); }
         if new_settings.auto_test.is_some() { merged.auto_test = new_settings.auto_test.clone(); }
+        if new_settings.custom_rules.is_some() { merged.custom_rules = new_settings.custom_rules.clone(); }
+        if new_settings.profile_rules_count.is_some() { merged.profile_rules_count = new_settings.profile_rules_count; }
+        if new_settings.auto_update_on_startup.is_some() { merged.auto_update_on_startup = new_settings.auto_update_on_startup; }
+        if new_settings.rule_providers.is_some() { merged.rule_providers = new_settings.rule_providers.clone(); }
 
         let yaml_str = serde_yaml_ng::to_string(&merged)
             .map_err(|e| format!("Failed to serialize settings: {}", e))?;

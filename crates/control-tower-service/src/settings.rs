@@ -89,7 +89,14 @@ pub struct SettingsData {
     pub custom_rules: Option<Vec<String>>,
     #[serde(rename = "profile-rules-count", default, skip_serializing_if = "Option::is_none")]
     pub profile_rules_count: Option<usize>,
+    #[serde(rename = "auto-update-on-startup", default, skip_serializing_if = "Option::is_none")]
+    pub auto_update_on_startup: Option<bool>,
+    #[serde(rename = "rule-providers", default, skip_serializing_if = "Option::is_none")]
+    pub rule_providers: Option<Vec<RuleProviderConfig>>,
 }
+
+/// Rule provider configuration — re-exported from control-tower-service-core
+pub use control_tower_service_core::profiles::RuleProviderConfig;
 
 impl Default for SettingsData {
     fn default() -> Self {
@@ -110,6 +117,8 @@ impl Default for SettingsData {
             auto_test: Some(AutoTestConfig::default()),
             custom_rules: None,
             profile_rules_count: None,
+            auto_update_on_startup: None,
+            rule_providers: None,
         }
     }
 }

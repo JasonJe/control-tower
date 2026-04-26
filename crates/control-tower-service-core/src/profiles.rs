@@ -27,3 +27,28 @@ pub struct ProfilesYaml {
     pub current: Option<String>,
     pub items: Vec<ProfileItem>,
 }
+
+/// Rule provider configuration matching Mihomo's rule-providers schema.
+/// This is stored in settings.yaml and written to config.yaml.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleProviderConfig {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub behavior: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default = "default_interval")]
+    pub interval: u32,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub lazy: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
+}
+
+fn default_interval() -> u32 { 86400 }
+fn default_true() -> bool { true }

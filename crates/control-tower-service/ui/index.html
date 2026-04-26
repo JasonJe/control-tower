@@ -252,6 +252,11 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 /* Search no results */
 .search-no-results{padding:24px;text-align:center;color:var(--text3);font-size:13px;border-top:1px solid var(--border)}
 
+/* Tab buttons */
+.tab-btn{background:none;border:none;padding:8px 14px;font-size:13px;font-weight:500;color:var(--text3);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all 150ms}
+.tab-btn:hover{color:var(--text)}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+
 /* Row hover cursor */
 .table tbody tr{cursor:default}
 .table tbody tr.row-action{cursor:pointer}
@@ -341,6 +346,17 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
               Refresh
             </button>
           </div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-header">
+            <div class="card-title">Traffic</div>
+            <div style="display:flex;gap:16px;font-size:12px">
+              <span style="color:var(--success)">↑ <span id="traffic-up-current">-</span>/s</span>
+              <span style="color:var(--warning)">↓ <span id="traffic-down-current">-</span>/s</span>
+            </div>
+          </div>
+          <canvas id="traffic-chart" style="width:100%;height:120px;display:block"></canvas>
         </div>
 
         <div class="stat-grid">
@@ -535,6 +551,13 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           </div>
         </div>
 
+        <div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:0">
+          <button class="tab-btn active" id="tab-rules-btn" onclick="switchRulesTab('rules')">Rules</button>
+          <button class="tab-btn" id="tab-providers-btn" onclick="switchRulesTab('providers')">Rule Providers</button>
+        </div>
+
+        <!-- Rules Tab -->
+        <div id="rules-tab">
         <div style="margin-bottom:12px">
           <input type="text" id="rules-search" class="search-input" placeholder="Filter rules..." oninput="renderRules()">
         </div>
@@ -568,6 +591,42 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           <div id="rules-pagination" class="pagination" style="display:none">
             <div class="pagination-info" id="rules-pagination-info"></div>
             <div class="pagination-controls" id="rules-pagination-controls"></div>
+          </div>
+        </div>
+        </div>
+
+        <!-- Providers Tab -->
+        <div id="providers-tab" style="display:none">
+          <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
+            <input type="text" id="provider-name" class="search-input" placeholder="Provider name (e.g. adblock)" style="width:160px">
+            <select id="provider-type" class="form-select" style="width:90px">
+              <option value="http">HTTP</option>
+              <option value="file">File</option>
+            </select>
+            <select id="provider-behavior" class="form-select" style="width:100px">
+              <option value="domain">Domain</option>
+              <option value="ipcidr">IP-CIDR</option>
+              <option value="classical">Classical</option>
+            </select>
+            <input type="text" id="provider-url" class="search-input" placeholder="URL (for HTTP)" style="flex:1">
+            <input type="number" id="provider-interval" class="search-input" placeholder="minutes" value="1440" style="width:110px">
+            <button class="btn primary sm" onclick="submitAddProvider()">Add Provider</button>
+            <button class="btn ghost sm" onclick="refreshProviders()" style="margin-left:auto">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              Refresh All
+            </button>
+          </div>
+          <div class="table-wrap">
+            <div id="providers-loading" class="loading"><div class="spinner"></div>Loading providers...</div>
+            <table class="table" id="providers-table" style="display:none">
+              <thead><tr><th>Name</th><th>Type</th><th>Behavior</th><th>URL / Path</th><th>Interval</th><th style="width:60px">Actions</th></tr></thead>
+              <tbody id="providers-list"></tbody>
+            </table>
+            <div id="providers-empty" class="empty-state" style="display:none">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <p>No rule providers configured</p>
+              <div class="empty-action text-sm text-muted">Add external rule sets above</div>
+            </div>
           </div>
         </div>
       </div>
@@ -888,6 +947,32 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
   </div>
 </div>
 
+<div class="modal" id="intervalModal">
+  <div class="modal-content" style="max-width:360px">
+    <div class="modal-header">
+      <h3 class="modal-title">Edit Update Interval</h3>
+      <button class="modal-close" onclick="closeIntervalModal()" title="Close (ESC)">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p class="mono text-sm" id="intervalModalName" style="margin-bottom:16px;color:var(--text)"></p>
+      <div class="form-group">
+        <label class="form-label">Update Interval</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="number" id="intervalModalMins" class="form-input" min="1" max="10080" style="width:100px">
+          <span class="text-muted text-sm">minutes</span>
+        </div>
+      </div>
+      <p class="text-sm text-muted" style="margin-top:8px">Valid range: 1–10080 minutes (max 1 week)</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn secondary" onclick="closeIntervalModal()">Cancel</button>
+      <button class="btn" id="intervalModalSaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const PROXY_PAGE_SIZE = 50;
 const PROFILE_PAGE_SIZE = 50;
@@ -948,7 +1033,10 @@ async function api(method, path, body, fetchTimeoutMs) {
   } else {
     res = await fetch(path, opts);
   }
-  const json = await res.json();
+  const text = await res.text();
+  if (!text) throw new Error('Empty response from server');
+  let json;
+  try { json = JSON.parse(text); } catch { throw new Error('Invalid JSON: ' + text.slice(0, 100)); }
   if (json.code !== 0) throw new Error(json.message);
   return json.data;
 }
@@ -1093,6 +1181,10 @@ async function loadDashboard() {
       document.getElementById('dash-download-rate').textContent = formatBytes(dnRate) + '/s';
       document.getElementById('dash-cumulative-upload').textContent = formatBytes(cd.uploadTotal || 0);
       document.getElementById('dash-cumulative-download').textContent = formatBytes(cd.downloadTotal || 0);
+      document.getElementById('traffic-up-current').textContent = formatBytes(upRate);
+      document.getElementById('traffic-down-current').textContent = formatBytes(dnRate);
+      if (!trafficTimer) initTrafficChart();
+      pushTrafficPoint(upRate, dnRate);
     } catch (_) {
       document.getElementById('dash-connections').textContent = '0';
       document.getElementById('dash-upload-rate').textContent = '-';
@@ -1674,6 +1766,110 @@ function renderRules() {
 
 function goRulesPage(p) { rulesPage = p; renderRules(); }
 
+// ===== Rule Providers Tab =====
+let rulesTab = 'rules';
+let providers = [];
+
+function switchRulesTab(tab) {
+  rulesTab = tab;
+  document.getElementById('tab-rules-btn').classList.toggle('active', tab === 'rules');
+  document.getElementById('tab-providers-btn').classList.toggle('active', tab === 'providers');
+  document.getElementById('rules-tab').style.display = tab === 'rules' ? '' : 'none';
+  document.getElementById('providers-tab').style.display = tab === 'providers' ? '' : 'none';
+  if (tab === 'providers') loadProviders();
+}
+
+async function loadProviders() {
+  const l = document.getElementById('providers-loading'), t = document.getElementById('providers-table'), e = document.getElementById('providers-empty');
+  try {
+    const data = await api('GET', '/api/rule-providers');
+    providers = data || [];
+    renderProviders();
+    l.style.display = 'none';
+    if (providers.length === 0) { t.style.display = 'none'; e.style.display = 'block'; }
+    else { t.style.display = 'table'; e.style.display = 'none'; }
+  } catch (_) { providers = []; l.style.display = 'none'; t.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load providers'; }
+}
+
+function renderProviders() {
+  document.getElementById('providers-list').innerHTML = providers.map(p => {
+    const url = p.url || p.path || '—';
+    const int = p.interval ? (p.interval >= 3600 ? (p.interval/3600)+'h' : Math.round(p.interval/60)+'m') : '—';
+    const intSec = p.interval || 86400;
+    return `<tr>
+      <td><span class="mono">${escapeHtml(p.name)}</span></td>
+      <td><span class="badge neutral">${escapeHtml(p.type)}</span></td>
+      <td><span class="badge info">${escapeHtml(p.behavior)}</span></td>
+      <td><span class="truncate" style="max-width:280px;display:block" title="${escapeHtml(url)}">${escapeHtml(url)}</span></td>
+      <td><span class="mono text-muted" style="cursor:pointer;color:var(--accent)" onclick="openIntervalModal('${escapeHtml(p.name)}', ${intSec})" title="Click to edit">${int}</span></td>
+      <td><button class="btn ghost xs" onclick="deleteProvider('${escapeHtml(p.name)}')" title="Delete provider"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/><path d="M10,11v6M14,11v6"/></svg></button></td>
+    </tr>`;
+  }).join('');
+}
+
+let intervalEditName = '';
+function openIntervalModal(name, currentSec) {
+  intervalEditName = name;
+  document.getElementById('intervalModalName').textContent = name;
+  document.getElementById('intervalModalMins').value = Math.round((currentSec || 86400) / 60);
+  document.getElementById('intervalModal').classList.add('show');
+  document.getElementById('intervalModalMins').focus();
+  document.getElementById('intervalModalMins').select();
+}
+function closeIntervalModal() {
+  document.getElementById('intervalModal').classList.remove('show');
+  intervalEditName = '';
+}
+document.getElementById('intervalModalMins').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('intervalModalSaveBtn').click(); else if (e.key === 'Escape') closeIntervalModal(); });
+document.getElementById('intervalModalSaveBtn').addEventListener('click', async () => {
+  const mins = parseInt(document.getElementById('intervalModalMins').value);
+  if (!mins || mins < 1 || mins > 10080) { showToast('Enter a value between 1 and 10080 minutes', 'error'); return; }
+  const name = intervalEditName; // capture before closing modal
+  closeIntervalModal();
+  try {
+    await api('PUT', '/api/rule-providers/' + encodeURIComponent(name), { interval: mins * 60 });
+    showToast('Interval updated');
+    loadProviders();
+  } catch (e) { showToast('Failed to update: ' + e, 'error'); loadProviders(); }
+});
+
+async function submitAddProvider() {
+  const name = document.getElementById('provider-name').value.trim();
+  const type = document.getElementById('provider-type').value;
+  const behavior = document.getElementById('provider-behavior').value;
+  const url = document.getElementById('provider-url').value.trim();
+  const interval = (parseInt(document.getElementById('provider-interval').value) || 1440) * 60;
+  if (!name) { showToast('Provider name is required', 'error'); return; }
+  if (type === 'http' && !url) { showToast('URL is required for HTTP providers', 'error'); return; }
+  try {
+    await api('POST', '/api/rule-providers', { name, type: type, behavior, url: url || null, interval });
+    showToast('Provider added');
+    document.getElementById('provider-name').value = '';
+    document.getElementById('provider-url').value = '';
+    loadProviders();
+    // Reload rules to reflect new RULE-SET entries
+    if (rulesTab === 'rules') loadRules();
+  } catch (e) { showToast('Failed to add provider: ' + e, 'error'); }
+}
+
+async function deleteProvider(name) {
+  if (!confirm('Delete provider "' + name + '"?')) return;
+  try {
+    await api('DELETE', '/api/rule-providers/' + encodeURIComponent(name));
+    showToast('Provider deleted');
+    loadProviders();
+    if (rulesTab === 'rules') loadRules();
+  } catch (e) { showToast('Failed to delete provider: ' + e, 'error'); }
+}
+
+async function refreshProviders() {
+  try {
+    await api('POST', '/api/rule-providers/refresh-all');
+    showToast('Providers refreshed');
+    loadProviders();
+  } catch (e) { showToast('Failed to refresh providers: ' + e, 'error'); }
+}
+
 // Rules — view-only, no add/delete (add/delete handled below)
 
 async function submitAddRule() {
@@ -1960,6 +2156,116 @@ async function savePorts() {
 
 let logRefreshTimer = null;
 let dashRefreshTimer = null;
+const MAX_TRAFFIC_POINTS = 60;
+let trafficHistory = []; // {up: bytes/s, down: bytes/s, ts: ms}
+let trafficCanvas = null;
+let trafficCtx = null;
+let trafficUpCurrent = 0;
+let trafficDownCurrent = 0;
+let trafficTimer = null;
+
+function initTrafficChart() {
+  trafficCanvas = document.getElementById('traffic-chart');
+  if (!trafficCanvas) return;
+  trafficCtx = trafficCanvas.getContext('2d');
+  // Set actual pixel size for crisp rendering
+  const dpr = window.devicePixelRatio || 1;
+  const rect = trafficCanvas.getBoundingClientRect();
+  trafficCanvas.width = rect.width * dpr;
+  trafficCanvas.height = rect.height * dpr;
+  trafficCtx.scale(dpr, dpr);
+  if (!trafficTimer) {
+    trafficTimer = setInterval(drawTrafficChart, 1000);
+  }
+}
+
+function pushTrafficPoint(up, down) {
+  const now = Date.now();
+  trafficHistory.push({ up, down, ts: now });
+  trafficUpCurrent = up;
+  trafficDownCurrent = down;
+  // Keep last MAX_TRAFFIC_POINTS
+  if (trafficHistory.length > MAX_TRAFFIC_POINTS) {
+    trafficHistory.shift();
+  }
+}
+
+function drawTrafficChart() {
+  if (!trafficCtx || !trafficCanvas) return;
+  const rect = trafficCanvas.getBoundingClientRect();
+  const W = rect.width;
+  const H = rect.height;
+  const ctx = trafficCtx;
+  ctx.clearRect(0, 0, W, H);
+  if (trafficHistory.length < 2) return;
+
+  const maxVal = Math.max(
+    ...trafficHistory.map(p => Math.max(p.up, p.down)),
+    1024 // minimum scale
+  );
+
+  const padL = 0, padR = 0, padT = 4, padB = 4;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+
+  function xAt(i) {
+    return padL + (i / (MAX_TRAFFIC_POINTS - 1)) * chartW;
+  }
+  function yAt(val) {
+    return padT + chartH - (val / maxVal) * chartH;
+  }
+
+  // Draw upload (green, top half)
+  const upGrad = ctx.createLinearGradient(0, padT, 0, padT + chartH / 2);
+  upGrad.addColorStop(0, 'rgba(52,211,153,0.4)');
+  upGrad.addColorStop(1, 'rgba(52,211,153,0.05)');
+  ctx.beginPath();
+  const startIdx = Math.max(0, trafficHistory.length - MAX_TRAFFIC_POINTS);
+  ctx.moveTo(xAt(0), yAt(0));
+  for (let i = 0; i < trafficHistory.length; i++) {
+    ctx.lineTo(xAt(startIdx + i), yAt(trafficHistory[i].up));
+  }
+  ctx.lineTo(xAt(startIdx + trafficHistory.length - 1), padT + chartH / 2);
+  ctx.lineTo(xAt(0), padT + chartH / 2);
+  ctx.closePath();
+  ctx.fillStyle = upGrad;
+  ctx.fill();
+
+  // Draw download (orange, bottom half)
+  const dnGrad = ctx.createLinearGradient(0, padT + chartH / 2, 0, padT + chartH);
+  dnGrad.addColorStop(0, 'rgba(251,146,60,0.05)');
+  dnGrad.addColorStop(1, 'rgba(251,146,60,0.4)');
+  ctx.beginPath();
+  ctx.moveTo(xAt(0), yAt(0));
+  for (let i = 0; i < trafficHistory.length; i++) {
+    ctx.lineTo(xAt(startIdx + i), yAt(trafficHistory[i].down));
+  }
+  ctx.lineTo(xAt(startIdx + trafficHistory.length - 1), padT + chartH);
+  ctx.lineTo(xAt(0), padT + chartH);
+  ctx.closePath();
+  ctx.fillStyle = dnGrad;
+  ctx.fill();
+
+  // Draw lines
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#34d399';
+  ctx.beginPath();
+  for (let i = 0; i < trafficHistory.length; i++) {
+    const x = xAt(startIdx + i);
+    const y = yAt(trafficHistory[i].up);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  ctx.strokeStyle = '#fb923c';
+  ctx.beginPath();
+  for (let i = 0; i < trafficHistory.length; i++) {
+    const x = xAt(startIdx + i);
+    const y = yAt(trafficHistory[i].down);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
 
 function editTun() {
   document.getElementById('tun-display').style.display = 'none';
@@ -2111,7 +2417,7 @@ document.addEventListener('DOMContentLoaded', () => { loadDashboard(); });
 
 // ESC key closes modal
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closeDeleteModal(); closeCronModal(); }
+  if (e.key === 'Escape') { closeDeleteModal(); closeCronModal(); closeIntervalModal(); }
 });
 </script>
 </body>

@@ -277,6 +277,17 @@ pub async fn activate_profile(
         tracing::warn!("Failed to update profile_rules_count in settings: {}", e);
     }
 
+    // Inject rule_providers from settings.yaml into the new config.yaml
+    // (rule-providers is NOT preserved through replace_from_profile to avoid
+    // carrying over corrupted data from old config)
+    if let Some(ref providers) = settings.rule_providers {
+        if !providers.is_empty() {
+            if let Err(e) = store.set_rule_providers(providers) {
+                tracing::warn!("Failed to inject rule-providers into config: {}", e);
+            }
+        }
+    }
+
     // Restart Mihomo to load new config
     let config_path = paths.active_config_path.clone();
     let state = state.clone();
@@ -728,4 +739,28 @@ pub async fn delete_profile(
     }
 
     HttpResponse::Ok().json(ApiResponse::<()>::success(()))
+}
+
+/// POST /api/profiles/check-updates - Check and update all profile subscriptions
+pub async fn check_all_profiles() -> HttpResponse {
+    let results = tokio::task::spawn_blocking(|| {
+        crate::scheduler::check_and_update_all_profiles()
+    }).await;
+
+    match results {
+        Ok(results) => {
+            let updated_count = results.iter().filter(|(_, success)| *success).count();
+            let total_count = results.len();
+            tracing::info!("Profile update check complete: {}/{} updated", updated_count, total_count);
+            HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
+                "total": total_count,
+                "updated": updated_count,
+                "results": results,
+            })))
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to check profiles: {}", e)))
+        }
+    }
 }

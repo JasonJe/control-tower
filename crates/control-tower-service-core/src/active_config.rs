@@ -9,6 +9,16 @@ use std::path::PathBuf;
 
 use crate::ControlTowerPaths;
 
+/// Port overrides read from settings.yaml.
+/// These override the ports from the profile when generating config.yaml.
+#[derive(Debug, Default)]
+pub struct PortOverrides {
+    pub mixed_port: Option<u16>,
+    pub socks_port: Option<u16>,
+    pub http_port: Option<u16>,
+    pub external_controller: Option<(String, u16)>, // (host, port)
+}
+
 /// Store for the active Mihomo configuration file (config.yaml).
 ///
 /// All mutation methods perform atomic write-back: content is first written
@@ -38,7 +48,21 @@ impl ActiveConfigStore {
     /// from the profile — they are NOT preserved from the old config.
     ///
     /// This is called when a user activates a subscription profile.
-    pub fn replace_from_profile(&self, profile_path: &PathBuf) -> Result<()> {
+    ///
+    /// `custom_rules` are prepended before the profile rules (higher priority).
+    ///
+    /// `port_overrides` from settings.yaml take highest priority over both
+    /// the profile and the old config's user_overrides.
+    ///
+    /// Returns the number of profile rules (rules from the profile file itself,
+    /// before custom rules are prepended). This should be stored in settings.yaml
+    /// and passed back to `merge_rules_with_custom`.
+    pub fn replace_from_profile(
+        &self,
+        profile_path: &PathBuf,
+        custom_rules: &[String],
+        port_overrides: PortOverrides,
+    ) -> Result<usize> {
         let new_content = std::fs::read_to_string(profile_path)?;
 
         // Read existing config to extract user customizations (if any)
@@ -54,14 +78,51 @@ impl ActiveConfigStore {
         // Parse the new profile content
         let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&new_content)?;
 
-        // Overlay user overrides onto the new config
+        // Count profile rules BEFORE prepending custom rules
+        let profile_rules_count = yaml
+            .get("rules")
+            .and_then(|v| v.as_sequence())
+            .map(|seq| seq.len())
+            .unwrap_or(0);
+
+        // Apply port overrides from settings.yaml (highest priority)
+        if let Some(map) = yaml.as_mapping_mut() {
+            if let Some(p) = port_overrides.mixed_port {
+                map.insert("mixed-port".into(), serde_yaml_ng::Value::Number(p.into()));
+            }
+            if let Some(p) = port_overrides.socks_port {
+                map.insert("socks-port".into(), serde_yaml_ng::Value::Number(p.into()));
+            }
+            if let Some(p) = port_overrides.http_port {
+                map.insert("http-port".into(), serde_yaml_ng::Value::Number(p.into()));
+            }
+            if let Some((host, port)) = port_overrides.external_controller {
+                map.insert(
+                    "external-controller".into(),
+                    serde_yaml_ng::Value::String(format!("{}:{}", host, port)),
+                );
+            }
+        }
+
+        // Overlay user overrides onto the new config (except rules and ports — handled above)
         if let Some(map) = yaml.as_mapping_mut() {
             for (key, val) in user_overrides {
+                if key == "rules" || key == "mixed-port" || key == "socks-port" || key == "http-port" || key == "external-controller" {
+                    continue;
+                }
                 map.insert(key, val);
             }
         }
 
-        self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)
+        // Prepend custom rules before profile rules (higher priority)
+        if let Ok(rules) = Self::get_or_create_rules_array(&mut yaml) {
+            for rule in custom_rules.iter().rev() {
+                rules.insert(0, serde_yaml_ng::Value::String(rule.clone()));
+            }
+        }
+
+        self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)?;
+        Ok(profile_rules_count)
     }
 
     /// Extract fields the user may have manually customized that should survive
@@ -89,6 +150,8 @@ impl ActiveConfigStore {
             "http-port",
             "external-controller",
             "tun",
+            // NOTE: "rules" is NOT preserved here — rules come from the profile file
+            // and custom user rules are appended separately via custom_rules parameter.
         ];
         let mut overrides = serde_yaml_ng::Mapping::new();
         for key in keys {
@@ -191,6 +254,56 @@ impl ActiveConfigStore {
         self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)
     }
 
+    /// Merge profile rules with custom rules and write to active config.
+    /// Custom rules are placed FIRST (higher priority in Mihomo's first-match-wins evaluation).
+    /// Profile rules follow after custom rules.
+    /// Used after add/delete custom rules to sync config.yaml.
+    pub fn merge_rules_with_custom(
+        &self,
+        profile_rules_count: usize,
+        custom_rules: &[String],
+    ) -> Result<()> {
+        let content = if self.paths.active_config_path.exists() {
+            std::fs::read_to_string(&self.paths.active_config_path)?
+        } else {
+            "mode: rule\n".to_string()
+        };
+        let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)?;
+
+        // Extract existing rules from config
+        let existing_rules: Vec<String> = yaml
+            .get("rules")
+            .and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Split at profile_rules_count: these are the profile rules (come after custom)
+        let profile_rules: Vec<String> = existing_rules
+            .iter()
+            .take(profile_rules_count)
+            .cloned()
+            .collect();
+
+        // Build new rules array: custom_rules FIRST (high priority), then profile_rules
+        let mut new_rules: Vec<serde_yaml_ng::Value> = custom_rules
+            .iter()
+            .map(|s| serde_yaml_ng::Value::String(s.clone()))
+            .collect();
+        for rule in &profile_rules {
+            new_rules.push(serde_yaml_ng::Value::String(rule.clone()));
+        }
+
+        if let Some(map) = yaml.as_mapping_mut() {
+            map.insert("rules".into(), serde_yaml_ng::Value::Sequence(new_rules));
+        }
+
+        self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)
+    }
+
     /// Atomically write `content` to `active_config_path` using a .tmp rename.
     fn write_atomically(&self, content: &str) -> Result<()> {
         let target = &self.paths.active_config_path;
@@ -258,7 +371,7 @@ mod tests {
         std::fs::write(&paths.active_config_path, "mode: global\nmixed-port: 7890\nold: content\n").unwrap();
 
         let store = ActiveConfigStore::new(paths.clone());
-        store.replace_from_profile(&profile_path).unwrap();
+        store.replace_from_profile(&profile_path, &[]).unwrap();
 
         let content = std::fs::read_to_string(&paths.active_config_path).unwrap();
         // User overrides (mode, mixed-port) should be preserved

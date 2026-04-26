@@ -61,6 +61,29 @@ pub fn get_control_tower_paths() -> control_tower_service_core::ControlTowerPath
     )
 }
 
+/// Update profile_rules_count in settings.yaml, preserving all other fields.
+pub fn update_profile_rules_count(count: usize) -> anyhow::Result<()> {
+    use crate::settings::SettingsData;
+
+    let settings_path = find_settings_path().unwrap_or_else(|| PathBuf::from("settings.yaml"));
+    let content = if settings_path.exists() {
+        std::fs::read_to_string(&settings_path)?
+    } else {
+        String::new()
+    };
+
+    let mut settings: SettingsData = serde_yaml_ng::from_str(&content)
+        .unwrap_or_else(|_| SettingsData::default());
+
+    settings.profile_rules_count = Some(count);
+
+    let yaml_str = serde_yaml_ng::to_string(&settings)?;
+    let temp = settings_path.with_extension("yaml.tmp");
+    std::fs::write(&temp, &yaml_str)?;
+    std::fs::rename(&temp, &settings_path)?;
+    Ok(())
+}
+
 /// Parse profiles.yaml into a JSON-friendly structure
 pub fn parse_profiles_yaml_full(content: &str) -> serde_json::Value {
     use control_tower_service_core::ProfilesYaml;

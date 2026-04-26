@@ -65,6 +65,8 @@ pub struct SettingsData {
     pub http_port: Option<u16>,
     #[serde(rename = "socks_port", default, skip_serializing_if = "Option::is_none")]
     pub socks_port: Option<u16>,
+    #[serde(rename = "mixed_port", default, skip_serializing_if = "Option::is_none")]
+    pub mixed_port: Option<u16>,
     #[serde(rename = "service_port", default, skip_serializing_if = "Option::is_none")]
     pub service_port: Option<u16>,
     #[serde(rename = "tun_enabled", default, skip_serializing_if = "Option::is_none")]
@@ -83,6 +85,10 @@ pub struct SettingsData {
     pub latency_test_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_test: Option<AutoTestConfig>,
+    #[serde(rename = "custom-rules", default, skip_serializing_if = "Option::is_none")]
+    pub custom_rules: Option<Vec<String>>,
+    #[serde(rename = "profile-rules-count", default, skip_serializing_if = "Option::is_none")]
+    pub profile_rules_count: Option<usize>,
 }
 
 impl Default for SettingsData {
@@ -92,6 +98,7 @@ impl Default for SettingsData {
             api_port: None,
             http_port: None,
             socks_port: None,
+            mixed_port: None,
             service_port: None,
             tun_enabled: None,
             log_level: None,
@@ -101,6 +108,8 @@ impl Default for SettingsData {
             mode: None,
             latency_test_mode: None,
             auto_test: Some(AutoTestConfig::default()),
+            custom_rules: None,
+            profile_rules_count: None,
         }
     }
 }

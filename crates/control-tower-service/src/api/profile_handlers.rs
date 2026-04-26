@@ -251,11 +251,30 @@ pub async fn activate_profile(
             .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
     }
 
-    // Replace active config from profile
+    // Replace active config from profile, preserving custom user rules
+    let settings = state.get_settings();
+    let custom_rules: Vec<String> = settings.custom_rules.unwrap_or_default();
+
+    // Build port overrides from settings.yaml (highest priority)
+    let port_overrides = control_tower_service_core::active_config::PortOverrides {
+        mixed_port: settings.mixed_port,
+        socks_port: settings.socks_port,
+        http_port: settings.http_port,
+        external_controller: settings.api_host.zip(settings.api_port),
+    };
+
     let store = control_tower_service_core::ActiveConfigStore::new(paths.clone());
-    if let Err(e) = store.replace_from_profile(&actual_file) {
-        return HttpResponse::InternalServerError()
-            .json(ApiResponse::<()>::error(format!("Failed to activate profile: {}", e)));
+    let profile_rules_count = match store.replace_from_profile(&actual_file, &custom_rules, port_overrides) {
+        Ok(count) => count,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(format!("Failed to activate profile: {}", e)));
+        }
+    };
+
+    // Store profile_rules_count in settings.yaml so add/delete rules knows the boundary
+    if let Err(e) = super::update_profile_rules_count(profile_rules_count) {
+        tracing::warn!("Failed to update profile_rules_count in settings: {}", e);
     }
 
     // Restart Mihomo to load new config
@@ -466,10 +485,29 @@ pub async fn update_profile(
 
         // If this profile is currently active, replace active config and restart Mihomo
         if is_active {
+            let settings = state.get_settings();
+            let custom_rules: Vec<String> = settings.custom_rules.unwrap_or_default();
+
+            // Build port overrides from settings.yaml (highest priority)
+            let port_overrides = control_tower_service_core::active_config::PortOverrides {
+                mixed_port: settings.mixed_port,
+                socks_port: settings.socks_port,
+                http_port: settings.http_port,
+                external_controller: settings.api_host.zip(settings.api_port),
+            };
+
             let store = control_tower_service_core::ActiveConfigStore::new(paths.clone());
-            if let Err(e) = store.replace_from_profile(&profile_file) {
-                return HttpResponse::InternalServerError()
-                    .json(ApiResponse::<()>::error(format!("Failed to update active config: {}", e)));
+            let profile_rules_count = match store.replace_from_profile(&profile_file, &custom_rules, port_overrides) {
+                Ok(count) => count,
+                Err(e) => {
+                    return HttpResponse::InternalServerError()
+                        .json(ApiResponse::<()>::error(format!("Failed to update active config: {}", e)));
+                }
+            };
+
+            // Store profile_rules_count in settings.yaml
+            if let Err(e) = super::update_profile_rules_count(profile_rules_count) {
+                tracing::warn!("Failed to update profile_rules_count in settings: {}", e);
             }
 
             let config_path = paths.active_config_path.clone();

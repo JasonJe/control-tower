@@ -172,6 +172,7 @@ impl ServiceState {
             api_port: Some(*self.api_port.read()),
             http_port: Some(http_port),
             socks_port: Some(socks_port),
+            mixed_port: current_settings.mixed_port,
             service_port: Some(DEFAULT_SERVICE_PORT),
             tun_enabled,
             log_level: None,
@@ -181,6 +182,8 @@ impl ServiceState {
             mode: None,
             latency_test_mode: current_settings.latency_test_mode,
             auto_test: None,
+            custom_rules: current_settings.custom_rules,
+            profile_rules_count: current_settings.profile_rules_count,
         };
         self.save_settings(&settings)?;
 
@@ -302,6 +305,7 @@ impl ServiceState {
             api_port: Some(*self.api_port.read()),
             http_port,
             socks_port,
+            mixed_port: current_settings.mixed_port,
             service_port: Some(DEFAULT_SERVICE_PORT),
             tun_enabled: Some(tun_enabled),
             log_level: None,
@@ -311,6 +315,8 @@ impl ServiceState {
             mode: current_settings.mode,
             latency_test_mode: current_settings.latency_test_mode,
             auto_test: current_settings.auto_test,
+            custom_rules: current_settings.custom_rules,
+            profile_rules_count: current_settings.profile_rules_count,
         };
         self.save_settings(&settings)?;
 

@@ -215,7 +215,7 @@ async fn activate_profile(id: &str) -> Result<()> {
         let store = control_tower_service_core::ActiveConfigStore::new(
             crate::settings::shared_paths()?,
         );
-        store.replace_from_profile(&profile_file)?;
+        store.replace_from_profile(&profile_file, &[], Default::default())?;
         println!("Config file copied to: {:?}", store.active_config_path());
     } else {
         anyhow::bail!("Profile has no config file");

@@ -331,7 +331,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
         </div>
       </div>
       <div class="nav-spacer"></div>
-      <div class="nav-footer">Control Tower v0.1</div>
+      <div class="nav-footer">Control Tower v0.2.0</div>
     </nav>
 
     <div class="content">
@@ -502,17 +502,46 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 
         <div class="card">
           <div class="card-header"><div class="card-title">Add New Profile</div></div>
-          <form onsubmit="addProfile(event)" class="form-row">
-            <div class="form-group" style="flex:2;margin-bottom:0">
-              <label class="form-label">Subscription URL</label>
-              <input type="url" class="form-input" id="profile-url" placeholder="https://example.com/profile.yaml" required>
+          <form onsubmit="addProfile(event)" style="display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;gap:12px;align-items:flex-end">
+              <div class="form-group" style="flex:0 0 140px;margin-bottom:0">
+                <label class="form-label">Type</label>
+                <select class="form-input" id="profile-type" onchange="onProfileTypeChange()">
+                  <option value="remote">Remote (URL)</option>
+                  <option value="local">Local File</option>
+                  <option value="script">Script</option>
+                  <option value="merge">Merge</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex:2;margin-bottom:0">
+                <label class="form-label" id="profile-url-label">Subscription URL</label>
+                <input type="url" class="form-input" id="profile-url" placeholder="https://example.com/profile.yaml">
+              </div>
+              <div class="form-group" style="flex:1;margin-bottom:0">
+                <label class="form-label">Profile Name (optional)</label>
+                <input type="text" class="form-input" id="profile-name" placeholder="My Profile">
+              </div>
+              <div style="margin-bottom:0;padding-top:0">
+                <button type="submit" class="btn primary">Add Profile</button>
+              </div>
             </div>
-            <div class="form-group" style="flex:1;margin-bottom:0">
-              <label class="form-label">Profile Name (optional)</label>
-              <input type="text" class="form-input" id="profile-name" placeholder="My Profile">
+            <div id="profile-type-fields-local" style="display:none">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">File Path</label>
+                <input type="text" class="form-input" id="profile-file" placeholder="/path/to/config.yaml">
+              </div>
             </div>
-            <div style="margin-bottom:0;padding-top:22px">
-              <button type="submit" class="btn primary">Add Profile</button>
+            <div id="profile-type-fields-script" style="display:none">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Script (commands to generate config)</label>
+                <textarea class="form-input" id="profile-script" rows="3" placeholder="curl -s https://api.example.com/config | jq ."></textarea>
+              </div>
+            </div>
+            <div id="profile-type-fields-merge" style="display:none">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Select Profiles to Merge</label>
+                <div id="merge-profiles-list" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;max-height:80px;overflow-y:auto"></div>
+              </div>
             </div>
           </form>
         </div>
@@ -951,7 +980,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           <div class="card">
             <div class="card-header"><div class="card-title">About</div></div>
             <div class="info-grid">
-              <div class="info-row"><span class="info-key">Version</span><span class="info-val" style="font-family:'JetBrains Mono',monospace">0.1.1</span></div>
+              <div class="info-row"><span class="info-key">Version</span><span class="info-val" style="font-family:'JetBrains Mono',monospace">0.2.0</span></div>
               <div class="info-row"><span class="info-key">Build</span><span class="info-val">release</span></div>
             </div>
           </div>
@@ -1700,6 +1729,7 @@ async function loadProfiles() {
   try {
     const data = await api('GET', '/api/profiles');
     profiles = data?.items || [];
+    window._profilesData = profiles; // for merge profile selection
     currentProfileUid = data?.current || null;
     profilePage = 1;
     renderProfiles();
@@ -1741,11 +1771,78 @@ function renderProfiles() {
 
 function goProfilePage(p) { profilePage = p; renderProfiles(); }
 
+function onProfileTypeChange() {
+  const type = document.getElementById('profile-type').value;
+  const urlLabel = document.getElementById('profile-url-label');
+  const urlInput = document.getElementById('profile-url');
+  document.getElementById('profile-type-fields-local').style.display = 'none';
+  document.getElementById('profile-type-fields-script').style.display = 'none';
+  document.getElementById('profile-type-fields-merge').style.display = 'none';
+  urlInput.removeAttribute('required');
+
+  if (type === 'remote') {
+    urlLabel.textContent = 'Subscription URL';
+    urlInput.type = 'url';
+    urlInput.placeholder = 'https://example.com/profile.yaml';
+    urlInput.setAttribute('required', '');
+  } else if (type === 'local') {
+    urlLabel.textContent = 'File Path';
+    urlInput.type = 'text';
+    urlInput.placeholder = '/path/to/config.yaml';
+    document.getElementById('profile-type-fields-local').style.display = 'block';
+  } else if (type === 'script') {
+    urlLabel.textContent = 'Description (optional)';
+    urlInput.type = 'text';
+    urlInput.placeholder = 'Dynamic config generator';
+    document.getElementById('profile-type-fields-script').style.display = 'block';
+  } else if (type === 'merge') {
+    urlLabel.textContent = 'Description (optional)';
+    urlInput.type = 'text';
+    urlInput.placeholder = 'Merge multiple profiles';
+    document.getElementById('profile-type-fields-merge').style.display = 'block';
+    // Populate merge profiles list
+    loadMergeProfilesList();
+  }
+}
+
+function loadMergeProfilesList() {
+  const list = document.getElementById('merge-profiles-list');
+  const profiles = window._profilesData || [];
+  list.innerHTML = profiles.map(p =>
+    `<label style="display:flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg-secondary);border-radius:4px;font-size:12px;cursor:pointer">
+      <input type="checkbox" value="${p.uid}" name="merge-profile"> ${escapeHtml(p.name || 'Unnamed')}
+    </label>`
+  ).join('');
+}
+
 async function addProfile(e) {
   e.preventDefault();
-  const url = document.getElementById('profile-url').value, name = document.getElementById('profile-name').value;
-  try { await api('POST', '/api/profiles', { url, name: name || undefined }); showToast('Profile added'); document.getElementById('profile-url').value = ''; document.getElementById('profile-name').value = ''; loadProfiles(); }
-  catch (e) { showToast('Failed to add: ' + e.message, 'error'); }
+  const type = document.getElementById('profile-type').value;
+  const name = document.getElementById('profile-name').value;
+  const payload = { type, name: name || undefined };
+
+  if (type === 'remote') {
+    payload.url = document.getElementById('profile-url').value;
+  } else if (type === 'local') {
+    payload.file = document.getElementById('profile-file').value;
+  } else if (type === 'script') {
+    payload.script = document.getElementById('profile-script').value;
+  } else if (type === 'merge') {
+    const checked = [...document.querySelectorAll('input[name="merge-profile"]:checked')].map(c => c.value);
+    payload.merge = checked;
+  }
+
+  try {
+    await api('POST', '/api/profiles', payload);
+    showToast('Profile added');
+    document.getElementById('profile-name').value = '';
+    document.getElementById('profile-url').value = '';
+    document.getElementById('profile-file').value = '';
+    document.getElementById('profile-script').value = '';
+    document.getElementById('profile-type').value = 'remote';
+    onProfileTypeChange();
+    loadProfiles();
+  } catch (e) { showToast('Failed to add: ' + e.message, 'error'); }
 }
 
 async function activateProfile(uid, btn) {

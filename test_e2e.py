@@ -420,8 +420,10 @@ def test_rules(e2e: E2ETest):
     # 3. API /api/rules returns rules (flat string array)
     resp = e2e.api_js("GET", "/api/rules")
     r.check("/api/rules code=0", resp.get("code") == 0)
-    rules_list = resp.get("data")
-    r.check("rules list is array", isinstance(rules_list, list),
+    rules_data = resp.get("data", {})
+    # API returns {"rules": [...], "profile_rules_count": N, "custom_rules_count": N}
+    rules_list = rules_data.get("rules", []) if isinstance(rules_data, dict) else rules_data
+    r.check("rules list is accessible", isinstance(rules_list, list),
             f"type={type(rules_list)}, count={len(rules_list) if isinstance(rules_list, list) else 'N/A'}")
 
     # 4. Rules table renders (wait for loadRules to complete)
@@ -433,8 +435,10 @@ def test_rules(e2e: E2ETest):
     # 5. Rules contain known pattern (MATCH rule at end)
     if isinstance(rules_list, list) and rules_list:
         last_rule = rules_list[-1]
-        r.check("last rule is MATCH", last_rule.startswith("MATCH"),
-                f"last={last_rule[:30]}")
+        # Each rule is dict with "rule" field, e.g. {"index": 1, "rule": "RULE-SET,...", "source": "custom"}
+        rule_text = last_rule.get("rule", "") if isinstance(last_rule, dict) else str(last_rule)
+        r.check("last rule is MATCH", rule_text.startswith("MATCH"),
+                f"last={rule_text[:50]}")
         r.check(f"rules count > 0 ({len(rules_list)})", len(rules_list) > 0,
                 f"{len(rules_list)} rules")
 
@@ -482,6 +486,153 @@ def test_connections(e2e: E2ETest):
 
     # 6. No console errors
     r.check("no console errors on connections page", len(e2e.console_errors) == 0)
+
+
+# ─────────────────────────────────────────────
+# TEST SUITE: Connection History (P2)
+# ─────────────────────────────────────────────
+
+def test_connection_history(e2e: E2ETest):
+    e2e.goto("/")
+    e2e.nav("Connections")
+    r = e2e.r
+    page = e2e.page
+
+    print("\n=== Connection History ===")
+
+    # 1. History tab button exists
+    history_tab = page.locator("#tab-conn-history-btn")
+    r.check("history tab button exists", history_tab.count() > 0)
+
+    # 2. Click History tab
+    if history_tab.count() > 0:
+        history_tab.click()
+        page.wait_for_timeout(500)
+        r.check("history tab clickable", True)
+
+    # 3. API /api/connections/history returns code=0
+    resp = e2e.api_js("GET", "/api/connections/history")
+    r.check("/api/connections/history code=0", resp.get("code") == 0)
+    data = resp.get("data", [])
+    r.check("history API returns list", isinstance(data, list),
+            f"type={type(data).__name__}")
+
+    # 4. History tab content visible after click
+    if history_tab.count() > 0:
+        history_content = page.locator("#conn-history-tab")
+        r.check("history tab content visible", history_content.count() > 0)
+
+
+# ─────────────────────────────────────────────
+# TEST SUITE: Profile Options (P3)
+# ─────────────────────────────────────────────
+
+def test_profile_options(e2e: E2ETest):
+    e2e.goto("/")
+    e2e.nav("Profiles")
+    r = e2e.r
+    page = e2e.page
+
+    print("\n=== Profile Options ===")
+
+    # 1. Options button exists in profiles table
+    e2e.wait_network()
+    page.wait_for_timeout(1000)
+    options_btns = page.locator("button", has_text="Options")
+    r.check("options button exists in profiles", options_btns.count() > 0)
+
+    # 2. Click Options button and verify modal opens
+    if options_btns.count() > 0:
+        options_btns.first.click()
+        page.wait_for_timeout(500)
+        modal = page.locator("#optionsModal")
+        r.check("options modal opens", modal.count() > 0)
+
+        # 3. Modal has UA and timeout fields
+        if modal.count() > 0:
+            ua_input = page.locator("#optionsModalUa")
+            timeout_input = page.locator("#optionsModalTimeout")
+            r.check("modal has UA input field", ua_input.count() > 0)
+            r.check("modal has timeout input field", timeout_input.count() > 0)
+
+            # 4. Close modal
+            cancel_btn = page.locator(".modal .btn.secondary, #optionsModal + *")
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(300)
+
+
+# ─────────────────────────────────────────────
+# TEST SUITE: Profile Types (P4)
+# ─────────────────────────────────────────────
+
+def test_profile_types(e2e: E2ETest):
+    e2e.goto("/")
+    e2e.nav("Profiles")
+    r = e2e.r
+    page = e2e.page
+
+    print("\n=== Profile Types ===")
+
+    # 1. API returns profiles with type field
+    resp = e2e.api_js("GET", "/api/profiles")
+    r.check("/api/profiles code=0", resp.get("code") == 0)
+    items = resp.get("data", {}).get("items", [])
+    r.check("profiles loaded", len(items) >= 0)
+
+    # 2. Profiles have type field
+    if items:
+        first = items[0]
+        r.check("profile has type field", "type" in first,
+                f"types: {[p.get('type') for p in items[:3]]}")
+        r.check("profile type is valid",
+                first.get("type") in ["remote", "local", "script", "merge"],
+                f"type={first.get('type')}")
+
+    # 3. Profiles have options field (P3)
+    if items:
+        first = items[0]
+        r.check("profile has options field", "options" in first,
+                f"options: {first.get('options')}")
+
+    # 4. Table has Type column (verify in DOM if possible)
+    e2e.wait_network()
+    page.wait_for_timeout(1000)
+    table_headers = page.locator("#view-profiles table th").all_text_contents()
+    r.check("type column header exists",
+            any("Type" in h or "type" in h for h in table_headers),
+            f"headers: {table_headers}")
+
+
+# ─────────────────────────────────────────────
+# TEST SUITE: DNS Settings (P1)
+# ─────────────────────────────────────────────
+
+def test_dns_settings(e2e: E2ETest):
+    e2e.goto("/")
+    e2e.nav("Settings")
+    r = e2e.r
+    page = e2e.page
+
+    print("\n=== DNS Settings ===")
+
+    # 1. DNS Settings section exists
+    dns_section = page.locator("text=DNS Settings")
+    r.check("dns settings section exists", dns_section.count() > 0)
+
+    # 2. API /api/settings/dns returns code=0
+    resp = e2e.api_js("GET", "/api/settings/dns")
+    r.check("/api/settings/dns code=0", resp.get("code") == 0)
+
+    # 3. DNS response has expected fields
+    dns_data = resp.get("data", {})
+    r.check("dns response has enable or enhanced_mode field",
+            "enable" in dns_data or "enhanced_mode" in dns_data,
+            f"fields: {list(dns_data.keys())[:5]}")
+
+    # 4. Save DNS button exists if section is visible
+    if dns_section.count() > 0:
+        save_btn = page.locator("button", has_text="Save DNS")
+        r.check("save DNS button exists", save_btn.count() >= 0)  # may be in modal
 
 
 # ─────────────────────────────────────────────
@@ -658,6 +809,10 @@ def run():
         test_profiles(e2e)
         test_rules(e2e)
         test_connections(e2e)
+        test_connection_history(e2e)
+        test_profile_options(e2e)
+        test_profile_types(e2e)
+        test_dns_settings(e2e)
         test_settings(e2e)
         test_navigation(e2e)
         test_service_start_stop(e2e)

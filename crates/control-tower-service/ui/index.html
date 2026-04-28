@@ -520,7 +520,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
         <div class="table-wrap">
           <div id="profiles-loading" class="loading"><div class="spinner"></div>Loading profiles...</div>
           <table class="table" id="profiles-table" style="display:none">
-            <thead><tr><th>Name</th><th>Subscription URL</th><th>Status</th><th>Cron</th><th>Last Update</th><th style="width:200px">Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>Type</th><th>Subscription URL</th><th>Status</th><th>Cron</th><th>Last Update</th><th style="width:240px">Actions</th></tr></thead>
             <tbody id="profiles-list"></tbody>
           </table>
           <div id="profiles-empty" class="empty-state" style="display:none">
@@ -654,6 +654,12 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           </div>
         </div>
 
+        <div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:0">
+          <button class="tab-btn active" id="tab-conn-active-btn" onclick="switchConnTab('active')">Active</button>
+          <button class="tab-btn" id="tab-conn-history-btn" onclick="switchConnTab('history')">History</button>
+        </div>
+
+        <div id="conn-active-tab">
         <div class="stat-grid" style="margin-bottom:20px">
           <div class="stat-card">
             <div class="stat-icon blue"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div>
@@ -694,6 +700,29 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           <div id="conn-pagination" class="pagination" style="display:none">
             <div class="pagination-info" id="conn-pagination-info"></div>
             <div class="pagination-controls" id="conn-pagination-controls"></div>
+          </div>
+        </div>
+        </div>
+
+        <!-- History Tab -->
+        <div id="conn-history-tab" style="display:none">
+          <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+            <button class="btn ghost sm" id="clearHistoryBtn" onclick="clearConnectionHistory()" style="color:#f87171">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/></svg>
+              Clear History
+            </button>
+          </div>
+          <div class="table-wrap">
+            <div id="conn-history-loading" class="loading"><div class="spinner"></div>Loading history...</div>
+            <table class="table" id="conn-history-table" style="display:none">
+              <thead><tr><th style="width:50px">#</th><th>Source</th><th>Destination</th><th>Proxy Chain</th><th>Upload</th><th>Download</th><th>Closed At</th></tr></thead>
+              <tbody id="conn-history-list"></tbody>
+            </table>
+            <div id="conn-history-empty" class="empty-state" style="display:none">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <p>No connection history</p>
+              <div class="empty-action text-sm text-muted">Closed connections will appear here</div>
+            </div>
           </div>
         </div>
       </div>
@@ -1029,6 +1058,34 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
     <div class="modal-footer">
       <button class="btn secondary" onclick="closeIntervalModal()">Cancel</button>
       <button class="btn" id="intervalModalSaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="optionsModal">
+  <div class="modal-content" style="max-width:420px">
+    <div class="modal-header">
+      <h3 class="modal-title">Profile Options</h3>
+      <button class="modal-close" onclick="closeOptionsModal()" title="Close (ESC)">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p class="mono text-sm" id="optionsModalName" style="margin-bottom:16px;color:var(--text)"></p>
+      <div class="form-group">
+        <label class="form-label">User-Agent</label>
+        <input type="text" id="optionsModalUa" class="form-input" placeholder="clash-verge/v2.4.7" style="font-family:monospace">
+        <p class="text-sm text-muted" style="margin-top:4px">HTTP User-Agent for subscription download. Leave empty to use default.</p>
+      </div>
+      <div class="form-group" style="margin-top:12px">
+        <label class="form-label">Timeout (seconds)</label>
+        <input type="number" id="optionsModalTimeout" class="form-input" min="5" max="300" placeholder="30" style="width:100px">
+        <p class="text-sm text-muted" style="margin-top:4px">Download timeout. Default is 30 seconds.</p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn secondary" onclick="closeOptionsModal()">Cancel</button>
+      <button class="btn" id="optionsModalSaveBtn">Save</button>
     </div>
   </div>
 </div>
@@ -1660,13 +1717,15 @@ function renderProfiles() {
   document.getElementById('profiles-list').innerHTML = items.map(p => {
     const isActive = p.uid === currentProfileUid;
     const st = isActive ? '<span class="badge success">Active</span>' : '<span class="badge neutral">Inactive</span>';
+    const typeBadge = p.type && p.type !== 'remote' ? `<span class="badge" style="background:var(--accent);color:white;font-size:10px;padding:2px 6px;margin-left:6px">${p.type}</span>` : '';
     return `<tr>
-      <td><span style="font-weight:500">${escapeHtml(p.name || 'Unnamed')}</span></td>
+      <td><span style="font-weight:500">${escapeHtml(p.name || 'Unnamed')}${typeBadge}</span></td>
+      <td><span class="mono text-sm" style="color:var(--text3)">${p.type || 'remote'}</span></td>
       <td><span class="mono truncate" style="max-width:280px;display:block" title="${escapeHtml(p.url || '')}">${escapeHtml(p.url || '-')}</span></td>
       <td>${st}</td>
       <td>${isActive && p.cron ? `<span class="mono text-sm">${escapeHtml(p.cron)} min</span>` : '<span class="text-muted text-sm">-</span>'}</td>
       <td><span class="mono text-sm">${formatTimestamp(p.updated_at)}</span>${isActive ? `<button class="btn xs" onclick="refreshProfile('${escapeForJs(p.uid)}', false)" title="Refresh direct">↻D</button><button class="btn xs primary" onclick="refreshProfile('${escapeForJs(p.uid)}', true)" title="Refresh via proxy">↻P</button>` : ''}</td>
-      <td><div class="btn-group" style="gap:6px">${!isActive ? `<button class="btn xs success" id="btn-activate-${escapeHtml(p.uid)}" onclick="activateProfile('${escapeForJs(p.uid)}', this)" title="Activate this profile">Activate</button>` : ''}<button class="btn xs" onclick="openCronModal('${escapeForJs(p.uid)}')" title="Edit profile name, URL, or cron">Edit</button><button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${escapeForJs(p.uid)}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
+      <td><div class="btn-group" style="gap:6px">${!isActive ? `<button class="btn xs success" id="btn-activate-${escapeHtml(p.uid)}" onclick="activateProfile('${escapeForJs(p.uid)}', this)" title="Activate this profile">Activate</button>` : ''}<button class="btn xs" onclick="openCronModal('${escapeForJs(p.uid)}')" title="Edit profile name, URL, or cron">Edit</button><button class="btn xs" onclick="openOptionsModal('${escapeForJs(p.uid)}')" title="Advanced options (UA, timeout)">Options</button><button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${escapeForJs(p.uid)}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
     </tr>`;
   }).join('');
   pg.style.display = 'flex';
@@ -1767,6 +1826,43 @@ document.getElementById('cronModalSaveBtn').addEventListener('click', async () =
 document.getElementById('editProfileName').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cronModalSaveBtn').click(); });
 document.getElementById('editProfileUrl').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cronModalSaveBtn').click(); });
 document.getElementById('cronMinutes').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cronModalSaveBtn').click(); });
+
+// Profile Options Modal
+let optionsEditUid = '';
+function openOptionsModal(uid) {
+  optionsEditUid = uid;
+  const profile = profiles.find(p => p.uid === uid);
+  if (!profile) return;
+  document.getElementById('optionsModalName').textContent = profile.name || 'Unnamed Profile';
+  const opts = profile.options || {};
+  document.getElementById('optionsModalUa').value = opts.user_agent || '';
+  document.getElementById('optionsModalTimeout').value = opts.timeout_seconds || '';
+  document.getElementById('optionsModal').classList.add('show');
+  document.getElementById('optionsModalUa').focus();
+}
+function closeOptionsModal() { document.getElementById('optionsModal').classList.remove('show'); optionsEditUid = ''; }
+
+document.getElementById('optionsModalSaveBtn').addEventListener('click', async () => {
+  if (!optionsEditUid) { console.error('optionsEditUid is empty'); return; }
+  const user_agent = document.getElementById('optionsModalUa').value.trim();
+  const timeout_str = document.getElementById('optionsModalTimeout').value.trim();
+  const uid = optionsEditUid;
+  closeOptionsModal();
+  try {
+    const options = {};
+    if (user_agent) options.user_agent = user_agent;
+    if (timeout_str) options.timeout_seconds = parseInt(timeout_str, 10);
+    const body = { options: Object.keys(options).length > 0 ? options : null };
+    const res = await fetch('/api/profiles/' + uid, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+    const json = await res.json();
+    if (json.code !== 0) throw new Error(json.message);
+    showToast('Options saved');
+    loadProfiles();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+});
+
+document.getElementById('optionsModalUa').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('optionsModalSaveBtn').click(); });
+document.getElementById('optionsModalTimeout').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('optionsModalSaveBtn').click(); });
 
 // Rules
 async function loadRules() {
@@ -2110,6 +2206,71 @@ function updateConnSortIndicators() {
 }
 
 function filterConnections() { connPage = 1; loadConnections(); }
+
+function switchConnTab(tab) {
+  const activeTab = document.getElementById('conn-active-tab');
+  const historyTab = document.getElementById('conn-history-tab');
+  const activeBtn = document.getElementById('tab-conn-active-btn');
+  const historyBtn = document.getElementById('tab-conn-history-btn');
+  if (tab === 'history') {
+    activeTab.style.display = 'none';
+    historyTab.style.display = 'block';
+    activeBtn.classList.remove('active');
+    historyBtn.classList.add('active');
+    loadConnectionHistory();
+  } else {
+    activeTab.style.display = 'block';
+    historyTab.style.display = 'none';
+    activeBtn.classList.add('active');
+    historyBtn.classList.remove('active');
+  }
+}
+
+async function loadConnectionHistory() {
+  const l = document.getElementById('conn-history-loading');
+  const t = document.getElementById('conn-history-table');
+  const e = document.getElementById('conn-history-empty');
+  try {
+    const data = await api('GET', '/api/connections/history');
+    const history = data || [];
+    l.style.display = 'none';
+    if (history.length === 0) {
+      t.style.display = 'none';
+      e.style.display = 'block';
+      return;
+    }
+    t.style.display = 'table';
+    e.style.display = 'none';
+    document.getElementById('conn-history-list').innerHTML = history.map((c, i) => {
+      const chains = (c.chains || []).join(' → ');
+      return `<tr>
+        <td class="mono text-muted">${i + 1}</td>
+        <td><div class="conn-meta" title="${escapeHtml(c.source_ip || '-')}">${escapeHtml(truncate(c.source_ip || '-', 24))}</div></td>
+        <td><div class="conn-meta" title="${escapeHtml(c.destination || '-')}">${escapeHtml(truncate(c.destination || '-', 28))}</div></td>
+        <td><div class="conn-badge"><span class="badge neutral">${escapeHtml(truncate(chains, 24))}</span></div></td>
+        <td class="mono" style="color:var(--success)">${formatBytes(c.upload || 0)}</td>
+        <td class="mono" style="color:var(--warning)">${formatBytes(c.download || 0)}</td>
+        <td class="mono text-muted text-sm">${c.closed_at ? new Date(c.closed_at).toLocaleString() : '-'}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    l.style.display = 'none';
+    t.style.display = 'none';
+    e.style.display = 'block';
+    e.querySelector('p').textContent = 'Failed to load history';
+  }
+}
+
+async function clearConnectionHistory() {
+  if (!confirm('Clear all connection history?')) return;
+  try {
+    await api('DELETE', '/api/connections/history');
+    showToast('History cleared');
+    loadConnectionHistory();
+  } catch (e) {
+    showToast('Failed to clear: ' + e.message, 'error');
+  }
+}
 
 async function closeConnection(id) {
   try { await api('DELETE', `/api/connections/${encodeURIComponent(id)}`); showToast('Connection closed'); loadConnections(); }

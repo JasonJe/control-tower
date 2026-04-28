@@ -89,9 +89,28 @@ pub struct DeleteRulesRequest {
 // ============ Profile DTOs ============
 
 #[derive(Debug, Deserialize)]
+#[serde(default)]
 pub struct AddProfileRequest {
-    pub url: String,
+    pub url: Option<String>,
     pub name: Option<String>,
+    #[serde(rename = "type")]
+    pub type_: Option<String>,
+    pub file: Option<String>,
+    pub script: Option<String>,
+    pub merge: Option<Vec<String>>,
+}
+
+impl Default for AddProfileRequest {
+    fn default() -> Self {
+        Self {
+            url: None,
+            name: None,
+            type_: Some("remote".to_string()),
+            file: None,
+            script: None,
+            merge: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

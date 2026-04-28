@@ -100,6 +100,10 @@ pub fn parse_profiles_yaml_full(content: &str) -> serde_json::Value {
                         "url": item.url,
                         "cron": item.cron,
                         "updated_at": item.updated_at,
+                        "type": item.type_,
+                        "script": item.script,
+                        "merge": item.merge,
+                        "options": item.options,
                     })
                 })
                 .collect();

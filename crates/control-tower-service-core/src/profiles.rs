@@ -6,6 +6,30 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Options for profile subscription download.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileDownloadOptions {
+    #[serde(rename = "user_agent", skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
+    #[serde(rename = "timeout_seconds", skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u64>,
+    #[serde(rename = "with_proxy", skip_serializing_if = "Option::is_none")]
+    pub with_proxy: Option<bool>,
+    #[serde(rename = "danger_accept_invalid_certs", skip_serializing_if = "Option::is_none")]
+    pub danger_accept_invalid_certs: Option<bool>,
+}
+
+impl Default for ProfileDownloadOptions {
+    fn default() -> Self {
+        Self {
+            user_agent: None,
+            timeout_seconds: None,
+            with_proxy: None,
+            danger_accept_invalid_certs: None,
+        }
+    }
+}
+
 /// One entry inside profiles.yaml.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileItem {
@@ -18,7 +42,21 @@ pub struct ProfileItem {
     #[serde(rename = "updated_at")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<ProfileDownloadOptions>,
+    /// Profile type: "remote" (default, subscription), "local" (file only), "script" (execute script), "merge" (combine profiles)
+    #[serde(rename = "type", default = "default_profile_type")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_: Option<String>,
+    /// Script content for script-type profiles (executed to generate config)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
+    /// List of profile UIDs to merge for merge-type profiles
+    #[serde(rename = "merge", default, skip_serializing_if = "Vec::is_empty")]
+    pub merge: Vec<String>,
 }
+
+fn default_profile_type() -> Option<String> { Some("remote".to_string()) }
 
 /// The top-level profiles.yaml structure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

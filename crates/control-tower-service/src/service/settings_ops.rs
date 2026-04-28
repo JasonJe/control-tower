@@ -89,6 +89,9 @@ impl ServiceState {
             profile_rules_count: None,
             auto_update_on_startup: None,
             rule_providers: None,
+            dns: None,
+            connection_history: None,
+            closed_connections: vec![],
         };
 
         let yaml = serde_yaml_ng::to_string(&default_settings)
@@ -167,6 +170,12 @@ impl ServiceState {
         if new_settings.profile_rules_count.is_some() { merged.profile_rules_count = new_settings.profile_rules_count; }
         if new_settings.auto_update_on_startup.is_some() { merged.auto_update_on_startup = new_settings.auto_update_on_startup; }
         if new_settings.rule_providers.is_some() { merged.rule_providers = new_settings.rule_providers.clone(); }
+        if new_settings.dns.is_some() { merged.dns = new_settings.dns.clone(); }
+        if new_settings.connection_history.is_some() { merged.connection_history = new_settings.connection_history.clone(); }
+        // closed_connections: always use new value if provided, otherwise keep existing
+        if !new_settings.closed_connections.is_empty() {
+            merged.closed_connections = new_settings.closed_connections.clone();
+        }
 
         let yaml_str = serde_yaml_ng::to_string(&merged)
             .map_err(|e| format!("Failed to serialize settings: {}", e))?;
@@ -178,6 +187,44 @@ impl ServiceState {
         self.load_settings();
 
         tracing::info!("Settings saved to settings.yaml");
+        Ok(())
+    }
+
+    /// Record a closed connection to history in settings.yaml
+    pub fn record_closed_connection(&self, closed: crate::settings::ClosedConnection) -> Result<(), String> {
+        let exe_dir = control_tower_service_core::exe_dir();
+        let settings_path = exe_dir.join("settings.yaml");
+
+        let mut merged = if settings_path.exists() {
+            match std::fs::read_to_string(&settings_path) {
+                Ok(c) => serde_yaml_ng::from_str::<crate::SettingsData>(&c).unwrap_or_default(),
+                Err(_) => crate::SettingsData::default(),
+            }
+        } else {
+            crate::SettingsData::default()
+        };
+
+        // Get max_count from connection_history config
+        let max_count = merged.connection_history
+            .as_ref()
+            .map(|c| c.max_count)
+            .unwrap_or(500) as usize;
+
+        // Prepend new closed connection
+        merged.closed_connections.insert(0, closed);
+
+        // Trim to max_count
+        if merged.closed_connections.len() > max_count {
+            merged.closed_connections.truncate(max_count);
+        }
+
+        let yaml_str = serde_yaml_ng::to_string(&merged)
+            .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+
+        std::fs::write(&settings_path, yaml_str)
+            .map_err(|e| format!("Failed to write settings.yaml: {}", e))?;
+
+        tracing::debug!("Recorded closed connection to history");
         Ok(())
     }
 }

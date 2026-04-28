@@ -48,6 +48,9 @@ pub async fn put_settings(
         profile_rules_count: current.profile_rules_count,
         auto_update_on_startup: current.auto_update_on_startup,
         rule_providers: current.rule_providers.clone(),
+        dns: current.dns.clone(),
+        connection_history: current.connection_history.clone(),
+        closed_connections: current.closed_connections.clone(),
     };
 
     let state = state.clone();
@@ -100,6 +103,73 @@ pub async fn apply_tun_settings(
         }
         Ok(Err(e)) => {
             tracing::error!("Failed to apply TUN settings: {}", e);
+            HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e))
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),
+    }
+}
+
+/// GET /api/settings/dns - Return current DNS settings
+pub async fn get_dns_settings(
+    state: web::Data<Arc<ServiceState>>,
+) -> HttpResponse {
+    let settings = state.get_settings();
+    HttpResponse::Ok().json(ApiResponse::success(settings.dns))
+}
+
+/// PUT /api/settings/dns - Update DNS settings and apply to config.yaml
+pub async fn put_dns_settings(
+    state: web::Data<Arc<ServiceState>>,
+    body: web::Json<crate::settings::DnsSettings>,
+) -> HttpResponse {
+    let dns_settings = body.into_inner();
+
+    // Apply DNS to config.yaml
+    let state_clone = state.clone();
+    let dns_for_apply = dns_settings.clone();
+    match task::spawn_blocking(move || state_clone.apply_dns_settings(&dns_for_apply)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e));
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string()));
+        }
+    }
+
+    // Save DNS to settings.yaml
+    let settings = SettingsData {
+        api_host: None,
+        api_port: None,
+        http_port: None,
+        socks_port: None,
+        mixed_port: None,
+        service_port: None,
+        tun_enabled: None,
+        log_level: None,
+        allow_lan: None,
+        ipv6: None,
+        tcp_concurrent: None,
+        mode: None,
+        latency_test_mode: None,
+        auto_test: None,
+        custom_rules: None,
+        profile_rules_count: None,
+        auto_update_on_startup: None,
+        rule_providers: None,
+        dns: Some(dns_settings),
+        connection_history: None,
+        closed_connections: vec![],
+    };
+
+    let state_inner = state.clone();
+    match task::spawn_blocking(move || state_inner.save_settings(&settings)).await {
+        Ok(Ok(())) => {
+            tracing::info!("DNS settings updated via API");
+            HttpResponse::Ok().json(ApiResponse::<()>::success(()))
+        }
+        Ok(Err(e)) => {
+            tracing::error!("Failed to save DNS settings: {}", e);
             HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e))
         }
         Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),

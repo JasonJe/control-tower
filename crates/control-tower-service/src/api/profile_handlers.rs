@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::task;
 
 use crate::ServiceState;
-use control_tower_service_core::ProfilesYaml;
+use control_tower_service_core::{ProfilesYaml, ProfileDownloadOptions};
 
 use super::{ApiResponse, AddProfileRequest, RefreshRequest};
 
@@ -32,6 +32,112 @@ fn resolve_profile_file(profiles_dir: &PathBuf, uid: &str, file_name: Option<&st
     profiles_dir.join(format!("{}.yaml", uid))
 }
 
+/// Execute a script and return its stdout as config content
+fn execute_script(script_content: &str, profile_file: &PathBuf) -> Result<String, String> {
+    use std::process::Command;
+
+    // Write script to a temp file to execute it
+    let script_ext = if cfg!(windows) { ".ps1" } else { ".sh" };
+    let script_file = profile_file.with_extension(script_ext);
+    std::fs::write(&script_file, script_content)
+        .map_err(|e| format!("Failed to write script file: {}", e))?;
+
+    let output = if cfg!(windows) {
+        Command::new("powershell")
+            .args(["-ExecutionPolicy", "Bypass", "-File", script_file.to_str().unwrap_or("")])
+            .output()
+            .map_err(|e| format!("Failed to execute script: {}", e))?
+    } else {
+        Command::new("sh")
+            .arg(script_file.to_str().unwrap_or(""))
+            .output()
+            .map_err(|e| format!("Failed to execute script: {}", e))?
+    };
+
+    // Clean up temp script file
+    let _ = std::fs::remove_file(&script_file);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Script failed: {}", stderr));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Merge multiple profiles into a single config
+fn merge_profiles(profile_uids: &[String], profiles_dir: &PathBuf, profiles_yaml: &ProfilesYaml) -> Result<String, String> {
+    use serde_yaml_ng::Value;
+
+    let mut merged: Value = serde_yaml_ng::from_str("mode: rule\nproxies: []\n")
+        .map_err(|e| format!("Failed to parse base config: {}", e))?;
+
+    for uid in profile_uids {
+        // Find the profile in profiles.yaml
+        let profile_item = profiles_yaml.items.iter()
+            .find(|p| p.uid == *uid)
+            .ok_or_else(|| format!("Profile {} not found for merge", uid))?;
+
+        // Resolve the profile file
+        let profile_path = resolve_profile_file(profiles_dir, uid, profile_item.file.as_deref());
+
+        // Read and parse the profile
+        let content = std::fs::read_to_string(&profile_path)
+            .map_err(|e| format!("Failed to read profile {}: {}", uid, e))?;
+
+        let profile_yaml: Value = serde_yaml_ng::from_str(&content)
+            .map_err(|e| format!("Failed to parse profile {}: {}", uid, e))?;
+
+        // Merge proxies
+        if let (Some(merged_map), Some(profile_map)) = (merged.as_mapping_mut(), profile_yaml.as_mapping()) {
+            // Merge proxies arrays
+            if let (Some(merged_proxies), Some(profile_proxies)) = (
+                merged_map.get_mut("proxies"),
+                profile_map.get("proxies")
+            ) {
+                if let (Some(merged_arr), Some(profile_arr)) = (merged_proxies.as_sequence_mut(), profile_proxies.as_sequence()) {
+                    for proxy in profile_arr {
+                        merged_arr.push(proxy.clone());
+                    }
+                }
+            } else if let Some(profile_proxies) = profile_map.get("proxies") {
+                merged_map.insert("proxies".into(), profile_proxies.clone());
+            }
+
+            // Merge proxy-groups
+            if let (Some(merged_groups), Some(profile_groups)) = (
+                merged_map.get_mut("proxy-groups"),
+                profile_map.get("proxy-groups")
+            ) {
+                if let (Some(merged_arr), Some(profile_arr)) = (merged_groups.as_sequence_mut(), profile_groups.as_sequence()) {
+                    for group in profile_arr {
+                        merged_arr.push(group.clone());
+                    }
+                }
+            } else if let Some(profile_groups) = profile_map.get("proxy-groups") {
+                merged_map.insert("proxy-groups".into(), profile_groups.clone());
+            }
+
+            // Merge rules
+            if let (Some(merged_rules), Some(profile_rules)) = (
+                merged_map.get_mut("rules"),
+                profile_map.get("rules")
+            ) {
+                if let (Some(merged_arr), Some(profile_arr)) = (merged_rules.as_sequence_mut(), profile_rules.as_sequence()) {
+                    for rule in profile_arr {
+                        merged_arr.push(rule.clone());
+                    }
+                }
+            } else if let Some(profile_rules) = profile_map.get("rules") {
+                merged_map.insert("rules".into(), profile_rules.clone());
+            }
+        }
+    }
+
+    serde_yaml_ng::to_string(&merged)
+        .map_err(|e| format!("Failed to serialize merged config: {}", e))
+}
+
 /// GET /api/profiles - Returns list of profiles
 pub async fn get_profiles() -> HttpResponse {
     let paths = super::get_control_tower_paths();
@@ -54,7 +160,7 @@ pub async fn get_profiles() -> HttpResponse {
     }
 }
 
-/// POST /api/profiles - Add a new profile by downloading from URL
+/// POST /api/profiles - Add a new profile (remote, local, script, or merge type)
 pub async fn add_profile(
     body: web::Json<AddProfileRequest>,
 ) -> HttpResponse {
@@ -68,62 +174,118 @@ pub async fn add_profile(
             .json(ApiResponse::<()>::error(format!("Failed to create profiles dir: {}", e)));
     }
 
-    // Generate a unique ID for the profile (use full UUID)
+    let profile_type = body.type_.as_deref().unwrap_or("remote");
     let uid = uuid::Uuid::new_v4().to_string();
-    let profile_file = profiles_dir.join(format!("{}.yaml", &uid[..8]));
+    let file_name = format!("{}.yaml", &uid[..8]);
+    let profile_file = profiles_dir.join(&file_name);
 
-    // Download the profile content
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(ApiResponse::<()>::error(format!("Failed to create HTTP client: {}", e)))
+    match profile_type {
+        "local" => {
+            // Local profile: just create empty file, user provides content later
+            // or copy from existing file
+            if let Some(ref src_file) = body.file {
+                let src_path = std::path::Path::new(src_file);
+                if src_path.exists() {
+                    if let Err(e) = std::fs::copy(src_path, &profile_file) {
+                        return HttpResponse::InternalServerError()
+                            .json(ApiResponse::<()>::error(format!("Failed to copy file: {}", e)));
+                    }
+                }
+            } else {
+                // Create empty file
+                if let Err(e) = std::fs::write(&profile_file, "mode: rule\nproxies: []\n") {
+                    return HttpResponse::InternalServerError()
+                        .json(ApiResponse::<()>::error(format!("Failed to create profile file: {}", e)));
+                }
+            }
         }
-    };
-
-    let response = match client
-        .get(&body.url)
-        .header("User-Agent", "clash-verge/v2.4.7")
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return HttpResponse::BadRequest()
-                .json(ApiResponse::<()>::error(format!("Failed to download profile: {}", e)))
+        "script" => {
+            // Script profile: store script content, execute at activation
+            let script_content = body.script.as_deref().unwrap_or("");
+            if let Err(e) = std::fs::write(&profile_file, script_content) {
+                return HttpResponse::InternalServerError()
+                    .json(ApiResponse::<()>::error(format!("Failed to write script: {}", e)));
+            }
         }
-    };
+        "merge" => {
+            // Merge profile: just store references, merge at activation
+            // Create a placeholder file
+            if let Err(e) = std::fs::write(&profile_file, "# Merge profile - content generated at activation\nmode: rule\n") {
+                return HttpResponse::InternalServerError()
+                    .json(ApiResponse::<()>::error(format!("Failed to create merge profile: {}", e)));
+            }
+        }
+        _ => {
+            // Remote/subscription profile: download from URL
+            let url = match body.url.as_ref() {
+                Some(u) if !u.trim().is_empty() => u.clone(),
+                _ => {
+                    return HttpResponse::BadRequest()
+                        .json(ApiResponse::<()>::error("URL is required for remote profiles".to_string()));
+                }
+            };
 
-    if !response.status().is_success() {
-        return HttpResponse::BadRequest()
-            .json(ApiResponse::<()>::error(format!("Download failed: {}", response.status())));
+            let client = match reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    return HttpResponse::InternalServerError()
+                        .json(ApiResponse::<()>::error(format!("Failed to create HTTP client: {}", e)))
+                }
+            };
+
+            let response = match client
+                .get(&url)
+                .header("User-Agent", "clash-verge/v2.4.7")
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    return HttpResponse::BadRequest()
+                        .json(ApiResponse::<()>::error(format!("Failed to download profile: {}", e)))
+                }
+            };
+
+            if !response.status().is_success() {
+                return HttpResponse::BadRequest()
+                    .json(ApiResponse::<()>::error(format!("Download failed: {}", response.status())));
+            }
+
+            let content = match response.text().await {
+                Ok(c) => c,
+                Err(e) => {
+                    return HttpResponse::InternalServerError()
+                        .json(ApiResponse::<()>::error(format!("Failed to read download: {}", e)))
+                }
+            };
+
+            // Validate it's YAML (not HTML error page)
+            if content.trim().starts_with('<') {
+                return HttpResponse::BadRequest()
+                    .json(ApiResponse::<()>::error("Downloaded content looks like HTML, not a valid subscription".to_string()));
+            }
+
+            // Save the profile file
+            if let Err(e) = std::fs::write(&profile_file, &content) {
+                return HttpResponse::InternalServerError()
+                    .json(ApiResponse::<()>::error(format!("Failed to save profile: {}", e)));
+            }
+        }
     }
 
-    let content = match response.text().await {
-        Ok(c) => c,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(ApiResponse::<()>::error(format!("Failed to read download: {}", e)))
-        }
-    };
-
-    // Save the profile file
-    if let Err(e) = std::fs::write(&profile_file, &content) {
-        return HttpResponse::InternalServerError()
-            .json(ApiResponse::<()>::error(format!("Failed to save profile: {}", e)));
-    }
-
-    // Get the profile name from URL or use provided name
+    // Get the profile name
     let name = body.name.clone().unwrap_or_else(|| {
-        body.url
-            .split('/')
-            .last()
-            .unwrap_or(&uid)
-            .trim_end_matches(".yaml")
-            .to_string()
+        if profile_type == "remote" {
+            body.url.as_ref()
+                .and_then(|u| u.split('/').last())
+                .map(|s| s.trim_end_matches(".yaml").to_string())
+                .unwrap_or_else(|| format!("Profile {}", &uid[..8]))
+        } else {
+            format!("{} profile", profile_type)
+        }
     });
 
     // Update profiles.yaml
@@ -143,10 +305,14 @@ pub async fn add_profile(
     let new_item = ProfileItem {
         uid: uid.clone(),
         name: Some(name),
-        file: Some(format!("{}.yaml", &uid[..8])),
-        url: Some(body.url.clone()),
+        file: Some(file_name.clone()),
+        url: body.url.clone(),
         cron: None,
         updated_at: Some(chrono::Utc::now().timestamp()),
+        options: None,
+        type_: Some(profile_type.to_string()),
+        script: body.script.clone(),
+        merge: body.merge.clone().unwrap_or_default(),
     };
 
     yaml.items.push(new_item);
@@ -158,7 +324,9 @@ pub async fn add_profile(
 
     HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
         "uid": uid,
-        "file": profile_file.to_string_lossy(),
+        "name": body.name,
+        "type": profile_type,
+        "file": file_name
     })))
 }
 
@@ -203,12 +371,54 @@ pub async fn activate_profile(
     let profiles_dir = paths.config_dir.join("profiles");
     let actual_file = resolve_profile_file(&profiles_dir, &uid, profile_item.file.as_deref());
 
-    // Validate profile content before activation
-    let profile_content = match std::fs::read_to_string(&actual_file) {
-        Ok(c) => c,
-        Err(e) => {
-            return HttpResponse::BadRequest()
-                .json(ApiResponse::<()>::error(format!("Failed to read profile file: {}", e)))
+    // Get profile content based on type
+    let profile_content = match profile_item.type_.as_deref().unwrap_or("remote") {
+        "script" => {
+            // Execute script to generate config
+            let script_content = profile_item.script.as_deref().unwrap_or("");
+            match execute_script(script_content, &actual_file) {
+                Ok(content) => {
+                    // Write generated content to profile file for later use
+                    if let Err(e) = std::fs::write(&actual_file, &content) {
+                        tracing::warn!("Failed to write script output to profile file: {}", e);
+                    }
+                    content
+                }
+                Err(e) => {
+                    return HttpResponse::BadRequest()
+                        .json(ApiResponse::<()>::error(format!("Script execution failed: {}", e)))
+                }
+            }
+        }
+        "merge" => {
+            // Merge referenced profiles
+            if profile_item.merge.is_empty() {
+                return HttpResponse::BadRequest()
+                    .json(ApiResponse::<()>::error("Merge profile has no profiles to merge".to_string()));
+            }
+            match merge_profiles(&profile_item.merge, &profiles_dir, &yaml) {
+                Ok(content) => {
+                    // Write merged content to profile file for later use
+                    if let Err(e) = std::fs::write(&actual_file, &content) {
+                        tracing::warn!("Failed to write merged content to profile file: {}", e);
+                    }
+                    content
+                }
+                Err(e) => {
+                    return HttpResponse::BadRequest()
+                        .json(ApiResponse::<()>::error(format!("Merge failed: {}", e)))
+                }
+            }
+        }
+        _ => {
+            // Remote or local: read directly from file
+            match std::fs::read_to_string(&actual_file) {
+                Ok(c) => c,
+                Err(e) => {
+                    return HttpResponse::BadRequest()
+                        .json(ApiResponse::<()>::error(format!("Failed to read profile file: {}", e)))
+                }
+            }
         }
     };
 
@@ -343,6 +553,16 @@ pub async fn update_profile(
     let (url, url_provided) = get_string_field(obj, "url");
     let (cron, cron_provided) = get_string_field(obj, "cron");
 
+    // Parse options field if provided
+    let options_provided = obj.contains_key("options");
+    let new_options = obj.get("options").and_then(|v| {
+        if v.is_null() {
+            Some(None)
+        } else {
+            serde_json::from_value::<ProfileDownloadOptions>(v.clone()).ok().map(Some)
+        }
+    }).flatten();
+
     // Validate URL if explicitly provided (even as empty string → clear not allowed for URL)
     if url_provided {
         if let Some(ref u) = url {
@@ -413,6 +633,11 @@ pub async fn update_profile(
         item.name = name.filter(|s| !s.trim().is_empty());
     }
 
+    // Apply options: null → clear, otherwise update
+    if options_provided {
+        item.options = new_options;
+    }
+
     // Apply URL: null or "" → clear, otherwise update (but re-download only if changed)
     let url_changed = url_provided && url.as_ref() != old_url.as_ref();
     if url_provided {
@@ -424,22 +649,33 @@ pub async fn update_profile(
 
     let profile_file = resolve_profile_file(&profiles_dir, &uid, item.file.as_deref());
 
+    // Capture options for download (before ownership moves)
+    let download_options = item.options.clone();
+
     // If URL changed, download new content in a blocking task
     if url_changed {
         let download_url = url.clone().unwrap(); // url_changed means url_provided && Some
         let uid_clone = uid.clone();
         let profile_file_clone = profile_file.clone();
         let profiles_path_clone = profiles_path.clone();
+        let options_clone = download_options.clone();
+
+        let timeout_secs = options_clone.as_ref()
+            .and_then(|o| o.timeout_seconds)
+            .unwrap_or(30);
+        let user_agent = options_clone.as_ref()
+            .and_then(|o| o.user_agent.clone())
+            .unwrap_or_else(|| "clash-verge/v2.4.7".to_string());
 
         let result = tokio::task::spawn_blocking(move || {
             let client = reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(std::time::Duration::from_secs(timeout_secs))
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
             let response = client
                 .get(&download_url)
-                .header("User-Agent", "clash-verge/v2.4.7")
+                .header("User-Agent", user_agent)
                 .send()
                 .map_err(|e| anyhow::anyhow!("Failed to download: {}", e))?;
 

@@ -186,6 +186,9 @@ impl ServiceState {
             profile_rules_count: current_settings.profile_rules_count,
             auto_update_on_startup: current_settings.auto_update_on_startup,
             rule_providers: current_settings.rule_providers.clone(),
+            dns: current_settings.dns.clone(),
+            connection_history: current_settings.connection_history.clone(),
+            closed_connections: current_settings.closed_connections.clone(),
         };
         self.save_settings(&settings)?;
 
@@ -221,7 +224,7 @@ impl ServiceState {
         (None, None, None)
     }
 
-    /// Update tun section in config.yaml
+    /// Update tun section in config.yaml (does NOT touch dns section)
     fn update_config_tun(&self, tun_enabled: bool) -> Result<(), String> {
         let exe_dir = control_tower_service_core::exe_dir();
         let config_path = exe_dir.join("config.yaml");
@@ -235,55 +238,109 @@ impl ServiceState {
         let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)
             .map_err(|e| format!("Failed to parse config.yaml: {}", e))?;
 
-        if tun_enabled {
-            let mut tun_map = serde_yaml_ng::Mapping::new();
-            tun_map.insert("enable".into(), true.into());
-            tun_map.insert("stack".into(), "gvisor".into());
-            tun_map.insert("name".into(), "mihomo".into());
-            tun_map.insert("mtu".into(), (9000 as i64).into());
-            tun_map.insert("auto-route".into(), true.into());
-            tun_map.insert("auto-detect-interface".into(), true.into());
-            let dns_hijack: Vec<serde_yaml_ng::Value> = vec!["udp://0.0.0.0:53".into()];
-            tun_map.insert("dns-hijack".into(), dns_hijack.into());
+        if let Some(map) = yaml.as_mapping_mut() {
+            if tun_enabled {
+                let mut tun_map = serde_yaml_ng::Mapping::new();
+                tun_map.insert("enable".into(), true.into());
+                tun_map.insert("stack".into(), "gvisor".into());
+                tun_map.insert("name".into(), "mihomo".into());
+                tun_map.insert("mtu".into(), (9000 as i64).into());
+                tun_map.insert("auto-route".into(), true.into());
+                tun_map.insert("auto-detect-interface".into(), true.into());
+                let dns_hijack: Vec<serde_yaml_ng::Value> = vec!["udp://0.0.0.0:53".into()];
+                tun_map.insert("dns-hijack".into(), dns_hijack.into());
+                map.insert("tun".into(), tun_map.into());
+            } else {
+                map.remove(&serde_yaml_ng::Value::String("tun".into()));
+            }
+        }
 
-            if let Some(map) = yaml.as_mapping_mut() {
-                if !map.contains_key("dns") {
-                    let mut dns_map = serde_yaml_ng::Mapping::new();
-                    dns_map.insert("enable".into(), true.into());
-                    dns_map.insert("listen".into(), "0.0.0.0:53".into());
-                    dns_map.insert("enhanced-mode".into(), "fake-ip".into());
-                    dns_map.insert("fake-ip-range".into(), "198.18.0.1/15".into());
-                    dns_map.insert("default-nameserver".into(),
-                        serde_yaml_ng::Sequence::from_iter(
-                            ["223.5.5.5", "119.29.29.29", "114.114.114.114"]
-                                .iter().map(|s| (*s).into())
-                        ).into()
-                    );
+        let new_content = serde_yaml_ng::to_string(&yaml)
+            .map_err(|e| format!("Failed to serialize config.yaml: {}", e))?;
+
+        std::fs::write(&config_path, new_content)
+            .map_err(|e| format!("Failed to write config.yaml: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Apply DNS settings: write dns section to config.yaml
+    pub fn apply_dns_settings(&self, dns_settings: &crate::settings::DnsSettings) -> Result<(), String> {
+        let exe_dir = control_tower_service_core::exe_dir();
+        let config_path = exe_dir.join("config.yaml");
+        if !config_path.exists() {
+            return Err("config.yaml not found".to_string());
+        }
+
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read config.yaml: {}", e))?;
+
+        let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)
+            .map_err(|e| format!("Failed to parse config.yaml: {}", e))?;
+
+        if let Some(map) = yaml.as_mapping_mut() {
+            if dns_settings.enable {
+                let mut dns_map = serde_yaml_ng::Mapping::new();
+                dns_map.insert("enable".into(), true.into());
+                dns_map.insert("listen".into(), "0.0.0.0:53".into());
+                dns_map.insert("enhanced-mode".into(), dns_settings.enhanced_mode.clone().into());
+                dns_map.insert("fake-ip-range".into(), dns_settings.fake_ip_range.clone().into());
+                dns_map.insert("default-nameserver".into(),
+                    serde_yaml_ng::Sequence::from_iter(
+                        ["223.5.5.5", "119.29.29.29", "114.114.114.114"]
+                            .iter().map(|s| (*s).into())
+                    ).into()
+                );
+                if !dns_settings.nameserver.is_empty() {
                     dns_map.insert("nameserver".into(),
                         serde_yaml_ng::Sequence::from_iter(
-                            ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"]
-                                .iter().map(|s| (*s).into())
+                            dns_settings.nameserver.iter().map(|s| s.clone().into())
                         ).into()
                     );
+                }
+                if !dns_settings.fallback.is_empty() {
                     dns_map.insert("fallback".into(),
                         serde_yaml_ng::Sequence::from_iter(
-                            ["https://1.1.1.1/dns-query", "https://dns.google/dns-query"]
-                                .iter().map(|s| (*s).into())
+                            dns_settings.fallback.iter().map(|s| s.clone().into())
                         ).into()
                     );
-                    map.insert("dns".into(), dns_map.into());
-                } else {
-                    if let Some(dns_val) = map.get_mut("dns") {
-                        if let Some(dns_map) = dns_val.as_mapping_mut() {
-                            dns_map.insert("enable".into(), true.into());
-                        }
-                    }
                 }
-                map.insert("tun".into(), tun_map.into());
-            }
-        } else {
-            if let Some(map) = yaml.as_mapping_mut() {
-                map.remove(&serde_yaml_ng::Value::String("tun".into()));
+                if let Some(ref ff) = dns_settings.fallback_filter {
+                    let mut ff_map = serde_yaml_ng::Mapping::new();
+                    ff_map.insert("geoip".into(), ff.geoip.into());
+                    if let Some(ref code) = ff.geoip_code {
+                        ff_map.insert("geoip-code".into(), code.clone().into());
+                    }
+                    if !ff.ipcidr.is_empty() {
+                        ff_map.insert("ipcidr".into(),
+                            serde_yaml_ng::Sequence::from_iter(
+                                ff.ipcidr.iter().map(|s| s.clone().into())
+                            ).into()
+                        );
+                    }
+                    dns_map.insert("fallback-filter".into(), ff_map.into());
+                }
+                if !dns_settings.hosts.is_empty() {
+                    let mut hosts_map = serde_yaml_ng::Mapping::new();
+                    for h in &dns_settings.hosts {
+                        hosts_map.insert(h.host.clone().into(), h.ip.clone().into());
+                    }
+                    dns_map.insert("hosts".into(), hosts_map.into());
+                }
+                if !dns_settings.nameserver_policy.is_empty() {
+                    let mut nsp_map = serde_yaml_ng::Mapping::new();
+                    for nsp in &dns_settings.nameserver_policy {
+                        nsp_map.insert(nsp.match_domain.clone().into(),
+                            serde_yaml_ng::Sequence::from_iter(
+                                nsp.nameserver.iter().map(|s| s.clone().into())
+                            ).into()
+                        );
+                    }
+                    dns_map.insert("nameserver-policy".into(), nsp_map.into());
+                }
+                map.insert("dns".into(), dns_map.into());
+            } else {
+                map.remove(&serde_yaml_ng::Value::String("dns".into()));
             }
         }
 
@@ -321,6 +378,9 @@ impl ServiceState {
             profile_rules_count: current_settings.profile_rules_count,
             auto_update_on_startup: current_settings.auto_update_on_startup,
             rule_providers: current_settings.rule_providers.clone(),
+            dns: current_settings.dns.clone(),
+            connection_history: current_settings.connection_history.clone(),
+            closed_connections: current_settings.closed_connections.clone(),
         };
         self.save_settings(&settings)?;
 

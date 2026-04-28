@@ -73,6 +73,8 @@ pub fn configure_routes() -> Scope {
         // Connections
         .route("/connections", web::get().to(get_connections))
         .route("/connections/{id}", web::delete().to(close_connection))
+        .route("/connections/history", web::get().to(get_connection_history))
+        .route("/connections/history", web::delete().to(clear_connection_history))
         // Config
         .route("/config", web::get().to(get_config))
         // Rules
@@ -99,6 +101,8 @@ pub fn configure_routes() -> Scope {
         .route("/settings", web::put().to(put_settings))
         .route("/settings/apply-ports", web::post().to(apply_port_settings))
         .route("/settings/apply-tun", web::post().to(apply_tun_settings))
+        .route("/settings/dns", web::get().to(get_dns_settings))
+        .route("/settings/dns", web::put().to(put_dns_settings))
         // Logs
         .route("/logs", web::get().to(get_logs))
 }

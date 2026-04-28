@@ -860,6 +860,66 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           </div>
 
           <div class="card">
+            <div class="card-header">
+              <div class="card-title">DNS Settings</div>
+              <div class="card-actions">
+                <button class="btn primary sm" id="saveDnsBtn" onclick="saveDns()" style="display:none">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                  Save
+                </button>
+                <button class="btn secondary sm" id="cancelDnsBtn" onclick="cancelEditDns()" style="display:none">Cancel</button>
+                <button class="btn sm" id="editDnsBtn" onclick="editDns()">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                  Edit
+                </button>
+              </div>
+            </div>
+            <div id="dns-display">
+              <div class="info-grid">
+                <div class="info-row">
+                  <span class="info-key">Enable</span>
+                  <span class="info-val" id="dns-enable-display">-</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-key">Enhanced Mode</span>
+                  <span class="info-val" id="dns-enhanced-display">-</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-key">Nameserver</span>
+                  <span class="info-val" id="dns-nameserver-display" style="max-width:400px;word-break:break-all">-</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-key">Fallback</span>
+                  <span class="info-val" id="dns-fallback-display" style="max-width:400px;word-break:break-all">-</span>
+                </div>
+              </div>
+            </div>
+            <div id="dns-edit" style="display:none">
+              <div style="padding:8px 0">
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:12px">
+                  <input type="checkbox" id="dns-enable-input">
+                  <span>Enable DNS</span>
+                </label>
+                <div style="margin-bottom:12px">
+                  <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Enhanced Mode</label>
+                  <select id="dns-enhanced-input" class="form-select" style="width:200px">
+                    <option value="fake-ip">fake-ip</option>
+                    <option value="redir-host">redir-host</option>
+                  </select>
+                </div>
+                <div style="margin-bottom:12px">
+                  <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Nameserver (one per line)</label>
+                  <textarea id="dns-nameserver-input" class="form-textarea" style="width:100%;height:60px;font-family:monospace" placeholder="https://doh.pub/dns-query"></textarea>
+                </div>
+                <div style="margin-bottom:12px">
+                  <label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Fallback (one per line)</label>
+                  <textarea id="dns-fallback-input" class="form-textarea" style="width:100%;height:60px;font-family:monospace" placeholder="https://1.1.1.1/dns-query"></textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
             <div class="card-header"><div class="card-title">About</div></div>
             <div class="info-grid">
               <div class="info-row"><span class="info-key">Version</span><span class="info-val" style="font-family:'JetBrains Mono',monospace">0.1.1</span></div>
@@ -2098,6 +2158,7 @@ async function loadSettings() {
   } catch (e) {
     showToast('Failed to load settings: ' + e.message, 'error');
   }
+  loadDns();
 }
 
 function editPorts() {
@@ -2384,6 +2445,73 @@ function onLatencyModeChange() {
   // When latency mode changes, update auto_test config so it uses the new mode
   if (!document.getElementById('auto-test-enabled').checked) return;
   saveAutoTestSettings();
+}
+
+// DNS Settings
+let dnsOriginal = {};
+
+function editDns() {
+  document.getElementById('dns-display').style.display = 'none';
+  document.getElementById('dns-edit').style.display = 'block';
+  document.getElementById('editDnsBtn').style.display = 'none';
+  document.getElementById('saveDnsBtn').style.display = 'inline-flex';
+  document.getElementById('cancelDnsBtn').style.display = 'inline-flex';
+  // Load current DNS settings
+  api('GET', '/api/settings/dns').then(data => {
+    const dns = data || {};
+    dnsOriginal = { ...dns };
+    document.getElementById('dns-enable-input').checked = dns.enable || false;
+    document.getElementById('dns-enhanced-input').value = dns.enhanced_mode || 'fake-ip';
+    document.getElementById('dns-nameserver-input').value = (dns.nameserver || []).join('\n');
+    document.getElementById('dns-fallback-input').value = (dns.fallback || []).join('\n');
+  }).catch(() => {
+    // Use defaults
+    dnsOriginal = {};
+    document.getElementById('dns-enable-input').checked = false;
+    document.getElementById('dns-enhanced-input').value = 'fake-ip';
+    document.getElementById('dns-nameserver-input').value = 'https://doh.pub/dns-query\nhttps://dns.alidns.com/dns-query';
+    document.getElementById('dns-fallback-input').value = 'https://1.1.1.1/dns-query\nhttps://dns.google/dns-query';
+  });
+}
+
+function cancelEditDns() {
+  document.getElementById('dns-display').style.display = '';
+  document.getElementById('dns-edit').style.display = 'none';
+  document.getElementById('editDnsBtn').style.display = 'inline-flex';
+  document.getElementById('saveDnsBtn').style.display = 'none';
+  document.getElementById('cancelDnsBtn').style.display = 'none';
+  // Restore original values
+  document.getElementById('dns-enable-display').textContent = dnsOriginal.enable ? 'Yes' : 'No';
+  document.getElementById('dns-enhanced-display').textContent = dnsOriginal.enhanced_mode || '-';
+  document.getElementById('dns-nameserver-display').textContent = (dnsOriginal.nameserver || []).join(', ') || '-';
+  document.getElementById('dns-fallback-display').textContent = (dnsOriginal.fallback || []).join(', ') || '-';
+}
+
+async function saveDns() {
+  const enable = document.getElementById('dns-enable-input').checked;
+  const enhanced_mode = document.getElementById('dns-enhanced-input').value;
+  const nameserver = document.getElementById('dns-nameserver-input').value.split('\n').map(s => s.trim()).filter(s => s);
+  const fallback = document.getElementById('dns-fallback-input').value.split('\n').map(s => s.trim()).filter(s => s);
+
+  try {
+    await api('PUT', '/api/settings/dns', { enable, enhanced_mode, fake_ip_range: '198.18.0.1/15', nameserver, fallback });
+    showToast('DNS settings saved');
+    cancelEditDns();
+    loadDns();
+  } catch (e) {
+    showToast('Failed to save DNS: ' + e, 'error');
+  }
+}
+
+function loadDns() {
+  api('GET', '/api/settings/dns').then(data => {
+    const dns = data || {};
+    dnsOriginal = { ...dns };
+    document.getElementById('dns-enable-display').textContent = dns.enable ? 'Yes' : 'No';
+    document.getElementById('dns-enhanced-display').textContent = dns.enhanced_mode || '-';
+    document.getElementById('dns-nameserver-display').textContent = (dns.nameserver || []).join(', ') || '-';
+    document.getElementById('dns-fallback-display').textContent = (dns.fallback || []).join(', ') || '-';
+  }).catch(() => {});
 }
 
 async function saveAutoTestSettings() {

@@ -54,6 +54,81 @@ impl Default for AutoTestConfig {
     }
 }
 
+/// DNS configuration for config.yaml
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DnsSettings {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(rename = "enhanced_mode", default = "default_enhanced_mode", skip_serializing_if = "String::is_empty")]
+    pub enhanced_mode: String,
+    #[serde(rename = "fake_ip_range", default = "default_fake_ip_range", skip_serializing_if = "String::is_empty")]
+    pub fake_ip_range: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nameserver: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback: Vec<String>,
+    #[serde(rename = "fallback_filter", default, skip_serializing_if = "Option::is_none")]
+    pub fallback_filter: Option<FallbackFilter>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<HostEntry>,
+    #[serde(rename = "nameserver_policy", default, skip_serializing_if = "Vec::is_empty")]
+    pub nameserver_policy: Vec<NameserverPolicyEntry>,
+}
+
+fn default_enhanced_mode() -> String { "fake-ip".to_string() }
+fn default_fake_ip_range() -> String { "198.18.0.1/15".to_string() }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FallbackFilter {
+    #[serde(default)]
+    pub geoip: bool,
+    #[serde(rename = "geoip_code", default, skip_serializing_if = "Option::is_none")]
+    pub geoip_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ipcidr: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostEntry {
+    #[serde(rename = "host", default)]
+    pub host: String,
+    #[serde(rename = "ip", default)]
+    pub ip: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NameserverPolicyEntry {
+    #[serde(rename = "match_domain", default)]
+    pub match_domain: String,
+    #[serde(default)]
+    pub nameserver: Vec<String>,
+}
+
+impl Default for DnsSettings {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            enhanced_mode: "fake-ip".to_string(),
+            fake_ip_range: "198.18.0.1/15".to_string(),
+            nameserver: vec![
+                "https://doh.pub/dns-query".to_string(),
+                "https://dns.alidns.com/dns-query".to_string(),
+            ],
+            fallback: vec![
+                "https://1.1.1.1/dns-query".to_string(),
+                "https://dns.google/dns-query".to_string(),
+            ],
+            fallback_filter: Some(FallbackFilter {
+                geoip: true,
+                geoip_code: Some("CN".to_string()),
+                ipcidr: vec!["240.0.0.0/4".to_string()],
+            }),
+            hosts: vec![],
+            nameserver_policy: vec![],
+        }
+    }
+}
+
 /// Settings data structure matching settings.yaml
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsData {
@@ -93,6 +168,33 @@ pub struct SettingsData {
     pub auto_update_on_startup: Option<bool>,
     #[serde(rename = "rule-providers", default, skip_serializing_if = "Option::is_none")]
     pub rule_providers: Option<Vec<RuleProviderConfig>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns: Option<DnsSettings>,
+    #[serde(rename = "connection-history", default, skip_serializing_if = "Option::is_none")]
+    pub connection_history: Option<ConnectionHistoryConfig>,
+    #[serde(rename = "closed-connections", default, skip_serializing_if = "Vec::is_empty")]
+    pub closed_connections: Vec<ClosedConnection>,
+}
+
+/// Connection history configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionHistoryConfig {
+    pub enabled: bool,
+    #[serde(rename = "max_count", default)]
+    pub max_count: u32,
+}
+
+/// A closed connection record for history
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClosedConnection {
+    pub id: String,
+    pub source_ip: String,
+    pub destination: String,
+    pub chains: Vec<String>,
+    pub upload: u64,
+    pub download: u64,
+    #[serde(rename = "closed_at")]
+    pub closed_at: String,
 }
 
 /// Rule provider configuration — re-exported from control-tower-service-core
@@ -119,6 +221,9 @@ impl Default for SettingsData {
             profile_rules_count: None,
             auto_update_on_startup: None,
             rule_providers: None,
+            dns: None,
+            connection_history: None,
+            closed_connections: vec![],
         }
     }
 }

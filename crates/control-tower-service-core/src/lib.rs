@@ -16,4 +16,4 @@ pub use mihomo::MihomoManager;
 pub use config::{ServiceConfig, ControlTowerPaths, exe_dir};
 pub use installer::MihomoInstaller;
 pub use active_config::ActiveConfigStore;
-pub use profiles::{ProfileItem, ProfilesYaml};
+pub use profiles::{ProfileItem, ProfilesYaml, ProfileDownloadOptions};

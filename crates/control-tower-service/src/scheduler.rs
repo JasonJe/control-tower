@@ -72,10 +72,12 @@ pub struct ProfileCronJob {
     failure_count: u32,
     /// Last error message from subscription fetch
     pub last_error: Option<String>,
+    /// Download options (user_agent, timeout, etc.)
+    pub options: Option<control_tower_service_core::ProfileDownloadOptions>,
 }
 
 impl ProfileCronJob {
-    pub fn new(profile_id: String, file: Option<String>, url: Option<String>, schedule: Schedule) -> Self {
+    pub fn new(profile_id: String, file: Option<String>, url: Option<String>, schedule: Schedule, options: Option<control_tower_service_core::ProfileDownloadOptions>) -> Self {
         let next_run = chrono::Utc::now().timestamp() + schedule.next_run_seconds();
         Self {
             profile_id,
@@ -86,6 +88,7 @@ impl ProfileCronJob {
             next_run,
             failure_count: 0,
             last_error: None,
+            options,
         }
     }
 
@@ -206,6 +209,8 @@ impl ServiceState {
             file: Option<String>,
             url: Option<String>,
             cron: Option<String>,
+            #[serde(rename = "options", default)]
+            options: Option<control_tower_service_core::ProfileDownloadOptions>,
         }
 
         let yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
@@ -221,7 +226,7 @@ impl ServiceState {
         for item in yaml.items {
             if let Some(cron_str) = item.cron {
                 if let Some(schedule) = Schedule::parse(&cron_str) {
-                    let job = ProfileCronJob::new(item.uid.clone(), item.file.clone(), item.url.clone(), schedule.clone());
+                    let job = ProfileCronJob::new(item.uid.clone(), item.file.clone(), item.url.clone(), schedule.clone(), item.options);
                     tracing::info!("Loaded cron job: {} - {}", item.uid, schedule.description());
                     jobs.push(job);
                 } else {
@@ -236,7 +241,7 @@ impl ServiceState {
     /// Check and run due cron jobs
     pub fn check_and_run_crons(&self) {
         // Collect due jobs first to avoid holding the write lock during HTTP requests.
-        let due_jobs: Vec<(usize, String, Option<String>, String)> = {
+        let due_jobs: Vec<(usize, String, Option<String>, String, Option<control_tower_service_core::ProfileDownloadOptions>)> = {
             let mut jobs = self.cron_jobs.write();
             let exe_dir = control_tower_service_core::exe_dir();
             let profiles_dir = exe_dir.join("profiles");
@@ -246,6 +251,7 @@ impl ServiceState {
             due.into_iter().map(|(idx, job)| {
                 let profile_id = job.profile_id.clone();
                 let url = job.url.clone();
+                let options = job.options.clone();
                 let schedule_desc = job.schedule.description();
                 tracing::info!("Triggering scheduled profile update: {} ({})", profile_id, schedule_desc);
 
@@ -264,17 +270,17 @@ impl ServiceState {
                 } else {
                     profiles_dir.join(format!("{}.yaml", profile_id))
                 };
-                (idx, profile_id, url, profile_file.to_string_lossy().into_owned())
+                (idx, profile_id, url, profile_file.to_string_lossy().into_owned(), options)
             }).collect()
         };
 
         // Execute HTTP requests outside the lock.
         let results: Vec<(usize, Result<(), String>)> = due_jobs
             .into_iter()
-            .map(|(idx, _profile_id, url, profile_file)| {
+            .map(|(idx, _profile_id, url, profile_file, options)| {
                 let result = if let Some(url) = url {
                     let path = std::path::PathBuf::from(&profile_file);
-                    update_profile_subscription(&url, &path)
+                    update_profile_subscription(&url, &path, options.as_ref())
                 } else {
                     Err("No URL configured".to_string())
                 };
@@ -339,6 +345,8 @@ pub fn check_and_update_all_profiles() -> Vec<(String, bool)> {
         uid: String,
         file: Option<String>,
         url: Option<String>,
+        #[serde(rename = "options", default)]
+        options: Option<control_tower_service_core::ProfileDownloadOptions>,
     }
 
     let yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
@@ -380,7 +388,7 @@ pub fn check_and_update_all_profiles() -> Vec<(String, bool)> {
         tracing::info!("Checking profile {} ({}) for updates", item.uid, url);
 
         let path = std::path::PathBuf::from(&profile_file);
-        match update_profile_subscription(&url, &path) {
+        match update_profile_subscription(&url, &path, item.options.as_ref()) {
             Ok(()) => {
                 tracing::info!("Profile {} updated successfully", item.uid);
                 results.push((item.uid, true));
@@ -397,14 +405,21 @@ pub fn check_and_update_all_profiles() -> Vec<(String, bool)> {
 
 /// Update a profile subscription (download new content and write to file).
 /// Used by cron job auto-update.
-pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::Path) -> Result<(), String> {
+pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::Path, options: Option<&control_tower_service_core::ProfileDownloadOptions>) -> Result<(), String> {
     use reqwest::blocking::Client as BlockingClient;
     use std::time::Duration as StdDuration;
 
+    let timeout_secs = options
+        .and_then(|o| o.timeout_seconds)
+        .unwrap_or(60);
+    let user_agent = options
+        .and_then(|o| o.user_agent.clone())
+        .unwrap_or_else(|| "clash-verge/v2.4.7".to_string());
+
     let response = BlockingClient::new()
         .get(url)
-        .header("User-Agent", "clash-verge/v2.4.7")
-        .timeout(StdDuration::from_secs(60))
+        .header("User-Agent", user_agent)
+        .timeout(StdDuration::from_secs(timeout_secs))
         .send()
         .map_err(|e| format!("Failed to fetch subscription: {}", e))?;
 

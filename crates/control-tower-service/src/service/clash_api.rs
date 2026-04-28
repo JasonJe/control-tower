@@ -65,6 +65,35 @@ impl ServiceState {
         Ok(connections)
     }
 
+    /// Get connection metadata by ID (for history recording before close)
+    pub fn get_connection_info(&self, id: &str) -> Result<Option<crate::settings::ClosedConnection>, String> {
+        let connections = self.get_connections()?;
+        let conns = connections.get("connections")
+            .and_then(|c| c.as_array())
+            .ok_or("Invalid connections response")?;
+
+        for conn in conns {
+            if conn.get("id").and_then(|v| v.as_str()) == Some(id) {
+                let chains = conn.get("chains")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+
+                let closed = crate::settings::ClosedConnection {
+                    id: conn.get("id").and_then(|v| v.as_str()).unwrap_or(id).to_string(),
+                    source_ip: conn.get("sourceIP").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    destination: conn.get("destination").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    chains,
+                    upload: conn.get("upload").and_then(|v| v.as_u64()).unwrap_or(0),
+                    download: conn.get("download").and_then(|v| v.as_u64()).unwrap_or(0),
+                    closed_at: chrono::Utc::now().to_rfc3339(),
+                };
+                return Ok(Some(closed));
+            }
+        }
+        Ok(None)
+    }
+
     /// Close a specific connection by ID
     pub fn close_connection(&self, id: &str) -> Result<(), String> {
         drop(self.manager.read());

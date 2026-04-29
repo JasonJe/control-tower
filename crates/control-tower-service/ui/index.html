@@ -744,13 +744,64 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
           <div class="table-wrap">
             <div id="conn-history-loading" class="loading"><div class="spinner"></div>Loading history...</div>
             <table class="table" id="conn-history-table" style="display:none">
-              <thead><tr><th style="width:50px">#</th><th>Source</th><th>Destination</th><th>Proxy Chain</th><th>Upload</th><th>Download</th><th>Closed At</th></tr></thead>
+              <thead><tr><th style="width:50px">#</th><th>Proxy Chain</th><th>Upload</th><th>Download</th><th>Closed At</th></tr></thead>
               <tbody id="conn-history-list"></tbody>
             </table>
             <div id="conn-history-empty" class="empty-state" style="display:none">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
               <p>No connection history</p>
               <div class="empty-action text-sm text-muted">Closed connections will appear here</div>
+            </div>
+            <div id="conn-history-pagination" class="pagination" style="display:none">
+              <div class="pagination-info" id="hist-page-info"></div>
+              <div class="pagination-controls">
+                <button class="page-btn nav" id="hist-prev-btn" onclick="historyPrevPage()">‹</button>
+                <button class="page-btn nav" id="hist-next-btn" onclick="historyNextPage()">›</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Login View -->
+      <div class="view" id="view-login" style="display:none">
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:24px">
+          <div style="text-align:center;margin-bottom:16px">
+            <h1 style="font-size:24px;font-weight:700;color:var(--text)">Control Tower</h1>
+            <p class="text-muted" style="margin-top:8px">Sign in to continue</p>
+          </div>
+          <div class="card" style="width:100%;max-width:360px">
+            <div class="card-body" style="padding:24px">
+              <div class="form-group">
+                <label class="form-label">Password</label>
+                <input type="password" class="form-input" id="login-password" placeholder="Enter password" onkeydown="if(event.key==='Enter')loginSubmit()">
+              </div>
+              <button class="btn primary" style="width:100%;margin-top:16px" onclick="loginSubmit()">Sign In</button>
+              <p id="login-error" class="text-sm" style="color:var(--error);margin-top:12px;text-align:center;display:none"></p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Setup Password View -->
+      <div class="view" id="view-setup-password" style="display:none">
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:24px">
+          <div style="text-align:center;margin-bottom:16px">
+            <h1 style="font-size:24px;font-weight:700;color:var(--text)">Set Up Password</h1>
+            <p class="text-muted" style="margin-top:8px">Create a password to secure your Control Tower</p>
+          </div>
+          <div class="card" style="width:100%;max-width:360px">
+            <div class="card-body" style="padding:24px">
+              <div class="form-group">
+                <label class="form-label">Password</label>
+                <input type="password" class="form-input" id="setup-password" placeholder="At least 6 characters">
+              </div>
+              <div class="form-group" style="margin-top:12px">
+                <label class="form-label">Confirm Password</label>
+                <input type="password" class="form-input" id="setup-password-confirm" placeholder="Repeat password" onkeydown="if(event.key==='Enter')setupPasswordSubmit()">
+              </div>
+              <button class="btn primary" style="width:100%;margin-top:16px" onclick="setupPasswordSubmit()">Set Password</button>
+              <p id="setup-error" class="text-sm" style="color:var(--error);margin-top:12px;text-align:center;display:none"></p>
             </div>
           </div>
         </div>
@@ -1126,6 +1177,9 @@ const CONN_PAGE_SIZE = 50;
 const LS_PROXY_LATENCIES = 'ct_proxy_latencies';
 const LS_PROXY_FILTER = 'ct_proxy_filter';
 
+// Auth state
+let isAuthenticated = false;
+
 let proxies = [];
 let filteredProxies = [];
 let proxyPage = 1;
@@ -1198,7 +1252,134 @@ document.querySelectorAll('.nav-item').forEach(el => {
   el.addEventListener('click', () => { switchView(el.dataset.view); });
 });
 
+async function checkAuth() {
+  try {
+    const resp = await fetch('/api/auth/status');
+    const json = await resp.json();
+    if (json.code !== 0) {
+      // API error, assume no auth needed
+      showMainView();
+      return;
+    }
+    const data = json.data;
+    if (!data.auth_enabled) {
+      // Auth disabled, show main
+      isAuthenticated = true;
+      showMainView();
+    } else if (!data.password_set) {
+      // Need to set password first
+      showSetupPasswordView();
+    } else if (!data.authenticated) {
+      // Need to login
+      showLoginView();
+    } else {
+      // Logged in
+      isAuthenticated = true;
+      showMainView();
+    }
+  } catch (e) {
+    // API not available, show main
+    showMainView();
+  }
+}
+
+function showMainView() {
+  isAuthenticated = true;
+  document.getElementById('view-login').style.display = 'none';
+  document.getElementById('view-setup-password').style.display = 'none';
+  switchView('dashboard');
+}
+
+function showLoginView() {
+  isAuthenticated = false;
+  document.getElementById('view-login').style.display = 'flex';
+  document.getElementById('view-setup-password').style.display = 'none';
+  // Hide all main views
+  document.querySelectorAll('.view').forEach(v => {
+    if (v.id !== 'view-login' && v.id !== 'view-setup-password') {
+      v.style.display = 'none';
+    }
+  });
+}
+
+function showSetupPasswordView() {
+  isAuthenticated = false;
+  document.getElementById('view-login').style.display = 'none';
+  document.getElementById('view-setup-password').style.display = 'flex';
+  // Hide all main views
+  document.querySelectorAll('.view').forEach(v => {
+    if (v.id !== 'view-login' && v.id !== 'view-setup-password') {
+      v.style.display = 'none';
+    }
+  });
+}
+
+async function loginSubmit() {
+  const pwd = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password: pwd})
+    });
+    const json = await resp.json();
+    if (json.code === 0) {
+      isAuthenticated = true;
+      showMainView();
+    } else {
+      errEl.textContent = json.message || 'Login failed';
+      errEl.style.display = 'block';
+    }
+  } catch (e) {
+    errEl.textContent = 'Connection error';
+    errEl.style.display = 'block';
+  }
+}
+
+async function setupPasswordSubmit() {
+  const pwd = document.getElementById('setup-password').value;
+  const pwd2 = document.getElementById('setup-password-confirm').value;
+  const errEl = document.getElementById('setup-error');
+  errEl.style.display = 'none';
+  if (pwd.length < 6) {
+    errEl.textContent = 'Password must be at least 6 characters';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (pwd !== pwd2) {
+    errEl.textContent = 'Passwords do not match';
+    errEl.style.display = 'block';
+    return;
+  }
+  try {
+    const resp = await fetch('/api/auth/setup-password', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password: pwd})
+    });
+    const json = await resp.json();
+    if (json.code === 0) {
+      showLoginView();
+      document.getElementById('login-password').value = '';
+      showToast('Password set! Please login.');
+    } else {
+      errEl.textContent = json.message || 'Failed';
+      errEl.style.display = 'block';
+    }
+  } catch (e) {
+    errEl.textContent = 'Connection error';
+    errEl.style.display = 'block';
+  }
+}
+
 function switchView(view) {
+  // If not authenticated, don't switch views
+  if (!isAuthenticated) {
+    checkAuth();
+    return;
+  }
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.view === view));
   document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === `view-${view}`));
   stopConnections();
@@ -2323,38 +2504,67 @@ function switchConnTab(tab) {
   }
 }
 
+// History pagination state
+let historyPageSize = 20;
+let historyPage = 1;
+let historyTotal = 0;
+let historyAllData = [];
+
+function historyPrevPage() {
+  if (historyPage > 1) { historyPage--; renderHistoryPage(); }
+}
+
+function historyNextPage() {
+  if (historyPage * historyPageSize < historyTotal) { historyPage++; renderHistoryPage(); }
+}
+
+function renderHistoryPage() {
+  const t = document.getElementById('conn-history-table');
+  const e = document.getElementById('conn-history-empty');
+  const pg = document.getElementById('conn-history-pagination');
+  const start = (historyPage - 1) * historyPageSize;
+  const pageData = historyAllData.slice(start, start + historyPageSize);
+
+  if (pageData.length === 0) {
+    t.style.display = 'none'; pg.style.display = 'none'; e.style.display = 'block'; return;
+  }
+  t.style.display = 'table'; e.style.display = 'none'; pg.style.display = 'flex';
+
+  document.getElementById('conn-history-list').innerHTML = pageData.map((c, i) => {
+    const chains = (c.chains || []).join(' → ');
+    const realIndex = start + i + 1;
+    return `<tr>
+      <td class="mono text-muted">${realIndex}</td>
+      <td><div class="conn-badge"><span class="badge neutral">${escapeHtml(truncate(chains, 32))}</span></div></td>
+      <td class="mono" style="color:var(--success)">${formatBytes(c.upload || 0)}</td>
+      <td class="mono" style="color:var(--warning)">${formatBytes(c.download || 0)}</td>
+      <td class="mono text-muted text-sm">${c.closed_at ? new Date(c.closed_at).toLocaleString() : '-'}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('hist-page-info').textContent = `${Math.ceil(historyTotal / historyPageSize)} pages, ${historyTotal} total`;
+  document.getElementById('hist-prev-btn').disabled = historyPage <= 1;
+  document.getElementById('hist-next-btn').disabled = historyPage * historyPageSize >= historyTotal;
+}
+
 async function loadConnectionHistory() {
   const l = document.getElementById('conn-history-loading');
   const t = document.getElementById('conn-history-table');
   const e = document.getElementById('conn-history-empty');
+  const pg = document.getElementById('conn-history-pagination');
   try {
-    const data = await api('GET', '/api/connections/history');
-    const history = data || [];
+    const list = await api('GET', '/api/connections/history');
+    historyAllData = Array.isArray(list) ? list : [];
+    historyTotal = historyAllData.length;
+    historyPage = 1;
     l.style.display = 'none';
-    if (history.length === 0) {
-      t.style.display = 'none';
-      e.style.display = 'block';
-      return;
+    if (historyTotal === 0) {
+      t.style.display = 'none'; pg.style.display = 'none'; e.style.display = 'block'; return;
     }
-    t.style.display = 'table';
-    e.style.display = 'none';
-    document.getElementById('conn-history-list').innerHTML = history.map((c, i) => {
-      const chains = (c.chains || []).join(' → ');
-      return `<tr>
-        <td class="mono text-muted">${i + 1}</td>
-        <td><div class="conn-meta" title="${escapeHtml(c.source_ip || '-')}">${escapeHtml(truncate(c.source_ip || '-', 24))}</div></td>
-        <td><div class="conn-meta" title="${escapeHtml(c.destination || '-')}">${escapeHtml(truncate(c.destination || '-', 28))}</div></td>
-        <td><div class="conn-badge"><span class="badge neutral">${escapeHtml(truncate(chains, 24))}</span></div></td>
-        <td class="mono" style="color:var(--success)">${formatBytes(c.upload || 0)}</td>
-        <td class="mono" style="color:var(--warning)">${formatBytes(c.download || 0)}</td>
-        <td class="mono text-muted text-sm">${c.closed_at ? new Date(c.closed_at).toLocaleString() : '-'}</td>
-      </tr>`;
-    }).join('');
+    renderHistoryPage();
   } catch (e) {
-    l.style.display = 'none';
-    t.style.display = 'none';
-    e.style.display = 'block';
-    e.querySelector('p').textContent = 'Failed to load history';
+    l.style.display = 'none'; t.style.display = 'none'; pg.style.display = 'none';
+    e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load history';
   }
 }
 
@@ -2804,7 +3014,7 @@ function onLogRefreshChange() {
   if (interval > 0) { logRefreshTimer = setInterval(loadLogs, interval); }
 }
 
-document.addEventListener('DOMContentLoaded', () => { loadDashboard(); });
+document.addEventListener('DOMContentLoaded', () => { loadDashboard(); checkAuth(); });
 
 // ESC key closes modal
 document.addEventListener('keydown', (e) => {

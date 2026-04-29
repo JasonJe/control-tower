@@ -92,6 +92,8 @@ impl ServiceState {
             dns: None,
             connection_history: None,
             closed_connections: vec![],
+            https: None,
+            auth: None,
         };
 
         let yaml = serde_yaml_ng::to_string(&default_settings)

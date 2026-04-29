@@ -51,6 +51,8 @@ pub async fn put_settings(
         dns: current.dns.clone(),
         connection_history: current.connection_history.clone(),
         closed_connections: current.closed_connections.clone(),
+        https: None,
+        auth: None,
     };
 
     let state = state.clone();
@@ -160,6 +162,8 @@ pub async fn put_dns_settings(
         dns: Some(dns_settings),
         connection_history: None,
         closed_connections: vec![],
+        https: None,
+        auth: None,
     };
 
     let state_inner = state.clone();

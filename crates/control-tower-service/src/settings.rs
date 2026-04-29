@@ -174,6 +174,10 @@ pub struct SettingsData {
     pub connection_history: Option<ConnectionHistoryConfig>,
     #[serde(rename = "closed-connections", default, skip_serializing_if = "Vec::is_empty")]
     pub closed_connections: Vec<ClosedConnection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub https: Option<HttpsConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AuthConfig>,
 }
 
 /// Connection history configuration
@@ -195,6 +199,30 @@ pub struct ClosedConnection {
     pub download: u64,
     #[serde(rename = "closed_at")]
     pub closed_at: String,
+}
+
+/// HTTPS configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpsConfig {
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_path: Option<String>,
+}
+
+/// Authentication configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthConfig {
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self { enabled: true, password: None }
+    }
 }
 
 /// Rule provider configuration — re-exported from control-tower-service-core
@@ -224,6 +252,8 @@ impl Default for SettingsData {
             dns: None,
             connection_history: None,
             closed_connections: vec![],
+            https: None,
+            auth: None,
         }
     }
 }

@@ -189,6 +189,8 @@ impl ServiceState {
             dns: current_settings.dns.clone(),
             connection_history: current_settings.connection_history.clone(),
             closed_connections: current_settings.closed_connections.clone(),
+            https: None,
+            auth: None,
         };
         self.save_settings(&settings)?;
 
@@ -381,6 +383,8 @@ impl ServiceState {
             dns: current_settings.dns.clone(),
             connection_history: current_settings.connection_history.clone(),
             closed_connections: current_settings.closed_connections.clone(),
+            https: None,
+            auth: None,
         };
         self.save_settings(&settings)?;
 

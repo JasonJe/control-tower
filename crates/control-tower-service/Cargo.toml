@@ -33,6 +33,14 @@ signal-hook = "0.3"
 percent-encoding = "2"
 futures = "0.3"
 
+# TLS / HTTPS
+rustls = "0.23"
+rustls-pemfile = "2.2"
+rcgen = { version = "0.13", features = ["x509-parser"] }
+
+# Password hashing
+bcrypt = "0.16"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"

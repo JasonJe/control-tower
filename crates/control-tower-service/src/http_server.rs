@@ -1,6 +1,7 @@
 //! HTTP server setup for Control Tower Service
 
 use actix_web::{web, App, HttpServer, HttpResponse, middleware};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::api;
@@ -8,24 +9,50 @@ use crate::html;
 use crate::ServiceState;
 
 /// Start the HTTP API server on the given port.
-/// This runs in the same process as the service.
-pub async fn start_http_server(port: u16, state: Arc<ServiceState>) -> std::io::Result<()> {
-    tracing::info!("Starting HTTP API server on http://0.0.0.0:{}", port);
-
+pub async fn start_http_server(
+    port: u16,
+    state: Arc<ServiceState>,
+    https_enabled: bool,
+    cert_path: Option<PathBuf>,
+    key_path: Option<PathBuf>,
+) -> std::io::Result<()> {
     let state_data = web::Data::new(state);
 
-    HttpServer::new(move || {
-        App::new()
-            .app_data(state_data.clone())
-            .wrap(middleware::Logger::default())
-            // Web UI
-            .route("/", web::get().to(index))
-            // API routes (configured in api module)
-            .service(api::configure_routes())
-    })
-    .bind(("0.0.0.0", port))?
-    .run()
-    .await
+    if https_enabled {
+        // HTTPS mode
+        tracing::info!("Starting HTTPS server on https://0.0.0.0:{}", port);
+
+        let config = crate::https::load_tls_config(
+            &cert_path.unwrap_or_else(|| PathBuf::from("cert.pem")),
+            &key_path.unwrap_or_else(|| PathBuf::from("key.pem")),
+        )
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        HttpServer::new(move || {
+            App::new()
+                .app_data(state_data.clone())
+                .wrap(middleware::Logger::default())
+                .route("/", web::get().to(index))
+                .service(api::configure_routes())
+        })
+        .bind_rustls_0_23(("0.0.0.0", port), config)?
+        .run()
+        .await
+    } else {
+        // HTTP mode
+        tracing::info!("Starting HTTP server on http://0.0.0.0:{}", port);
+
+        HttpServer::new(move || {
+            App::new()
+                .app_data(state_data.clone())
+                .wrap(middleware::Logger::default())
+                .route("/", web::get().to(index))
+                .service(api::configure_routes())
+        })
+        .bind(("0.0.0.0", port))?
+        .run()
+        .await
+    }
 }
 
 async fn index() -> HttpResponse {

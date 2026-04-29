@@ -8,6 +8,7 @@ mod api;
 mod cli;
 mod html;
 mod http_server;
+mod https;
 mod ipc_server;
 mod ipc_types;
 mod service;
@@ -56,6 +57,8 @@ pub struct ServiceState {
     api_port: RwLock<u16>,
     /// Auto latency test state
     auto_test: RwLock<AutoTestState>,
+    /// Track active connections for history recording
+    active_connections: RwLock<std::collections::HashMap<String, crate::service::logging::ConnectionMetadata>>,
 }
 
 impl Default for ServiceState {
@@ -1195,12 +1198,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Only start HTTP server when not in foreground mode (e2e tests use --foreground)
     if !args.foreground {
+        // Get HTTPS settings before moving state into closure
+        let settings = state.get_settings();
+        let https_config = settings.https;
+        let (https_enabled, cert_path, key_path) = match https_config {
+            Some(cfg) => (
+                cfg.enabled,
+                cfg.cert_path.map(PathBuf::from),
+                cfg.key_path.map(PathBuf::from),
+            ),
+            None => (false, None, None),
+        };
+
         let http_state = state.clone();
         std::thread::spawn(move || {
             let _span = tracing::info_span!("http_server", port = service_port);
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime for HTTP server");
             rt.block_on(async move {
-                if let Err(e) = http_server::start_http_server(service_port, http_state).await {
+                if let Err(e) = http_server::start_http_server(service_port, http_state, https_enabled, cert_path, key_path).await {
                     tracing::error!("HTTP server error: {}", e);
                 }
             });

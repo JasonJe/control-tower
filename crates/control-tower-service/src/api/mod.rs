@@ -3,6 +3,7 @@
 //! These handlers are exposed via actix-web and provide the same functionality
 //! as the IPC commands, but accessible over HTTP for web clients.
 
+mod auth_handlers;
 mod dto;
 mod helpers;
 mod service_handlers;
@@ -105,4 +106,8 @@ pub fn configure_routes() -> Scope {
         .route("/settings/dns", web::put().to(put_dns_settings))
         // Logs
         .route("/logs", web::get().to(get_logs))
+        // Auth
+        .route("/auth/status", web::get().to(auth_handlers::get_auth_status))
+        .route("/auth/login", web::post().to(auth_handlers::login))
+        .route("/auth/setup-password", web::post().to(auth_handlers::setup_password))
 }

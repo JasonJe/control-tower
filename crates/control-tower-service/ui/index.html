@@ -218,7 +218,7 @@ body,html{height:100%;overflow:visible}body{font-family:'Inter',system-ui,sans-s
 
 /* View */
 .view{display:none;min-height:0;flex-shrink:0;overflow:hidden}
-.view.active{display:block;flex:1;overflow-y:auto;min-height:0}
+.view.active{display:block;flex:1;min-height:0}
 
 /* Utils */
 .text-sm{font-size:12px}.text-xs{font-size:11px}
@@ -1045,7 +1045,7 @@ body,html{height:100%;overflow:visible}body{font-family:'Inter',system-ui,sans-s
 
       <!-- Logs View -->
       <div class="view" id="view-logs">
-        <div class="page-header">
+        <div class="page-header" style="position:sticky;top:0;background:var(--bg);z-index:10;flex-shrink:0;">
           <div><div class="page-title">Logs</div><div class="page-subtitle">System and Mihomo logs</div></div>
           <div class="card-actions">
             <select id="log-source-nav" class="form-select" style="width:auto;font-size:12px;margin-right:8px" onchange="loadLogsNav()">

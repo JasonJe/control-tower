@@ -117,13 +117,17 @@ impl ServiceState {
                     .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                     .unwrap_or_default();
 
-                let source_ip = conn.get("sourceIP").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let dest_ip = conn.get("destinationIP").and_then(|v| v.as_str()).unwrap_or("");
-                let dest_port = conn.get("destinationPort").and_then(|v| v.as_u64()).unwrap_or(0);
-                let destination = if dest_ip.is_empty() {
-                    conn.get("host").and_then(|v| v.as_str()).unwrap_or("").to_string()
-                } else {
+                let metadata = conn.get("metadata");
+                let source_ip = metadata.and_then(|m| m.get("sourceIP")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let dest_ip = metadata.and_then(|m| m.get("destinationIP")).and_then(|v| v.as_str()).unwrap_or("");
+                let dest_port = metadata.and_then(|m| m.get("destinationPort")).and_then(|v| v.as_str()).unwrap_or("");
+                let host = metadata.and_then(|m| m.get("host")).and_then(|v| v.as_str()).unwrap_or("");
+                let destination = if !dest_ip.is_empty() {
                     format!("{}:{}", dest_ip, dest_port)
+                } else if !host.is_empty() {
+                    host.to_string()
+                } else {
+                    String::new()
                 };
                 let meta = ConnectionMetadata {
                     id: id.to_string(),
@@ -153,13 +157,17 @@ impl ServiceState {
                     .unwrap_or_default();
 
                 let closed = {
-                    let source_ip = conn.get("sourceIP").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let dest_ip = conn.get("destinationIP").and_then(|v| v.as_str()).unwrap_or("");
-                    let dest_port = conn.get("destinationPort").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let destination = if dest_ip.is_empty() {
-                        conn.get("host").and_then(|v| v.as_str()).unwrap_or("").to_string()
-                    } else {
+                    let metadata = conn.get("metadata");
+                    let source_ip = metadata.and_then(|m| m.get("sourceIP")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let dest_ip = metadata.and_then(|m| m.get("destinationIP")).and_then(|v| v.as_str()).unwrap_or("");
+                    let dest_port = metadata.and_then(|m| m.get("destinationPort")).and_then(|v| v.as_str()).unwrap_or("");
+                    let host = metadata.and_then(|m| m.get("host")).and_then(|v| v.as_str()).unwrap_or("");
+                    let destination = if !dest_ip.is_empty() {
                         format!("{}:{}", dest_ip, dest_port)
+                    } else if !host.is_empty() {
+                        host.to_string()
+                    } else {
+                        String::new()
                     };
                     crate::settings::ClosedConnection {
                         id: conn.get("id").and_then(|v| v.as_str()).unwrap_or(id).to_string(),

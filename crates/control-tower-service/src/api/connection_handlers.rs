@@ -66,21 +66,19 @@ pub async fn close_connection(
 pub async fn get_connection_history(
     state: web::Data<Arc<ServiceState>>,
 ) -> HttpResponse {
-    let settings = state.get_settings();
-    let history = settings.closed_connections;
-    HttpResponse::Ok().json(ApiResponse::success(history))
+    let state = state.clone();
+    match task::spawn_blocking(move || state.get_connection_history()).await {
+        Ok(history) => HttpResponse::Ok().json(ApiResponse::success(history)),
+        Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),
+    }
 }
 
 /// DELETE /api/connections/history - Clear connection history
 pub async fn clear_connection_history(
     state: web::Data<Arc<ServiceState>>,
 ) -> HttpResponse {
-    let settings = crate::SettingsData {
-        closed_connections: vec![],
-        ..Default::default()
-    };
     let state_inner = state.clone();
-    match task::spawn_blocking(move || state_inner.save_settings(&settings)).await {
+    match task::spawn_blocking(move || state_inner.clear_connection_history_file()).await {
         Ok(Ok(())) => HttpResponse::Ok().json(ApiResponse::<()>::success(())),
         Ok(Err(e)) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e)),
         Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),

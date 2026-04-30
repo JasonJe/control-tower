@@ -243,4 +243,28 @@ impl ServiceState {
         tracing::debug!("Recorded closed connection to history");
         Ok(())
     }
+
+    /// Get connection history from connection_history.yaml
+    pub fn get_connection_history(&self) -> Vec<crate::settings::ClosedConnection> {
+        let exe_dir = control_tower_service_core::exe_dir();
+        let history_path = exe_dir.join("connection_history.yaml");
+        if !history_path.exists() {
+            return vec![];
+        }
+        match std::fs::read_to_string(&history_path) {
+            Ok(c) => serde_yaml_ng::from_str(&c).unwrap_or_default(),
+            Err(_) => vec![],
+        }
+    }
+
+    /// Clear connection history file
+    pub fn clear_connection_history_file(&self) -> Result<(), String> {
+        let exe_dir = control_tower_service_core::exe_dir();
+        let history_path = exe_dir.join("connection_history.yaml");
+        if history_path.exists() {
+            std::fs::remove_file(&history_path)
+                .map_err(|e| format!("Failed to remove connection_history.yaml: {}", e))?;
+        }
+        Ok(())
+    }
 }

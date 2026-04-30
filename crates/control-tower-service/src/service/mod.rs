@@ -6,5 +6,5 @@ mod lifecycle;
 mod settings_ops;
 mod config_ops;
 mod clash_api;
-mod logging;
+pub mod logging;
 mod latency_test;

@@ -1,6 +1,6 @@
 //! Log ring buffer operations.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use parking_lot::RwLock;
 
 use crate::ServiceState;
@@ -8,6 +8,17 @@ use crate::settings::consts::DEFAULT_MIHOMO_API_PORT;
 
 /// Max log lines to keep in the ring buffer
 const LOG_LINES: usize = 100;
+
+/// Connection metadata for tracking closed connections
+#[derive(Debug, Clone)]
+pub struct ConnectionMetadata {
+    pub id: String,
+    pub source_ip: String,
+    pub destination: String,
+    pub chains: Vec<String>,
+    pub upload: u64,
+    pub download: u64,
+}
 
 impl ServiceState {
     /// Create a new ServiceState instance
@@ -21,6 +32,8 @@ impl ServiceState {
             api_host: RwLock::new("127.0.0.1".to_string()),
             api_port: RwLock::new(DEFAULT_MIHOMO_API_PORT),
             auto_test: RwLock::new(crate::AutoTestState::default()),
+            // Track active connections for history recording
+            active_connections: RwLock::new(HashMap::new()),
         }
     }
 

@@ -174,6 +174,7 @@ impl ServiceState {
         if new_settings.rule_providers.is_some() { merged.rule_providers = new_settings.rule_providers.clone(); }
         if new_settings.dns.is_some() { merged.dns = new_settings.dns.clone(); }
         if new_settings.connection_history.is_some() { merged.connection_history = new_settings.connection_history.clone(); }
+        if new_settings.auth.is_some() { merged.auth = new_settings.auth.clone(); }
         // closed_connections: always use new value if provided, otherwise keep existing
         if !new_settings.closed_connections.is_empty() {
             merged.closed_connections = new_settings.closed_connections.clone();

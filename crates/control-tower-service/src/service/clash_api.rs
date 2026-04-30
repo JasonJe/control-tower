@@ -72,15 +72,15 @@ impl ServiceState {
 
     /// Track active connections, detect and record closed ones to history
     fn track_connections(&self, connections: &serde_json::Value) {
-        let conns = match connections.get("connections").and_then(|c| c.as_array()) {
-            Some(c) => c,
-            None => return,
-        };
+        let conns = connections.get("connections").and_then(|c| c.as_array());
 
         let current_ids: std::collections::HashSet<String> = conns
-            .iter()
-            .filter_map(|c| c.get("id").and_then(|v| v.as_str()).map(String::from))
-            .collect();
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|c| c.get("id").and_then(|v| v.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         // Get previous connections
         let mut active = self.active_connections.write();
@@ -108,8 +108,9 @@ impl ServiceState {
             }
         }
 
-        // Update active connections
-        for conn in conns {
+        // Update active connections - iterate over the array if it exists
+        if let Some(arr) = conns {
+            for conn in arr {
             if let Some(id) = conn.get("id").and_then(|v| v.as_str()) {
                 let chains: Vec<String> = conn
                     .get("chains")
@@ -139,6 +140,7 @@ impl ServiceState {
                 };
                 active.insert(id.to_string(), meta);
             }
+        }
         }
     }
 

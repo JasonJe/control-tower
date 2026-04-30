@@ -217,8 +217,8 @@ body,html{height:100%;overflow:hidden}body{font-family:'Inter',system-ui,sans-se
 .info-val{font-size:13px;font-weight:500;color:var(--text);font-family:'JetBrains Mono',monospace}
 
 /* View */
-.view{display:none;min-height:0;flex-shrink:0}
-.view.active{display:block;overflow-y:auto;flex:1}
+.view{display:none;min-height:0;flex-shrink:0;overflow:hidden}
+.view.active{display:block;flex:1;overflow-y:auto;min-height:0}
 
 /* Utils */
 .text-sm{font-size:12px}.text-xs{font-size:11px}
@@ -749,7 +749,7 @@ body,html{height:100%;overflow:hidden}body{font-family:'Inter',system-ui,sans-se
           <div class="table-wrap">
             <div id="conn-history-loading" class="loading"><div class="spinner"></div>Loading history...</div>
             <table class="table" id="conn-history-table" style="display:none">
-              <thead><tr><th style="width:50px">#</th><th>Proxy Chain</th><th>Upload</th><th>Download</th><th>Closed At</th></tr></thead>
+              <thead><tr><th style="width:50px">#</th><th>Source</th><th>Destination</th><th>Proxy Chain</th><th>Upload</th><th>Download</th><th>Closed At</th></tr></thead>
               <tbody id="conn-history-list"></tbody>
             </table>
             <div id="conn-history-empty" class="empty-state" style="display:none">
@@ -2601,6 +2601,8 @@ function renderHistoryPage() {
     const realIndex = start + i + 1;
     return `<tr>
       <td class="mono text-muted">${realIndex}</td>
+      <td class="mono text-sm" style="color:var(--text2)">${escapeHtml(c.source_ip || '-')}</td>
+      <td class="mono text-sm" style="color:var(--text2)">${escapeHtml(c.destination || '-')}</td>
       <td><div class="conn-badge"><span class="badge neutral">${escapeHtml(truncate(chains, 32))}</span></div></td>
       <td class="mono" style="color:var(--success)">${formatBytes(c.upload || 0)}</td>
       <td class="mono" style="color:var(--warning)">${formatBytes(c.download || 0)}</td>

@@ -87,6 +87,74 @@ class E2ETest:
     def wait_network(self, timeout: int = 5000):
         self.page.wait_for_load_state('networkidle', timeout=timeout / 1000)
 
+    def ensure_auth(self):
+        """Ensure logged in for tests - handles auth if enabled"""
+        import urllib.request
+        import hashlib
+        import json
+
+        # Navigate to base URL first (needed for localStorage access)
+        self.page.goto(BASE)
+        self.page.wait_for_load_state('networkidle')
+
+        # Check auth status
+        try:
+            with urllib.request.urlopen(f"{API_BASE}/auth/status", timeout=5) as r:
+                status = json.loads(r.read())
+        except Exception:
+            # API not available, skip auth
+            return
+
+        if status.get("code") != 0:
+            return
+
+        data = status.get("data", {})
+        if not data.get("auth_enabled"):
+            return
+
+        if not data.get("password_set"):
+            # Need to set up password
+            req = urllib.request.Request(
+                f"{API_BASE}/auth/setup-password",
+                data=json.dumps({"password": "test123"}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=5) as r:
+                json.loads(r.read())
+            data["password_set"] = True
+
+        if data.get("authenticated"):
+            return
+
+        # Need to login - do challenge-response
+        with urllib.request.urlopen(f"{API_BASE}/auth/nonce", timeout=5) as r:
+            nonce_data = json.loads(r.read())
+        nonce = nonce_data["data"]["nonce"]
+
+        # Derive key using PBKDF2 (same as frontend)
+        password = "test123"
+        salt = b"control-tower-auth-key-v1"
+        key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000).hex()
+
+        # Compute hash = SHA256(key + nonce)
+        hash_input = key.encode() + nonce.encode()
+        hash_result = hashlib.sha256(hash_input).hexdigest()
+
+        # Submit login
+        req = urllib.request.Request(
+            f"{API_BASE}/auth/login",
+            data=json.dumps({"hash": hash_result, "nonce": nonce}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            result = json.loads(r.read())
+
+        if result.get("code") == 0:
+            # Set localStorage to persist auth state across page reloads
+            self.page.evaluate("() => localStorage.setItem('ct_auth', '1')")
+
 
 # ─────────────────────────────────────────────
 # Helper: get current Mihomo state
@@ -800,6 +868,9 @@ def run():
         result = TestResult()
 
         e2e = E2ETest(page, result)
+
+        # Ensure logged in before running tests
+        e2e.ensure_auth()
 
         # Run all test suites
         test_dashboard(e2e)

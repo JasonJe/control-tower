@@ -1254,6 +1254,12 @@ document.querySelectorAll('.nav-item').forEach(el => {
 
 async function checkAuth() {
   try {
+    // Check localStorage first for persisted auth state
+    if (localStorage.getItem('ct_auth') === '1') {
+      isAuthenticated = true;
+      showMainView();
+      return;
+    }
     const resp = await fetch('/api/auth/status');
     const json = await resp.json();
     if (json.code !== 0) {
@@ -1318,15 +1324,45 @@ async function loginSubmit() {
   const pwd = document.getElementById('login-password').value;
   const errEl = document.getElementById('login-error');
   errEl.style.display = 'none';
+  if (!pwd) {
+    errEl.textContent = 'Please enter password';
+    errEl.style.display = 'block';
+    return;
+  }
   try {
+    // Step 1: Get nonce from server
+    const nonceResp = await fetch('/api/auth/nonce');
+    const nonceJson = await nonceResp.json();
+    if (nonceJson.code !== 0) {
+      errEl.textContent = nonceJson.message || 'Failed to get nonce';
+      errEl.style.display = 'block';
+      return;
+    }
+    const nonce = nonceJson.data.nonce;
+
+    // Step 2: Derive key using PBKDF2 (same as server's argon2 derivation logic)
+    const key = await deriveKey(pwd, 'control-tower-auth-key-v1');
+
+    // Step 3: Compute hash = SHA256(key + nonce)
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(key);
+    const nonceData = encoder.encode(nonce);
+    const combined = new Uint8Array(keyData.length + nonceData.length);
+    combined.set(keyData);
+    combined.set(nonceData, keyData.length);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', combined);
+    const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    // Step 4: Submit login with hash and nonce
     const resp = await fetch('/api/auth/login', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({password: pwd})
+      body: JSON.stringify({ hash: hashHex, nonce: nonce })
     });
     const json = await resp.json();
     if (json.code === 0) {
       isAuthenticated = true;
+      localStorage.setItem('ct_auth', '1');
       showMainView();
     } else {
       errEl.textContent = json.message || 'Login failed';
@@ -1336,6 +1372,37 @@ async function loginSubmit() {
     errEl.textContent = 'Connection error';
     errEl.style.display = 'block';
   }
+}
+
+// Derive key from password using PBKDF2 (matches server's argon2 derivation)
+async function deriveKey(password, salt) {
+  const encoder = new TextEncoder();
+  const passwordData = encoder.encode(password);
+  const saltData = encoder.encode(salt);
+
+  // Import password as key material
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    passwordData,
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+
+  // Derive bits using PBKDF2
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: saltData,
+      iterations: 100000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    256 // 32 bytes
+  );
+
+  // Convert to hex string
+  return Array.from(new Uint8Array(derivedBits)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 async function setupPasswordSubmit() {

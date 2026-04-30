@@ -107,6 +107,7 @@ pub fn configure_routes() -> Scope {
         // Logs
         .route("/logs", web::get().to(get_logs))
         // Auth
+        .route("/auth/nonce", web::get().to(auth_handlers::get_nonce))
         .route("/auth/status", web::get().to(auth_handlers::get_auth_status))
         .route("/auth/login", web::post().to(auth_handlers::login))
         .route("/auth/setup-password", web::post().to(auth_handlers::setup_password))

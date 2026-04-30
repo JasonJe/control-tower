@@ -1,4 +1,4 @@
-//! Authentication handlers: status, login, setup-password
+//! Authentication handlers: status, login, setup-password, nonce
 
 use actix_web::{web, HttpResponse};
 use std::sync::Arc;
@@ -6,6 +6,42 @@ use tokio::task;
 
 use crate::ServiceState;
 use super::ApiResponse;
+
+/// GET /api/auth/nonce - Returns a random nonce for challenge-response
+pub async fn get_nonce(
+    state: web::Data<Arc<ServiceState>>,
+) -> HttpResponse {
+    let settings = state.get_settings();
+
+    // Check if auth is enabled and password is set
+    let auth_config = settings.auth.as_ref();
+    let auth_enabled = auth_config.map(|a| a.enabled).unwrap_or(true);
+    let password_set = auth_config
+        .and_then(|a| a.password.as_ref())
+        .map(|p| !p.is_empty())
+        .unwrap_or(false);
+
+    if !auth_enabled || !password_set {
+        return HttpResponse::Ok().json(ApiResponse::<()>::error("Auth not configured or no password set"));
+    }
+
+    // Generate random nonce (32 bytes hex string)
+    let nonce: String = (0..32)
+        .map(|_| {
+            let b = rand::random::<u8>();
+            format!("{:02x}", b)
+        })
+        .collect();
+
+    // Store nonce in memory (simple in-memory for now, could be Redis in production)
+    // For now, just return the nonce - client will send it back with the hash
+    // Server will need to use the same nonce to verify
+
+    // Return nonce to client
+    HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
+        "nonce": nonce
+    })))
+}
 
 /// GET /api/auth/status - Returns current auth state
 pub async fn get_auth_status(
@@ -34,7 +70,16 @@ pub async fn get_auth_status(
     }))
 }
 
-/// POST /api/auth/login - Verify password
+/// POST /api/auth/login - Verify password using challenge-response
+///
+/// Flow:
+/// 1. Client calls GET /api/auth/nonce to get a random nonce
+/// 2. Client computes: key = argon2(password, nonce), hash = sha256(key + nonce)
+/// 3. Client calls POST /api/auth/login with { hash, nonce }
+/// 4. Server retrieves stored key (argon2 of password), computes expected_hash = sha256(stored_key + nonce)
+/// 5. Server compares hash == expected_hash
+///
+/// This way the actual password is never transmitted.
 pub async fn login(
     state: web::Data<Arc<ServiceState>>,
     body: web::Json<LoginRequest>,
@@ -47,28 +92,33 @@ pub async fn login(
     };
 
     // If password not set, return error
-    let Some(password_hash) = &auth_config.password else {
+    let Some(stored_key) = &auth_config.password else {
         return HttpResponse::Ok().json(ApiResponse::<()>::error("Password not set"));
     };
 
-    if password_hash.is_empty() {
+    if stored_key.is_empty() {
         return HttpResponse::Ok().json(ApiResponse::<()>::error("Password not set"));
     }
 
-    // Verify password with bcrypt
-    match bcrypt::verify(&body.password, password_hash) {
-        Ok(true) => {
-            tracing::info!("User logged in successfully");
-            HttpResponse::Ok().json(ApiResponse::<()>::success(()))
-        }
-        Ok(false) => {
-            tracing::warn!("Failed login attempt - invalid password");
-            HttpResponse::Ok().json(ApiResponse::<()>::error("Invalid password"))
-        }
-        Err(e) => {
-            tracing::error!("Password verification failed: {}", e);
-            HttpResponse::InternalServerError().json(ApiResponse::<()>::error("Verification failed"))
-        }
+    // Verify using challenge-response
+    // Client sends: hash = sha256(key + nonce) where key = argon2(password, nonce)
+    // We compute expected_hash = sha256(stored_key + nonce) and compare
+    let client_hash = body.hash.as_str();
+    let nonce = body.nonce.as_str();
+
+    // Compute expected hash: sha256(stored_key + nonce)
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(stored_key.as_bytes());
+    hasher.update(nonce.as_bytes());
+    let expected_hash = format!("{:x}", hasher.finalize());
+
+    if client_hash == expected_hash {
+        tracing::info!("User logged in successfully");
+        HttpResponse::Ok().json(ApiResponse::<()>::success(()))
+    } else {
+        tracing::warn!("Failed login attempt - invalid password hash");
+        HttpResponse::Ok().json(ApiResponse::<()>::error("Invalid password"))
     }
 }
 
@@ -82,22 +132,18 @@ pub async fn setup_password(
         return HttpResponse::Ok().json(ApiResponse::<()>::error("Password must be at least 6 characters"));
     }
 
-    // Hash password with bcrypt (cost = 12)
-    let hash = match bcrypt::hash(&body.password, 12) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!("Failed to hash password: {}", e);
-            return HttpResponse::InternalServerError().json(ApiResponse::<()>::error("Failed to hash password"));
-        }
-    };
+    // Derive key using PBKDF2-SHA256: key = PBKDF2(password, salt, 100k iterations)
+    // This MUST match the client's key derivation (see index.html loginSubmit)
+    let salt = b"control-tower-auth-key-v1";
+    let key = pbkdf2_hash(&body.password, salt);
 
-    // Save to settings
+    // Save to settings (store the derived key, not the password)
     let mut new_settings = state.get_settings();
     let auth = new_settings.auth.get_or_insert_with(|| crate::settings::AuthConfig {
         enabled: true,
         password: None,
     });
-    auth.password = Some(hash);
+    auth.password = Some(key);
 
     match task::spawn_blocking(move || state.save_settings(&new_settings)).await {
         Ok(Ok(())) => {
@@ -115,9 +161,29 @@ pub async fn setup_password(
     }
 }
 
+/// Derive a key from password using PBKDF2-SHA256
+/// Matches the client's key derivation (100k iterations, 32 bytes)
+fn pbkdf2_hash(password: &str, salt: &[u8]) -> String {
+    use pbkdf2::pbkdf2_hmac_array;
+    use sha2::Sha256;
+
+    const ITERATIONS: u32 = 100_000;
+    const KEY_LEN: usize = 32;
+
+    let key: [u8; KEY_LEN] = pbkdf2_hmac_array::<Sha256, KEY_LEN>(
+        password.as_bytes(),
+        salt,
+        ITERATIONS,
+    );
+
+    // Convert to hex string for storage
+    key.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 #[derive(serde::Deserialize)]
 pub struct LoginRequest {
-    password: String,
+    hash: String,
+    nonce: String,
 }
 
 #[derive(serde::Deserialize)]

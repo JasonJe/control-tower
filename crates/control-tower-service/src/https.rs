@@ -8,6 +8,7 @@ use std::io::Cursor;
 use std::path::Path;
 
 /// Generate self-signed certificate for HTTPS
+#[allow(dead_code)]
 pub fn generate_self_signed_cert(cert_path: &Path, key_path: &Path) -> Result<(), String> {
     if cert_path.exists() && key_path.exists() {
         tracing::info!("HTTPS certificates already exist at {:?}, {:?}", cert_path, key_path);

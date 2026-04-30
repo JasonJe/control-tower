@@ -65,7 +65,7 @@ body,html{height:100%;overflow:hidden}body{font-family:'Inter',system-ui,sans-se
 .nav-footer{padding:8px 10px;border-top:1px solid var(--border);margin-top:auto;font-size:11px;color:var(--text3);text-align:center}
 
 /* Content */
-.content{margin-left:var(--sidebar-w);flex:1;padding:28px 32px;max-width:1400px;width:100%;overflow-y:auto}
+.content{margin-left:var(--sidebar-w);flex:1;padding:28px 32px;max-width:1400px;width:100%;overflow-y:auto;display:flex;flex-direction:column}
 
 /* Page header */
 .page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;gap:16px}
@@ -217,8 +217,8 @@ body,html{height:100%;overflow:hidden}body{font-family:'Inter',system-ui,sans-se
 .info-val{font-size:13px;font-weight:500;color:var(--text);font-family:'JetBrains Mono',monospace}
 
 /* View */
-.view{display:none}
-.view.active{display:block}
+.view{display:none;min-height:0;flex-shrink:0}
+.view.active{display:block;overflow-y:auto;flex:1}
 
 /* Utils */
 .text-sm{font-size:12px}.text-xs{font-size:11px}
@@ -326,6 +326,10 @@ body,html{height:100%;overflow:hidden}body{font-family:'Inter',system-ui,sans-se
       </div>
       <div class="nav-group">
         <div class="nav-group-label">System</div>
+        <div class="nav-item" data-view="logs">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <span>Logs</span>
+        </div>
         <div class="nav-item" data-view="settings">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
           <span>Settings</span>
@@ -1062,6 +1066,30 @@ body,html{height:100%;overflow:hidden}body{font-family:'Inter',system-ui,sans-se
         </div>
       </div>
 
+      <!-- Logs View -->
+      <div class="view" id="view-logs">
+        <div class="page-header">
+          <div><div class="page-title">Logs</div><div class="page-subtitle">System and Mihomo logs</div></div>
+          <div class="card-actions">
+            <select id="log-source-nav" class="form-select" style="width:auto;font-size:12px;margin-right:8px" onchange="loadLogsNav()">
+              <option value="ctsvc">ctsvc</option>
+              <option value="mihomo">mihomo</option>
+            </select>
+            <select id="log-refresh-interval-nav" class="form-select" style="width:auto;font-size:12px;margin-right:8px" onchange="onLogRefreshChangeNav()">
+              <option value="0">Manual</option>
+              <option value="5000">5s</option>
+              <option value="10000">10s</option>
+              <option value="30000" selected>30s</option>
+              <option value="60000">60s</option>
+            </select>
+            <button class="btn ghost sm" onclick="loadLogsNav()" title="Refresh logs">
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            </button>
+          </div>
+        </div>
+        <div id="logs-content-nav" style="flex:1;overflow-y:auto;background:#0f172a;color:#e2e8f0;font-family:'JetBrains Mono',monospace;font-size:11px;padding:12px;border-radius:8px;line-height:1.6;min-height:0"></div>
+      </div>
+
     </div>
   </main>
 </div>
@@ -1429,6 +1457,7 @@ function switchView(view) {
   else if (view === 'rules') loadRules();
   else if (view === 'connections') startConnections();
   else if (view === 'settings') { loadSettings(); loadLogs(); onLogRefreshChange(); }
+  else if (view === 'logs') { loadLogsNav(); onLogRefreshChangeNav(); }
 }
 
 function formatBytes(b) {
@@ -2734,6 +2763,7 @@ async function savePorts() {
 }
 
 let logRefreshTimer = null;
+let logRefreshTimerNav = null;
 let dashRefreshTimer = null;
 const MAX_TRAFFIC_POINTS = 60;
 let trafficHistory = []; // {up: bytes/s, down: bytes/s, ts: ms}
@@ -3049,6 +3079,28 @@ function onLogRefreshChange() {
   const interval = parseInt(document.getElementById('log-refresh-interval').value);
   if (logRefreshTimer) { clearInterval(logRefreshTimer); logRefreshTimer = null; }
   if (interval > 0) { logRefreshTimer = setInterval(loadLogs, interval); }
+}
+
+function loadLogsNav() {
+  const source = document.getElementById('log-source-nav').value;
+  const container = document.getElementById('logs-content-nav');
+  fetch(`/api/logs?source=${source}&lines=500`)
+    .then(r => r.json())
+    .then(resp => {
+      if (resp && resp.data && resp.data.items) {
+        container.innerHTML = resp.data.items.map(line => {
+          const escaped = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          return `<div style="white-space:pre-wrap">${escaped}</div>`;
+        }).join('');
+        container.scrollTop = container.scrollHeight;
+      }
+    }).catch(() => { container.innerHTML = '<div style="white-space:pre-wrap;color:#f87171">Failed to load logs</div>'; });
+}
+
+function onLogRefreshChangeNav() {
+  const interval = parseInt(document.getElementById('log-refresh-interval-nav').value);
+  if (logRefreshTimerNav) { clearInterval(logRefreshTimerNav); logRefreshTimerNav = null; }
+  if (interval > 0) { logRefreshTimerNav = setInterval(loadLogsNav, interval); }
 }
 
 document.addEventListener('DOMContentLoaded', () => { checkAuth(); });

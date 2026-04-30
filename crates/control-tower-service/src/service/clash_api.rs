@@ -117,10 +117,18 @@ impl ServiceState {
                     .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                     .unwrap_or_default();
 
+                let source_ip = conn.get("sourceIP").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let dest_ip = conn.get("destinationIP").and_then(|v| v.as_str()).unwrap_or("");
+                let dest_port = conn.get("destinationPort").and_then(|v| v.as_u64()).unwrap_or(0);
+                let destination = if dest_ip.is_empty() {
+                    conn.get("host").and_then(|v| v.as_str()).unwrap_or("").to_string()
+                } else {
+                    format!("{}:{}", dest_ip, dest_port)
+                };
                 let meta = ConnectionMetadata {
                     id: id.to_string(),
-                    source_ip: conn.get("sourceIP").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    destination: conn.get("destination").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    source_ip,
+                    destination,
                     chains,
                     upload: conn.get("upload").and_then(|v| v.as_u64()).unwrap_or(0),
                     download: conn.get("download").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -144,14 +152,24 @@ impl ServiceState {
                     .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                     .unwrap_or_default();
 
-                let closed = crate::settings::ClosedConnection {
-                    id: conn.get("id").and_then(|v| v.as_str()).unwrap_or(id).to_string(),
-                    source_ip: conn.get("sourceIP").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    destination: conn.get("destination").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    chains,
-                    upload: conn.get("upload").and_then(|v| v.as_u64()).unwrap_or(0),
-                    download: conn.get("download").and_then(|v| v.as_u64()).unwrap_or(0),
-                    closed_at: chrono::Utc::now().to_rfc3339(),
+                let closed = {
+                    let source_ip = conn.get("sourceIP").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let dest_ip = conn.get("destinationIP").and_then(|v| v.as_str()).unwrap_or("");
+                    let dest_port = conn.get("destinationPort").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let destination = if dest_ip.is_empty() {
+                        conn.get("host").and_then(|v| v.as_str()).unwrap_or("").to_string()
+                    } else {
+                        format!("{}:{}", dest_ip, dest_port)
+                    };
+                    crate::settings::ClosedConnection {
+                        id: conn.get("id").and_then(|v| v.as_str()).unwrap_or(id).to_string(),
+                        source_ip,
+                        destination,
+                        chains,
+                        upload: conn.get("upload").and_then(|v| v.as_u64()).unwrap_or(0),
+                        download: conn.get("download").and_then(|v| v.as_u64()).unwrap_or(0),
+                        closed_at: chrono::Utc::now().to_rfc3339(),
+                    }
                 };
                 return Ok(Some(closed));
             }

@@ -13,6 +13,7 @@ mod ipc_server;
 mod ipc_types;
 mod service;
 mod service_state_ext;
+mod session;
 mod settings;
 
 use std::collections::VecDeque;
@@ -42,6 +43,13 @@ pub fn default_socket_path() -> PathBuf {
     PathBuf::from("/tmp/ctsvc.sock")
 }
 
+/// Session info
+#[derive(Clone)]
+pub struct Session {
+    pub token: String,
+    pub created_at: u64,
+}
+
 /// Service state that manages Mihomo subprocess
 pub struct ServiceState {
     manager: RwLock<control_tower_service_core::MihomoManager>,
@@ -59,6 +67,8 @@ pub struct ServiceState {
     auto_test: RwLock<AutoTestState>,
     /// Track active connections for history recording
     active_connections: RwLock<std::collections::HashMap<String, crate::service::logging::ConnectionMetadata>>,
+    /// Session tokens for API authentication
+    sessions: RwLock<std::collections::HashMap<String, Session>>,
 }
 
 impl Default for ServiceState {

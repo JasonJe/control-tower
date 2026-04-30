@@ -34,6 +34,8 @@ impl ServiceState {
             auto_test: RwLock::new(crate::AutoTestState::default()),
             // Track active connections for history recording
             active_connections: RwLock::new(HashMap::new()),
+            // Session tokens for API authentication
+            sessions: RwLock::new(HashMap::new()),
         }
     }
 

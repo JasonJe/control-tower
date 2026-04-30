@@ -35,7 +35,7 @@
 --shadow:0 4px 6px -1px rgba(0,0,0,.4);
 --shadow-lg:0 10px 15px -3px rgba(0,0,0,.5);
 }}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);transition:background 200ms ease,color 200ms ease;line-height:1.5;-webkit-font-smoothing:antialiased}
+body,html{height:100%;overflow:hidden}body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);transition:background 200ms ease,color 200ms ease;line-height:1.5;-webkit-font-smoothing:antialiased}
 .mono{font-family:'JetBrains Mono',monospace}
 
 /* Layout */
@@ -271,6 +271,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .conn-meta{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2)}
 .conn-badge{margin-top:2px}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -763,8 +764,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
         </div>
       </div>
 
-      <!-- Login View -->
-      <div class="view" id="view-login" style="display:none">
+      <!-- Login View - uses fixed positioning to overlay entire screen -->
+      <div id="view-login" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);z-index:1000;flex-direction:column;align-items:center;justify-content:center;gap:24px">
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:24px">
           <div style="text-align:center;margin-bottom:16px">
             <h1 style="font-size:24px;font-weight:700;color:var(--text)">Control Tower</h1>
@@ -783,8 +784,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
         </div>
       </div>
 
-      <!-- Setup Password View -->
-      <div class="view" id="view-setup-password" style="display:none">
+      <!-- Setup Password View - uses fixed positioning to overlay entire screen -->
+      <div id="view-setup-password" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);z-index:1000;flex-direction:column;align-items:center;justify-content:center;gap:24px">
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:24px">
           <div style="text-align:center;margin-bottom:16px">
             <h1 style="font-size:24px;font-weight:700;color:var(--text)">Set Up Password</h1>
@@ -1223,7 +1224,10 @@ function loadProxyFilter() {
 }
 
 async function api(method, path, body, fetchTimeoutMs) {
-  const opts = { method, headers: {'Content-Type': 'application/json'} };
+  const headers = {'Content-Type': 'application/json'};
+  const token = localStorage.getItem('ct_token');
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const opts = { method, headers };
   if (body) opts.body = JSON.stringify(body);
   let res;
   if (fetchTimeoutMs) {
@@ -1255,11 +1259,12 @@ document.querySelectorAll('.nav-item').forEach(el => {
 async function checkAuth() {
   try {
     // Check localStorage first for persisted auth state
-    if (localStorage.getItem('ct_auth') === '1') {
+    if (localStorage.getItem('ct_auth') === '1' && localStorage.getItem('ct_token')) {
       isAuthenticated = true;
       showMainView();
       return;
     }
+    // Call API without token - /api/auth/status doesn't require auth
     const resp = await fetch('/api/auth/status');
     const json = await resp.json();
     if (json.code !== 0) {
@@ -1298,26 +1303,14 @@ function showMainView() {
 
 function showLoginView() {
   isAuthenticated = false;
-  document.getElementById('view-login').style.display = 'flex';
   document.getElementById('view-setup-password').style.display = 'none';
-  // Hide all main views
-  document.querySelectorAll('.view').forEach(v => {
-    if (v.id !== 'view-login' && v.id !== 'view-setup-password') {
-      v.style.display = 'none';
-    }
-  });
+  document.getElementById('view-login').style.display = 'flex';
 }
 
 function showSetupPasswordView() {
   isAuthenticated = false;
   document.getElementById('view-login').style.display = 'none';
   document.getElementById('view-setup-password').style.display = 'flex';
-  // Hide all main views
-  document.querySelectorAll('.view').forEach(v => {
-    if (v.id !== 'view-login' && v.id !== 'view-setup-password') {
-      v.style.display = 'none';
-    }
-  });
 }
 
 async function loginSubmit() {
@@ -1340,18 +1333,11 @@ async function loginSubmit() {
     }
     const nonce = nonceJson.data.nonce;
 
-    // Step 2: Derive key using PBKDF2 (same as server's argon2 derivation logic)
-    const key = await deriveKey(pwd, 'control-tower-auth-key-v1');
+    // Step 2: Derive key using PBKDF2 (same as server's derivation logic)
+    const key = deriveKey(pwd, 'control-tower-auth-key-v1');
 
     // Step 3: Compute hash = SHA256(key + nonce)
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(key);
-    const nonceData = encoder.encode(nonce);
-    const combined = new Uint8Array(keyData.length + nonceData.length);
-    combined.set(keyData);
-    combined.set(nonceData, keyData.length);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', combined);
-    const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    const hashHex = sha256Hex(key + nonce);
 
     // Step 4: Submit login with hash and nonce
     const resp = await fetch('/api/auth/login', {
@@ -1363,6 +1349,9 @@ async function loginSubmit() {
     if (json.code === 0) {
       isAuthenticated = true;
       localStorage.setItem('ct_auth', '1');
+      if (json.data && json.data.token) {
+        localStorage.setItem('ct_token', json.data.token);
+      }
       showMainView();
     } else {
       errEl.textContent = json.message || 'Login failed';
@@ -1374,36 +1363,10 @@ async function loginSubmit() {
   }
 }
 
-// Derive key from password using PBKDF2 (matches server's argon2 derivation)
-async function deriveKey(password, salt) {
-  const encoder = new TextEncoder();
-  const passwordData = encoder.encode(password);
-  const saltData = encoder.encode(salt);
-
-  // Import password as key material
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    passwordData,
-    'PBKDF2',
-    false,
-    ['deriveBits']
-  );
-
-  // Derive bits using PBKDF2
-  const derivedBits = await crypto.subtle.deriveBits(
-    {
-      name: 'PBKDF2',
-      salt: saltData,
-      iterations: 100000,
-      hash: 'SHA-256'
-    },
-    keyMaterial,
-    256 // 32 bytes
-  );
-
-  // Convert to hex string
-  return Array.from(new Uint8Array(derivedBits)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
+// CryptoJS for PBKDF2 and SHA-256
+function sha256Hex(a) { return CryptoJS.SHA256(a).toString(); }
+function pbkdf2Hex(password, salt, iterations) { return CryptoJS.PBKDF2(password, salt, { keySize: 8, iterations: iterations, hasher: CryptoJS.algo.SHA256 }).toString(); }
+function deriveKey(a, b) { return pbkdf2Hex(a, b, 100000); }
 
 async function setupPasswordSubmit() {
   const pwd = document.getElementById('setup-password').value;
@@ -3081,7 +3044,7 @@ function onLogRefreshChange() {
   if (interval > 0) { logRefreshTimer = setInterval(loadLogs, interval); }
 }
 
-document.addEventListener('DOMContentLoaded', () => { loadDashboard(); checkAuth(); });
+document.addEventListener('DOMContentLoaded', () => { checkAuth(); });
 
 // ESC key closes modal
 document.addEventListener('keydown', (e) => {

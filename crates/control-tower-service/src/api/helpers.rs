@@ -1,6 +1,10 @@
 //! Helper functions for HTTP API handlers
 
 use std::path::PathBuf;
+use actix_web::HttpRequest;
+use std::sync::Arc;
+
+use crate::ServiceState;
 
 use crate::settings::consts::DEFAULT_MIHOMO_HTTP_PORT;
 
@@ -116,5 +120,34 @@ pub fn parse_profiles_yaml_full(content: &str) -> serde_json::Value {
             "items": Vec::<serde_json::Value>::new(),
             "current": serde_json::Value::Null
         }),
+    }
+}
+
+/// Check if request has valid auth token
+/// Returns true if authenticated (or auth is disabled), false otherwise
+pub fn check_auth(req: &HttpRequest, state: &Arc<crate::ServiceState>) -> bool {
+    // First check if auth is enabled
+    let settings = state.get_settings();
+    let auth_enabled = settings.auth.as_ref().map(|a| a.enabled).unwrap_or(true);
+    if !auth_enabled {
+        return true; // Auth disabled, allow all
+    }
+
+    if let Some(auth_header) = req.headers().get("Authorization") {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                return state.verify_session(token);
+            }
+        }
+    }
+    false
+}
+
+/// Require auth helper - returns Some(()) if authenticated, None otherwise
+pub fn require_auth(req: &HttpRequest, state: &Arc<ServiceState>) -> Option<()> {
+    if check_auth(req, state) {
+        Some(())
+    } else {
+        None
     }
 }

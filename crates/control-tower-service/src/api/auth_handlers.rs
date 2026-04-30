@@ -1,4 +1,4 @@
-//! Authentication handlers: status, login, setup-password, nonce
+//! Authentication handlers: status, login, setup-password, nonce, logout
 
 use actix_web::{web, HttpResponse};
 use std::sync::Arc;
@@ -45,6 +45,7 @@ pub async fn get_nonce(
 
 /// GET /api/auth/status - Returns current auth state
 pub async fn get_auth_status(
+    req: actix_web::HttpRequest,
     state: web::Data<Arc<ServiceState>>,
 ) -> HttpResponse {
     let settings = state.get_settings();
@@ -57,8 +58,8 @@ pub async fn get_auth_status(
         .map(|p| !p.is_empty())
         .unwrap_or(false);
 
-    // TODO: implement session tracking
-    let authenticated = false;
+    // Check if client has valid session token
+    let authenticated = check_session_token(&req, &state);
 
     HttpResponse::Ok().json(serde_json::json!({
         "code": 0,
@@ -68,6 +69,34 @@ pub async fn get_auth_status(
             "authenticated": authenticated
         }
     }))
+}
+
+/// Extract and verify session token from Authorization header
+fn check_session_token(req: &actix_web::HttpRequest, state: &ServiceState) -> bool {
+    if let Some(auth_header) = req.headers().get("Authorization") {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                return state.verify_session(token);
+            }
+        }
+    }
+    false
+}
+
+/// POST /api/auth/logout - Invalidate session token
+pub async fn logout(
+    req: actix_web::HttpRequest,
+    state: web::Data<Arc<ServiceState>>,
+) -> HttpResponse {
+    if let Some(auth_header) = req.headers().get("Authorization") {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                state.remove_session(token);
+                return HttpResponse::Ok().json(ApiResponse::<()>::success(()));
+            }
+        }
+    }
+    HttpResponse::Ok().json(ApiResponse::<()>::success(()))
 }
 
 /// POST /api/auth/login - Verify password using challenge-response
@@ -115,7 +144,8 @@ pub async fn login(
 
     if client_hash == expected_hash {
         tracing::info!("User logged in successfully");
-        HttpResponse::Ok().json(ApiResponse::<()>::success(()))
+        let token = state.create_session();
+        HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "token": token })))
     } else {
         tracing::warn!("Failed login attempt - invalid password hash");
         HttpResponse::Ok().json(ApiResponse::<()>::error("Invalid password"))

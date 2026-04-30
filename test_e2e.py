@@ -72,9 +72,12 @@ class E2ETest:
         """Call API from browser JS, return parsed JSON"""
         body_str = f", JSON.stringify({body})" if body else ""
         js = f"""async () => {{
+            const token = localStorage.getItem('ct_token');
+            const headers = {{'Content-Type': 'application/json'}};
+            if (token) headers['Authorization'] = 'Bearer ' + token;
             const r = await fetch('{path}', {{
                 method: '{method}',
-                headers: {{'Content-Type': 'application/json'}},
+                headers: headers,
                 body: {body_str if body else 'undefined'}
             }});
             return await r.json();
@@ -153,7 +156,8 @@ class E2ETest:
 
         if result.get("code") == 0:
             # Set localStorage to persist auth state across page reloads
-            self.page.evaluate("() => localStorage.setItem('ct_auth', '1')")
+            token = result.get("data", {}).get("token", "")
+            self.page.evaluate(f"() => {{ localStorage.setItem('ct_auth', '1'); localStorage.setItem('ct_token', '{token}'); }}")
 
 
 # ─────────────────────────────────────────────

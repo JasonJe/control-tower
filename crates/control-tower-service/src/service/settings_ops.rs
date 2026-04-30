@@ -193,39 +193,52 @@ impl ServiceState {
         Ok(())
     }
 
-    /// Record a closed connection to history in settings.yaml
+    /// Record a closed connection to history in connection_history.yaml
     pub fn record_closed_connection(&self, closed: crate::settings::ClosedConnection) -> Result<(), String> {
         let exe_dir = control_tower_service_core::exe_dir();
-        let settings_path = exe_dir.join("settings.yaml");
+        let history_path = exe_dir.join("connection_history.yaml");
 
-        let mut merged = if settings_path.exists() {
-            match std::fs::read_to_string(&settings_path) {
-                Ok(c) => serde_yaml_ng::from_str::<crate::SettingsData>(&c).unwrap_or_default(),
-                Err(_) => crate::SettingsData::default(),
+        // Load existing history from separate file
+        let mut connections: Vec<crate::settings::ClosedConnection> = if history_path.exists() {
+            match std::fs::read_to_string(&history_path) {
+                Ok(c) => serde_yaml_ng::from_str(&c).unwrap_or_default(),
+                Err(_) => vec![],
             }
         } else {
-            crate::SettingsData::default()
+            vec![]
         };
 
-        // Get max_count from connection_history config
-        let max_count = merged.connection_history
-            .as_ref()
-            .map(|c| c.max_count)
-            .unwrap_or(500) as usize;
+        // Get max_count from connection_history config (in settings.yaml)
+        let settings_path = exe_dir.join("settings.yaml");
+        let max_count = if settings_path.exists() {
+            match std::fs::read_to_string(&settings_path) {
+                Ok(c) => {
+                    #[derive(serde::Deserialize)]
+                    struct ConnHistoryConfig { connection_history: Option<crate::settings::ConnectionHistoryConfig> }
+                    match serde_yaml_ng::from_str::<ConnHistoryConfig>(&c) {
+                        Ok(cfg) => cfg.connection_history.map(|c| c.max_count as usize).unwrap_or(500),
+                        Err(_) => 500,
+                    }
+                }
+                Err(_) => 500,
+            }
+        } else {
+            500
+        };
 
         // Prepend new closed connection
-        merged.closed_connections.insert(0, closed);
+        connections.insert(0, closed);
 
         // Trim to max_count
-        if merged.closed_connections.len() > max_count {
-            merged.closed_connections.truncate(max_count);
+        if connections.len() > max_count {
+            connections.truncate(max_count);
         }
 
-        let yaml_str = serde_yaml_ng::to_string(&merged)
-            .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+        let yaml_str = serde_yaml_ng::to_string(&connections)
+            .map_err(|e| format!("Failed to serialize history: {}", e))?;
 
-        std::fs::write(&settings_path, yaml_str)
-            .map_err(|e| format!("Failed to write settings.yaml: {}", e))?;
+        std::fs::write(&history_path, yaml_str)
+            .map_err(|e| format!("Failed to write connection_history.yaml: {}", e))?;
 
         tracing::debug!("Recorded closed connection to history");
         Ok(())

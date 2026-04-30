@@ -111,4 +111,5 @@ pub fn configure_routes() -> Scope {
         .route("/auth/status", web::get().to(auth_handlers::get_auth_status))
         .route("/auth/login", web::post().to(auth_handlers::login))
         .route("/auth/setup-password", web::post().to(auth_handlers::setup_password))
+        .route("/auth/logout", web::post().to(auth_handlers::logout))
 }

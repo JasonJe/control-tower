@@ -22,6 +22,9 @@ pub async fn start_http_server(
         // HTTPS mode
         tracing::info!("Starting HTTPS server on https://0.0.0.0:{}", port);
 
+        // Install crypto provider before loading TLS config
+        crate::https::install_crypto_provider();
+
         let config = crate::https::load_tls_config(
             &cert_path.unwrap_or_else(|| PathBuf::from("cert.pem")),
             &key_path.unwrap_or_else(|| PathBuf::from("key.pem")),

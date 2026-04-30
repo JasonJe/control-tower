@@ -7,6 +7,12 @@ use std::fs;
 use std::io::Cursor;
 use std::path::Path;
 
+/// Install default crypto provider for rustls
+pub fn install_crypto_provider() {
+    // Use ring as the crypto provider
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 /// Generate self-signed certificate for HTTPS
 #[allow(dead_code)]
 pub fn generate_self_signed_cert(cert_path: &Path, key_path: &Path) -> Result<(), String> {

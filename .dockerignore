@@ -1,8 +1,0 @@
-.git/
-.gitignore
-Cargo.lock
-**/*.md
-docs/
-clash-verge-rev/
-*.tar.gz
-.env

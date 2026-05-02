@@ -1,9 +1,10 @@
 .claude
-.gitignore
-CLAUDE.md
-worktrees/
-.gitignore
-docs/
+.dockerignore
+Dockerfile
+docker-compose.yml
+DOCKER.md
+*.gz
+__pycache__/
 
 target/
 .worktrees/

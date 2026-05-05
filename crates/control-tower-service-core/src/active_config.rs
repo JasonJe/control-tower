@@ -11,7 +11,7 @@ use crate::ControlTowerPaths;
 
 /// Port overrides read from settings.yaml.
 /// These override the ports from the profile when generating config.yaml.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PortOverrides {
     pub mixed_port: Option<u16>,
     pub socks_port: Option<u16>,

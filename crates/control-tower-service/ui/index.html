@@ -548,6 +548,12 @@ body,html{height:100%;overflow:visible}body{font-family:'Inter',system-ui,sans-s
                 <div id="merge-profiles-list" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;max-height:80px;overflow-y:auto"></div>
               </div>
             </div>
+            <div id="profile-type-fields-remote" style="display:flex;gap:12px;align-items:flex-end">
+              <div class="form-group" style="flex:1;margin-bottom:0">
+                <label class="form-label">User Agent (optional)</label>
+                <input type="text" class="form-input" id="profile-user-agent" placeholder="Mozilla/5.0 ...">
+              </div>
+            </div>
           </form>
         </div>
 
@@ -1425,8 +1431,11 @@ function switchView(view) {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.view === view));
   document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === `view-${view}`));
   stopConnections();
-  // Always stop dashboard auto-refresh when switching away
+  // Always stop all auto-refresh timers when switching views
   if (dashRefreshTimer) { clearInterval(dashRefreshTimer); dashRefreshTimer = null; }
+  if (window.dashboardTimer) { clearInterval(window.dashboardTimer); window.dashboardTimer = null; }
+  if (logRefreshTimerNav) { clearInterval(logRefreshTimerNav); logRefreshTimerNav = null; }
+  if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
 
   if (view === 'dashboard') loadDashboard();
   else if (view === 'proxies') { loadProxyLatencies(); loadProxies(); }
@@ -2009,7 +2018,17 @@ function onProfileTypeChange() {
     urlInput.type = 'url';
     urlInput.placeholder = 'https://example.com/profile.yaml';
     urlInput.setAttribute('required', '');
-  } else if (type === 'local') {
+    document.getElementById('profile-type-fields-remote').style.display = 'flex';
+  } else {
+    document.getElementById('profile-type-fields-remote').style.display = 'none';
+  }
+
+  // Hide all type-specific fields first
+  document.getElementById('profile-type-fields-local').style.display = 'none';
+  document.getElementById('profile-type-fields-script').style.display = 'none';
+  document.getElementById('profile-type-fields-merge').style.display = 'none';
+
+  if (type === 'local') {
     urlLabel.textContent = 'File Path';
     urlInput.type = 'text';
     urlInput.placeholder = '/path/to/config.yaml';
@@ -2047,6 +2066,10 @@ async function addProfile(e) {
 
   if (type === 'remote') {
     payload.url = document.getElementById('profile-url').value;
+    const ua = document.getElementById('profile-user-agent').value.trim();
+    if (ua) {
+      payload.options = { user_agent: ua };
+    }
   } else if (type === 'local') {
     payload.file = document.getElementById('profile-file').value;
   } else if (type === 'script') {
@@ -2063,6 +2086,7 @@ async function addProfile(e) {
     document.getElementById('profile-url').value = '';
     document.getElementById('profile-file').value = '';
     document.getElementById('profile-script').value = '';
+    document.getElementById('profile-user-agent').value = '';
     document.getElementById('profile-type').value = 'remote';
     onProfileTypeChange();
     loadProfiles();
@@ -2089,6 +2113,7 @@ async function refreshProfile(uid, useProxy) {
     await api('POST', `/api/profiles/${uid}/refresh`, { use_proxy: useProxy });
     showToast('Profile refreshed');
     loadProfiles();
+    loadProxies();
   } catch (e) { showToast('Failed: ' + e.message, 'error'); }
 }
 

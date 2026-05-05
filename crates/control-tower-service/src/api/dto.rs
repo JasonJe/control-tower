@@ -1,6 +1,7 @@
 //! Request and response DTOs for the HTTP API
 
 use serde::{Deserialize, Serialize};
+use control_tower_service_core::ProfileDownloadOptions;
 
 // ============ Core ApiResponse ============
 
@@ -98,6 +99,7 @@ pub struct AddProfileRequest {
     pub file: Option<String>,
     pub script: Option<String>,
     pub merge: Option<Vec<String>>,
+    pub options: Option<ProfileDownloadOptions>,
 }
 
 impl Default for AddProfileRequest {
@@ -109,6 +111,7 @@ impl Default for AddProfileRequest {
             file: None,
             script: None,
             merge: None,
+            options: None,
         }
     }
 }

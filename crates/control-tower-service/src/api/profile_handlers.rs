@@ -238,7 +238,9 @@ pub async fn add_profile(
 
             let response = match client
                 .get(&url)
-                .header("User-Agent", "clash-verge/v2.4.7")
+                .header("User-Agent", body.options.as_ref()
+                    .and_then(|o| o.user_agent.clone())
+                    .unwrap_or_else(|| "clash-verge/v2.4.7".to_string()))
                 .send()
                 .await
             {
@@ -309,7 +311,7 @@ pub async fn add_profile(
         url: body.url.clone(),
         cron: None,
         updated_at: Some(chrono::Utc::now().timestamp()),
-        options: None,
+        options: body.options.clone(),
         type_: Some(profile_type.to_string()),
         script: body.script.clone(),
         merge: body.merge.clone().unwrap_or_default(),
@@ -466,8 +468,9 @@ pub async fn activate_profile(
     let custom_rules: Vec<String> = settings.custom_rules.unwrap_or_default();
 
     // Build port overrides from settings.yaml (highest priority)
+    // If mixed_port is not set, default to http_port for convenience
     let port_overrides = control_tower_service_core::active_config::PortOverrides {
-        mixed_port: settings.mixed_port,
+        mixed_port: settings.mixed_port.or(settings.http_port),
         socks_port: settings.socks_port,
         http_port: settings.http_port,
         external_controller: settings.api_host.zip(settings.api_port),
@@ -736,8 +739,9 @@ pub async fn update_profile(
             let custom_rules: Vec<String> = settings.custom_rules.unwrap_or_default();
 
             // Build port overrides from settings.yaml (highest priority)
+            // If mixed_port is not set, default to http_port for convenience
             let port_overrides = control_tower_service_core::active_config::PortOverrides {
-                mixed_port: settings.mixed_port,
+                mixed_port: settings.mixed_port.or(settings.http_port),
                 socks_port: settings.socks_port,
                 http_port: settings.http_port,
                 external_controller: settings.api_host.zip(settings.api_port),
@@ -790,6 +794,7 @@ pub async fn update_profile(
 
 /// POST /api/profiles/{id}/refresh - Manually refresh a subscription profile
 pub async fn refresh_profile(
+    state: web::Data<Arc<ServiceState>>,
     path: web::Path<String>,
     body: Option<web::Json<RefreshRequest>>,
 ) -> HttpResponse {
@@ -840,12 +845,30 @@ pub async fn refresh_profile(
             .json(ApiResponse::<()>::error("Profile file not found".to_string()));
     }
 
-    // Download new content in a blocking task
-    let uid_clone = uid.clone();
+    // Get current profile info for reload
+    let is_current = yaml.current.as_ref() == Some(&uid);
+
+    // Get settings for port overrides and custom rules
+    let settings = state.get_settings();
+    let custom_rules: Vec<String> = settings.custom_rules.unwrap_or_default();
+    // If mixed_port is not set, default to http_port for convenience
+    let port_overrides = control_tower_service_core::active_config::PortOverrides {
+        mixed_port: settings.mixed_port.or(settings.http_port),
+        socks_port: settings.socks_port,
+        http_port: settings.http_port,
+        external_controller: settings.api_host.zip(settings.api_port),
+    };
+
+    // Clone for blocking task
     let profile_file_clone = profile_file.clone();
     let profiles_path_clone = profiles_path.clone();
     let use_proxy = body.as_ref().map(|b| b.use_proxy.unwrap_or(false)).unwrap_or(false);
     let http_port = super::get_mihomo_http_port();
+    let paths_clone = paths.clone();
+    let custom_rules_clone = custom_rules.clone();
+    let port_overrides_clone = port_overrides.clone();
+    let settings_clone = state.get_settings();
+    let uid_clone = uid.clone();
 
     let result = tokio::task::spawn_blocking(move || {
         // Download subscription (optionally through Mihomo proxy)
@@ -891,8 +914,27 @@ pub async fn refresh_profile(
             }
         }
 
-        let new_content = serde_yaml_ng::to_string(&yaml)?;
-        std::fs::write(&profiles_path_clone, new_content)?;
+        let new_yaml_content = serde_yaml_ng::to_string(&yaml)?;
+        std::fs::write(&profiles_path_clone, new_yaml_content)?;
+
+        // If this is the current profile, update active config.yaml so Mihomo reload picks up new proxies
+        if is_current {
+            let store = control_tower_service_core::ActiveConfigStore::new(paths_clone.clone());
+            match store.replace_from_profile(&profile_file_clone, &custom_rules_clone, port_overrides_clone) {
+                Ok(_) => tracing::info!("Active config updated with refreshed profile content"),
+                Err(e) => tracing::warn!("Failed to update active config after refresh: {}", e),
+            }
+            // Inject rule-providers from settings (same as activate_profile)
+            drop(store);
+            let store2 = control_tower_service_core::ActiveConfigStore::new(paths_clone.clone());
+            if let Some(ref providers) = settings_clone.rule_providers {
+                if !providers.is_empty() {
+                    if let Err(e) = store2.set_rule_providers(providers) {
+                        tracing::warn!("Failed to inject rule-providers into config: {}", e);
+                    }
+                }
+            }
+        }
 
         Ok::<(), anyhow::Error>(())
     })
@@ -901,7 +943,18 @@ pub async fn refresh_profile(
     match result {
         Ok(Ok(())) => {
             tracing::info!("Profile {} refreshed manually (use_proxy={})", uid, use_proxy);
-            HttpResponse::Ok().json(ApiResponse::success(()))
+            // Restart Mihomo to load new config (hot-reload would fail due to rule-provider ordering)
+            let config_path = paths.active_config_path.clone();
+            let state = state.clone();
+            match task::spawn_blocking(move || state.restart_with_config(&config_path)).await {
+                Ok(Ok(())) => HttpResponse::Ok().json(ApiResponse::success(())),
+                Ok(Err(e)) => {
+                    tracing::error!("Failed to restart Mihomo after refresh: {}", e);
+                    HttpResponse::InternalServerError().json(ApiResponse::<()>::error(format!("Restart failed: {}", e)))
+                }
+                Err(e) => HttpResponse::InternalServerError()
+                    .json(ApiResponse::<()>::error(format!("Task error: {}", e))),
+            }
         }
         Ok(Err(e)) => {
             tracing::error!("Failed to refresh profile {}: {}", uid, e);

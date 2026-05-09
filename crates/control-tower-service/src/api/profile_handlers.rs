@@ -943,14 +943,30 @@ pub async fn refresh_profile(
     match result {
         Ok(Ok(())) => {
             tracing::info!("Profile {} refreshed manually (use_proxy={})", uid, use_proxy);
-            // Restart Mihomo to load new config (hot-reload would fail due to rule-provider ordering)
-            let config_path = paths.active_config_path.clone();
-            let state = state.clone();
-            match task::spawn_blocking(move || state.restart_with_config(&config_path)).await {
-                Ok(Ok(())) => HttpResponse::Ok().json(ApiResponse::success(())),
+            // Try hot-reload first (via Mihomo PUT /configs) in a blocking task
+            let state_for_reload = state.clone();
+            match task::spawn_blocking(move || state_for_reload.reload_config()).await {
+                Ok(Ok(())) => {
+                    tracing::info!("Profile {} hot-reloaded successfully", uid);
+                    HttpResponse::Ok().json(ApiResponse::success(()))
+                }
                 Ok(Err(e)) => {
-                    tracing::error!("Failed to restart Mihomo after refresh: {}", e);
-                    HttpResponse::InternalServerError().json(ApiResponse::<()>::error(format!("Restart failed: {}", e)))
+                    tracing::warn!("Hot-reload failed for profile {}, falling back to restart: {}", uid, e);
+                    tracing::info!("Calling restart_with_config for profile {}", uid);
+                    let config_path = paths.active_config_path.clone();
+                    let state = state.clone();
+                    match task::spawn_blocking(move || state.restart_with_config(&config_path)).await {
+                        Ok(Ok(())) => {
+                            tracing::info!("Profile {} restarted successfully (hot-reload had failed)", uid);
+                            HttpResponse::Ok().json(ApiResponse::success(()))
+                        }
+                        Ok(Err(e)) => {
+                            tracing::error!("Failed to restart Mihomo after refresh: {}", e);
+                            HttpResponse::InternalServerError().json(ApiResponse::<()>::error(format!("Restart failed: {}", e)))
+                        }
+                        Err(e) => HttpResponse::InternalServerError()
+                            .json(ApiResponse::<()>::error(format!("Task error: {}", e))),
+                    }
                 }
                 Err(e) => HttpResponse::InternalServerError()
                     .json(ApiResponse::<()>::error(format!("Task error: {}", e))),

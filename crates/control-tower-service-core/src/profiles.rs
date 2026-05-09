@@ -52,8 +52,25 @@ pub struct ProfileItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script: Option<String>,
     /// List of profile UIDs to merge for merge-type profiles
-    #[serde(rename = "merge", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "merge", deserialize_with = "deserialize_null_as_empty_vec", default)]
     pub merge: Vec<String>,
+}
+
+/// Custom deserializer that treats YAML null as an empty Vec
+fn deserialize_null_as_empty_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NullOrVec {
+        Null,
+        Vec(Vec<String>),
+    }
+    match NullOrVec::deserialize(deserializer)? {
+        NullOrVec::Null => Ok(vec![]),
+        NullOrVec::Vec(v) => Ok(v),
+    }
 }
 
 fn default_profile_type() -> Option<String> { Some("remote".to_string()) }

@@ -553,6 +553,12 @@ body,html{height:100%;overflow:visible}body{font-family:'Inter',system-ui,sans-s
                 <label class="form-label">User Agent (optional)</label>
                 <input type="text" class="form-input" id="profile-user-agent" placeholder="Mozilla/5.0 ...">
               </div>
+              <div class="form-group" style="flex:0;margin-bottom:0;white-space:nowrap">
+                <label class="form-label" style="display:block;text-align:center">
+                  <input type="checkbox" id="profile-use-proxy" style="margin-right:4px">
+                  Use Proxy
+                </label>
+              </div>
             </div>
           </form>
         </div>
@@ -1164,6 +1170,20 @@ body,html{height:100%;overflow:visible}body{font-family:'Inter',system-ui,sans-s
         </div>
         <p class="text-sm text-muted" style="margin-top:4px">Valid range: 1–10080 (max 1 week). Changes take effect after saving.</p>
       </div>
+      <div class="form-group" style="margin-top:12px">
+        <label class="form-label">User Agent (optional)</label>
+        <input type="text" id="editProfileUserAgent" class="form-input" placeholder="clash-verge/v2.4.7">
+      </div>
+      <div class="form-group" style="margin-top:10px">
+        <label class="form-label" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="editProfileUseProxy">
+          <span>Use Proxy for auto-update</span>
+        </label>
+      </div>
+      <div class="form-group" style="margin-top:12px">
+        <label class="form-label">Timeout (seconds, optional)</label>
+        <input type="number" id="editProfileTimeout" class="form-input" min="5" max="300" placeholder="60" style="width:100px">
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn secondary" onclick="closeCronModal()">Cancel</button>
@@ -1194,34 +1214,6 @@ body,html{height:100%;overflow:visible}body{font-family:'Inter',system-ui,sans-s
     <div class="modal-footer">
       <button class="btn secondary" onclick="closeIntervalModal()">Cancel</button>
       <button class="btn" id="intervalModalSaveBtn">Save</button>
-    </div>
-  </div>
-</div>
-
-<div class="modal" id="optionsModal">
-  <div class="modal-content" style="max-width:420px">
-    <div class="modal-header">
-      <h3 class="modal-title">Profile Options</h3>
-      <button class="modal-close" onclick="closeOptionsModal()" title="Close (ESC)">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-      </button>
-    </div>
-    <div class="modal-body">
-      <p class="mono text-sm" id="optionsModalName" style="margin-bottom:16px;color:var(--text)"></p>
-      <div class="form-group">
-        <label class="form-label">User-Agent</label>
-        <input type="text" id="optionsModalUa" class="form-input" placeholder="clash-verge/v2.4.7" style="font-family:monospace">
-        <p class="text-sm text-muted" style="margin-top:4px">HTTP User-Agent for subscription download. Leave empty to use default.</p>
-      </div>
-      <div class="form-group" style="margin-top:12px">
-        <label class="form-label">Timeout (seconds)</label>
-        <input type="number" id="optionsModalTimeout" class="form-input" min="5" max="300" placeholder="30" style="width:100px">
-        <p class="text-sm text-muted" style="margin-top:4px">Download timeout. Default is 30 seconds.</p>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn secondary" onclick="closeOptionsModal()">Cancel</button>
-      <button class="btn" id="optionsModalSaveBtn">Save</button>
     </div>
   </div>
 </div>
@@ -1257,6 +1249,7 @@ let connSortCol = null; // column key: 'src'|'dst'|'proxy'|'upload'|'download'|'
 let connSortDir = 'asc'; // 'asc' or 'desc'
 let currentMode = '';
 let prevDeviceStats = {}; // { sourceIP: { upload, download, ts } }
+let profileRefreshTimer = null;
 
 function saveProxyLatencies() {
   const m = {};
@@ -1481,12 +1474,13 @@ function switchView(view) {
   if (window.dashboardTimer) { clearInterval(window.dashboardTimer); window.dashboardTimer = null; }
   if (logRefreshTimerNav) { clearInterval(logRefreshTimerNav); logRefreshTimerNav = null; }
   if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
+  if (profileRefreshTimer) { clearInterval(profileRefreshTimer); profileRefreshTimer = null; }
 
   if (view === 'dashboard') loadDashboard();
   else if (view === 'proxies') { loadProxyLatencies(); loadProxies(); }
-  else if (view === 'profiles') loadProfiles();
-  else if (view === 'rules') loadRules();
+  else if (view === 'profiles') { startProfiles(); }
   else if (view === 'connections') startConnections();
+  else if (view === 'rules') loadRules();
   else if (view === 'settings') { loadSettings(); }
   else if (view === 'logs') { loadLogsNav(); onLogRefreshChangeNav(); }
 }
@@ -2024,7 +2018,7 @@ async function loadProfiles() {
     currentProfileUid = data?.current || null;
     profilePage = 1;
     renderProfiles();
-  } catch (_) { l.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load profiles'; }
+  } catch (e) { console.error('loadProfiles failed:', e); l.style.display = 'none'; e.style.display = 'block'; e.querySelector('p').textContent = 'Failed to load profiles: ' + e.message; }
 }
 
 function renderProfiles() {
@@ -2046,7 +2040,7 @@ function renderProfiles() {
       <td>${st}</td>
       <td>${isActive && p.cron ? `<span class="mono text-sm">${escapeHtml(p.cron)} min</span>` : '<span class="text-muted text-sm">-</span>'}</td>
       <td><span class="mono text-sm">${formatTimestamp(p.updated_at)}</span>${isActive ? `<button class="btn xs" onclick="refreshProfile('${escapeForJs(p.uid)}', false)" title="Refresh direct">↻D</button><button class="btn xs primary" onclick="refreshProfile('${escapeForJs(p.uid)}', true)" title="Refresh via proxy">↻P</button>` : ''}</td>
-      <td><div class="btn-group" style="gap:6px">${!isActive ? `<button class="btn xs success" id="btn-activate-${escapeHtml(p.uid)}" onclick="activateProfile('${escapeForJs(p.uid)}', this)" title="Activate this profile">Activate</button>` : ''}<button class="btn xs" onclick="openCronModal('${escapeForJs(p.uid)}')" title="Edit profile name, URL, or cron">Edit</button><button class="btn xs" onclick="openOptionsModal('${escapeForJs(p.uid)}')" title="Advanced options (UA, timeout)">Options</button><button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${escapeForJs(p.uid)}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
+      <td><div class="btn-group" style="gap:6px">${!isActive ? `<button class="btn xs success" id="btn-activate-${escapeHtml(p.uid)}" onclick="activateProfile('${escapeForJs(p.uid)}', this)" title="Activate this profile">Activate</button>` : ''}<button class="btn xs" onclick="openCronModal('${escapeForJs(p.uid)}')" title="Edit profile (name, URL, interval, options)">Edit</button><button class="btn xs danger" onclick="if(confirm('Delete this profile? This cannot be undone.')){api('DELETE','/api/profiles/${escapeForJs(p.uid)}').then(()=>{showToast('Profile deleted');loadProfiles();}).catch(e=>showToast('Failed: '+e.message,'error'));}" title="Delete this profile">Delete</button></div></td>
     </tr>`;
   }).join('');
   pg.style.display = 'flex';
@@ -2125,8 +2119,11 @@ async function addProfile(e) {
   if (type === 'remote') {
     payload.url = document.getElementById('profile-url').value;
     const ua = document.getElementById('profile-user-agent').value.trim();
-    if (ua) {
-      payload.options = { user_agent: ua };
+    const useProxy = document.getElementById('profile-use-proxy').checked;
+    if (ua || useProxy) {
+      payload.options = {};
+      if (ua) payload.options.user_agent = ua;
+      if (useProxy) payload.options.with_proxy = true;
     }
   } else if (type === 'local') {
     payload.file = document.getElementById('profile-file').value;
@@ -2145,11 +2142,15 @@ async function addProfile(e) {
     document.getElementById('profile-file').value = '';
     document.getElementById('profile-script').value = '';
     document.getElementById('profile-user-agent').value = '';
+    document.getElementById('profile-use-proxy').checked = false;
     document.getElementById('profile-type').value = 'remote';
     onProfileTypeChange();
     loadProfiles();
   } catch (e) { showToast('Failed to add: ' + e.message, 'error'); }
 }
+
+function stopProfiles() { if (profileRefreshTimer) { clearInterval(profileRefreshTimer); profileRefreshTimer = null; } }
+function startProfiles() { stopProfiles(); loadProfiles(); }
 
 async function activateProfile(uid, btn) {
   const b = btn || document.getElementById('btn-activate-' + uid.replace(/[^a-zA-Z0-9]/g, ''));
@@ -2194,14 +2195,21 @@ let cronEditOriginal = {}; // stores original values at modal open time
 function openCronModal(uid) {
   cronEditUid = uid;
   const profile = profiles.find(p => p.uid === uid);
+  const opts = profile && profile.options || {};
   cronEditOriginal = {
     name: profile ? (profile.name || '') : '',
     url: profile ? (profile.url || '') : '',
     cron: profile && profile.cron ? profile.cron : '',
+    userAgent: opts.user_agent || '',
+    withProxy: !!opts.with_proxy,
+    timeout: opts.timeout_seconds || '',
   };
   document.getElementById('editProfileName').value = cronEditOriginal.name;
   document.getElementById('editProfileUrl').value = cronEditOriginal.url;
   document.getElementById('cronMinutes').value = cronEditOriginal.cron;
+  document.getElementById('editProfileUserAgent').value = cronEditOriginal.userAgent;
+  document.getElementById('editProfileUseProxy').checked = cronEditOriginal.withProxy;
+  document.getElementById('editProfileTimeout').value = cronEditOriginal.timeout;
   document.getElementById('cronModal').classList.add('show');
   document.getElementById('editProfileName').focus();
 }
@@ -2212,6 +2220,9 @@ document.getElementById('cronModalSaveBtn').addEventListener('click', async () =
   const name = document.getElementById('editProfileName').value.trim();
   const url = document.getElementById('editProfileUrl').value.trim();
   const cronVal = document.getElementById('cronMinutes').value.trim();
+  const userAgent = document.getElementById('editProfileUserAgent').value.trim();
+  const withProxy = document.getElementById('editProfileUseProxy').checked;
+  const timeout = document.getElementById('editProfileTimeout').value.trim();
   const uid = cronEditUid;
   closeCronModal();
   try {
@@ -2219,6 +2230,13 @@ document.getElementById('cronModalSaveBtn').addEventListener('click', async () =
     if (name !== cronEditOriginal.name) body.name = name || null;
     if (url !== cronEditOriginal.url) body.url = url || null;
     if (cronVal !== cronEditOriginal.cron) body.cron = cronVal || null;
+    const optionsChanged = userAgent !== cronEditOriginal.userAgent || withProxy !== cronEditOriginal.withProxy || timeout !== cronEditOriginal.timeout;
+    if (optionsChanged) {
+      body.options = {};
+      if (userAgent) body.options.user_agent = userAgent;
+      if (withProxy) body.options.with_proxy = true;
+      if (timeout) body.options.timeout_seconds = parseInt(timeout, 10);
+    }
     const res = await fetch('/api/profiles/' + uid, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
     const json = await res.json();
     if (json.code !== 0) throw new Error(json.message);
@@ -2230,43 +2248,6 @@ document.getElementById('cronModalSaveBtn').addEventListener('click', async () =
 document.getElementById('editProfileName').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cronModalSaveBtn').click(); });
 document.getElementById('editProfileUrl').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cronModalSaveBtn').click(); });
 document.getElementById('cronMinutes').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cronModalSaveBtn').click(); });
-
-// Profile Options Modal
-let optionsEditUid = '';
-function openOptionsModal(uid) {
-  optionsEditUid = uid;
-  const profile = profiles.find(p => p.uid === uid);
-  if (!profile) return;
-  document.getElementById('optionsModalName').textContent = profile.name || 'Unnamed Profile';
-  const opts = profile.options || {};
-  document.getElementById('optionsModalUa').value = opts.user_agent || '';
-  document.getElementById('optionsModalTimeout').value = opts.timeout_seconds || '';
-  document.getElementById('optionsModal').classList.add('show');
-  document.getElementById('optionsModalUa').focus();
-}
-function closeOptionsModal() { document.getElementById('optionsModal').classList.remove('show'); optionsEditUid = ''; }
-
-document.getElementById('optionsModalSaveBtn').addEventListener('click', async () => {
-  if (!optionsEditUid) { console.error('optionsEditUid is empty'); return; }
-  const user_agent = document.getElementById('optionsModalUa').value.trim();
-  const timeout_str = document.getElementById('optionsModalTimeout').value.trim();
-  const uid = optionsEditUid;
-  closeOptionsModal();
-  try {
-    const options = {};
-    if (user_agent) options.user_agent = user_agent;
-    if (timeout_str) options.timeout_seconds = parseInt(timeout_str, 10);
-    const body = { options: Object.keys(options).length > 0 ? options : null };
-    const res = await fetch('/api/profiles/' + uid, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-    const json = await res.json();
-    if (json.code !== 0) throw new Error(json.message);
-    showToast('Options saved');
-    loadProfiles();
-  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
-});
-
-document.getElementById('optionsModalUa').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('optionsModalSaveBtn').click(); });
-document.getElementById('optionsModalTimeout').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('optionsModalSaveBtn').click(); });
 
 // Rules
 async function loadRules() {

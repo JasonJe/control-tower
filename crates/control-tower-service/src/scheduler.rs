@@ -3,7 +3,37 @@
 use std::time::Duration;
 
 use crate::ServiceState;
-use crate::settings::consts::MAX_CRON_INTERVAL_MINS;
+use crate::settings::consts::{MAX_CRON_INTERVAL_MINS, DEFAULT_MIHOMO_HTTP_PORT};
+
+/// Get Mihomo HTTP proxy port from settings.yaml, defaulting to DEFAULT_MIHOMO_HTTP_PORT
+fn get_mihomo_http_port() -> u16 {
+    #[derive(serde::Deserialize)]
+    struct Settings {
+        #[serde(rename = "http_port", default)]
+        http_port: Option<u16>,
+    }
+    // Check executable directory first, then ~/.config/control-tower/
+    let paths_to_try: Vec<std::path::PathBuf> = vec![
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .map(|p| p.join("settings.yaml"))
+            .unwrap_or_default(),
+        dirs::config_dir()
+            .map(|p| p.join("control-tower").join("settings.yaml"))
+            .unwrap_or_default(),
+    ];
+    for path in &paths_to_try {
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                if let Ok(settings) = serde_yaml_ng::from_str::<Settings>(&content) {
+                    return settings.http_port.unwrap_or(DEFAULT_MIHOMO_HTTP_PORT);
+                }
+            }
+        }
+    }
+    DEFAULT_MIHOMO_HTTP_PORT
+}
 
 /// Simplified cron schedule (minutes only)
 #[derive(Debug, Clone)]
@@ -275,27 +305,29 @@ impl ServiceState {
         };
 
         // Execute HTTP requests outside the lock.
-        let results: Vec<(usize, Result<(), String>)> = due_jobs
+        let results: Vec<(usize, String, Result<(), String>)> = due_jobs
             .into_iter()
-            .map(|(idx, _profile_id, url, profile_file, options)| {
+            .map(|(idx, profile_id, url, profile_file, options)| {
                 let result = if let Some(url) = url {
                     let path = std::path::PathBuf::from(&profile_file);
                     update_profile_subscription(&url, &path, options.as_ref())
                 } else {
                     Err("No URL configured".to_string())
                 };
-                (idx, result)
+                (idx, profile_id, result)
             })
             .collect();
 
-        // Update job states under a single write lock.
+        // Update job states and profiles.yaml under a single write lock.
         let mut jobs = self.cron_jobs.write();
-        for (idx, result) in results {
+        for (idx, profile_id, result) in results {
             if let Some(job) = jobs.get_mut(idx) {
                 match result {
                     Ok(()) => {
                         tracing::info!("Profile {} updated successfully", job.profile_id);
                         job.mark_success();
+                        // Update updated_at in profiles.yaml
+                        update_profile_updated_at(&profile_id);
                     }
                     Err(e) => {
                         tracing::error!("Failed to update profile {}: {}", job.profile_id, e);
@@ -403,8 +435,96 @@ pub fn check_and_update_all_profiles() -> Vec<(String, bool)> {
     results
 }
 
+/// Update the updated_at timestamp for a profile in profiles.yaml.
+fn update_profile_updated_at(profile_id: &str) {
+    let exe_dir = control_tower_service_core::exe_dir();
+    let profiles_path = exe_dir.join("profiles.yaml");
+
+    if !profiles_path.exists() {
+        tracing::warn!("profiles.yaml not found, cannot update updated_at");
+        return;
+    }
+
+    let content = match std::fs::read_to_string(&profiles_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Failed to read profiles.yaml for updated_at: {}", e);
+            return;
+        }
+    };
+
+    // Preserve original current value before parsing
+    let original_current = if let Ok(orig) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&content) {
+        orig.get("current").and_then(|v| v.as_str().map(String::from))
+    } else { None };
+
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct ProfilesYaml {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        current: Option<String>,
+        items: Vec<ProfileItem>,
+    }
+
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct ProfileItem {
+        uid: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        file: Option<String>,
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default)]
+        cron: Option<String>,
+        #[serde(default)]
+        updated_at: Option<i64>,
+        #[serde(rename = "type", default)]
+        type_: Option<String>,
+        #[serde(default)]
+        options: Option<control_tower_service_core::ProfileDownloadOptions>,
+        #[serde(default)]
+        script: Option<String>,
+        #[serde(default)]
+        merge: Option<Vec<String>>,
+    }
+
+    let mut yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
+        Ok(y) => y,
+        Err(e) => {
+            tracing::warn!("Failed to parse profiles.yaml for updated_at: {}", e);
+            return;
+        }
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    for item in &mut yaml.items {
+        if item.uid == profile_id {
+            item.updated_at = Some(now);
+            tracing::debug!("Updated updated_at to {} for profile {}", now, profile_id);
+        }
+    }
+
+    // Restore original current value if it exists
+    if let Some(curr) = original_current {
+        yaml.current = Some(curr);
+    }
+
+    let new_content = match serde_yaml_ng::to_string(&yaml) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Failed to serialize profiles.yaml after updated_at update: {}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = std::fs::write(&profiles_path, new_content) {
+        tracing::warn!("Failed to write profiles.yaml after updated_at update: {}", e);
+    }
+}
+
 /// Update a profile subscription (download new content and write to file).
 /// Used by cron job auto-update.
+/// When options.with_proxy is true, routes the download through Mihomo's HTTP proxy.
 pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::Path, options: Option<&control_tower_service_core::ProfileDownloadOptions>) -> Result<(), String> {
     use reqwest::blocking::Client as BlockingClient;
     use std::time::Duration as StdDuration;
@@ -415,11 +535,32 @@ pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::P
     let user_agent = options
         .and_then(|o| o.user_agent.clone())
         .unwrap_or_else(|| "clash-verge/v2.4.7".to_string());
+    let with_proxy = options
+        .and_then(|o| o.with_proxy)
+        .unwrap_or(false);
 
-    let response = BlockingClient::new()
+    // Get Mihomo HTTP port for proxy routing (same logic as api::helpers::get_mihomo_http_port)
+    let mihomo_port = get_mihomo_http_port();
+
+    let client = if with_proxy {
+        let proxy_url = format!("http://127.0.0.1:{}", mihomo_port);
+        let proxy = reqwest::Proxy::http(&proxy_url)
+            .map_err(|e| format!("Failed to create proxy: {}", e))?;
+        BlockingClient::builder()
+            .proxy(proxy)
+            .timeout(StdDuration::from_secs(timeout_secs))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client with proxy: {}", e))?
+    } else {
+        BlockingClient::builder()
+            .timeout(StdDuration::from_secs(timeout_secs))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?
+    };
+
+    let response = client
         .get(url)
         .header("User-Agent", user_agent)
-        .timeout(StdDuration::from_secs(timeout_secs))
         .send()
         .map_err(|e| format!("Failed to fetch subscription: {}", e))?;
 

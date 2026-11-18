@@ -10,7 +10,7 @@ pub use crate::ipc_types::SHUTDOWN;
 
 /// CLI argument parser for the ctsvc binary.
 #[derive(clap::Parser)]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(about = "Control Tower Service - IPC server for proxy management")]
 pub struct Args {
     /// Socket path for IPC (default: ctsvc.sock in executable directory)

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::task;
 
 use crate::ServiceState;
-use super::ApiResponse;
+use super::{session_token, ApiResponse, SESSION_COOKIE};
 
 /// GET /api/auth/nonce - Returns a random nonce for challenge-response
 pub async fn get_nonce(
@@ -54,8 +54,11 @@ pub async fn get_auth_status(
         .map(|p| !p.trim().is_empty())
         .unwrap_or(false);
 
-    // Check if client has valid session token
-    let authenticated = check_session_token(&req, &state);
+    // Check if client has a valid bearer token or session cookie. This is a
+    // read-only probe, so the CSRF header is not required here.
+    let authenticated = session_token(req.headers())
+        .map(|(_, token)| state.verify_session(&token))
+        .unwrap_or(false);
 
     HttpResponse::Ok().json(serde_json::json!({
         "code": 0,
@@ -67,32 +70,20 @@ pub async fn get_auth_status(
     }))
 }
 
-/// Extract and verify session token from Authorization header
-fn check_session_token(req: &actix_web::HttpRequest, state: &ServiceState) -> bool {
-    if let Some(auth_header) = req.headers().get("Authorization") {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                return state.verify_session(token);
-            }
-        }
-    }
-    false
-}
-
-/// POST /api/auth/logout - Invalidate session token
+/// POST /api/auth/logout - Invalidate session token and clear the cookie
 pub async fn logout(
     req: actix_web::HttpRequest,
     state: web::Data<Arc<ServiceState>>,
 ) -> HttpResponse {
-    if let Some(auth_header) = req.headers().get("Authorization") {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                state.remove_session(token);
-                return HttpResponse::Ok().json(ApiResponse::<()>::success(()));
-            }
-        }
+    if let Some((_, token)) = session_token(req.headers()) {
+        state.remove_session(&token);
     }
-    HttpResponse::Ok().json(ApiResponse::<()>::success(()))
+
+    let mut res = HttpResponse::Ok().json(ApiResponse::<()>::success(()));
+    if let Err(e) = res.add_cookie(&session_cookie(String::new(), is_https(&req), true)) {
+        tracing::warn!("Failed to expire session cookie: {}", e);
+    }
+    res
 }
 
 /// POST /api/auth/login - Verify password using challenge-response
@@ -106,6 +97,7 @@ pub async fn logout(
 ///
 /// This way the actual password is never transmitted.
 pub async fn login(
+    req: actix_web::HttpRequest,
     state: web::Data<Arc<ServiceState>>,
     body: web::Json<LoginRequest>,
 ) -> HttpResponse {
@@ -150,11 +142,50 @@ pub async fn login(
     if client_hash == expected_hash {
         tracing::info!("User logged in successfully");
         let token = state.create_session();
-        HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "token": token })))
+        // The Web UI keeps the token in an httpOnly cookie so page scripts
+        // (including a hypothetical XSS) cannot read it. CLI/API clients keep
+        // using the bearer token returned in the body.
+        let mut res = HttpResponse::Ok().json(ApiResponse::success(
+            serde_json::json!({ "token": token }),
+        ));
+        if let Err(e) = res.add_cookie(&session_cookie(token, is_https(&req), false)) {
+            // Without the cookie the browser session would silently fall back
+            // to the login screen, so make the failure visible in the log.
+            tracing::warn!("Failed to set session cookie: {}", e);
+        }
+        res
     } else {
         tracing::warn!("Failed login attempt - invalid password hash");
         HttpResponse::Ok().json(ApiResponse::<()>::error("Invalid password"))
     }
+}
+
+/// Whether this request arrived over TLS (controls the cookie `Secure` flag).
+fn is_https(req: &actix_web::HttpRequest) -> bool {
+    req.connection_info().scheme().eq_ignore_ascii_case("https")
+}
+
+/// Build the session cookie.
+///
+/// `clear` produces an expired cookie with the same attributes so the browser
+/// removes it on logout.
+fn session_cookie(token: String, secure: bool, clear: bool) -> actix_web::cookie::Cookie<'static> {
+    use actix_web::cookie::{time::Duration, Cookie, SameSite};
+
+    let max_age = if clear {
+        Duration::seconds(0)
+    } else {
+        Duration::seconds(crate::session::SESSION_TTL_SECS as i64)
+    };
+
+    let mut cookie = Cookie::build(SESSION_COOKIE, token)
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .path("/")
+        .max_age(max_age)
+        .finish();
+    cookie.set_secure(secure);
+    cookie
 }
 
 /// POST /api/auth/setup-password - Set initial password

@@ -4,9 +4,10 @@
 //! each handler to call `require_auth` (which is easy to forget for new
 //! endpoints). Login/setup endpoints and static assets stay reachable.
 //!
-//! `check_auth_header` is used rather than a raw token check so that the
-//! middleware follows exactly the same rules as the handlers: auth is only
-//! enforced when it is enabled *and* a password has been configured.
+//! `check_request_auth` is used rather than a raw token check so that the
+//! middleware follows exactly the same rules as the handlers: a bearer token
+//! or the httpOnly session cookie (plus CSRF header), and auth is only enforced
+//! when it is enabled *and* a password has been configured.
 
 use std::future::{ready, Future, Ready};
 use std::pin::Pin;
@@ -17,7 +18,7 @@ use actix_web::body::EitherBody;
 use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
 use actix_web::{web, HttpResponse};
 
-use crate::api::{check_auth_header, ApiResponse};
+use crate::api::{check_request_auth, ApiResponse};
 use crate::ServiceState;
 
 /// Routes that must remain reachable without a session token.
@@ -79,17 +80,13 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let public = is_public(req.path());
 
-        // `check_auth_header` returns `true` when auth is not required, so this
-        // is a no-op unless auth is enabled and a password has been configured.
-        let auth_header = req
-            .head()
-            .headers
-            .get("Authorization")
-            .and_then(|value| value.to_str().ok());
+        // `check_request_auth` returns `true` when auth is not required, so
+        // this is a no-op unless auth is enabled and a password is configured.
+        let headers = &req.head().headers;
         let allowed = public
             || req
                 .app_data::<web::Data<Arc<ServiceState>>>()
-                .map(|state| check_auth_header(state.get_ref(), auth_header))
+                .map(|state| check_request_auth(state.get_ref(), headers))
                 .unwrap_or(false);
 
         if allowed {

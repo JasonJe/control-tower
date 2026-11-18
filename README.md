@@ -127,10 +127,10 @@ rule-providers:
 
 > 鉴权说明：
 > - 只有 `auth.enabled: true` 且 `password` 非空时才会强制鉴权；缺少 `auth` 段或密码为空时 API 保持开放（删除 `auth` 段等价于关闭鉴权，请谨慎操作）。
-> - 开启鉴权后，除 `/api/auth/*`（登录/状态/首次设置密码）外，所有 `/api/*` 接口都需要 `Authorization: Bearer <token>`。
+> - 开启鉴权后，除 `/api/auth/*`（登录/状态/首次设置密码）外，所有 `/api/*` 接口都需要凭据：浏览器使用登录后下发的 httpOnly cookie（`ct_session`，SameSite=Strict，HTTPS 下带 Secure），并额外携带 `X-Requested-With: control-tower` 头用于防 CSRF；脚本/CLI 使用 `Authorization: Bearer <token>`。
 > - 密码只能通过 Web UI 首次设置（`POST /api/auth/setup-password`），请求体是 PBKDF2 派生 key 而不是明文密码；首次设置只允许从本机（loopback）发起，已有密码时该接口会拒绝覆盖，重置请直接编辑 `settings.yaml`。
 > - `GET /api/settings` 不会返回 `auth.password`；`GET /api/profiles` 不会返回 profile 的自定义请求头（可能含订阅 token）。
-> - Web UI 提供 Sign Out 入口，登出会同时删除服务端 session 和本地 token。
+> - Web UI 只依赖 httpOnly cookie（登录响应里的 `token` 供脚本/CLI 使用，页面不会保存），不写入 `localStorage`；Sign Out 会吊销服务端 session 并让浏览器删除 cookie。
 
 ---
 

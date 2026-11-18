@@ -72,12 +72,13 @@ class E2ETest:
         """Call API from browser JS, return parsed JSON"""
         body_str = f", JSON.stringify({body})" if body else ""
         js = f"""async () => {{
-            const token = localStorage.getItem('ct_token');
-            const headers = {{'Content-Type': 'application/json'}};
-            if (token) headers['Authorization'] = 'Bearer ' + token;
+            // Session is an httpOnly cookie; the CSRF header is required for
+            // cookie-authenticated requests.
+            const headers = {{'Content-Type': 'application/json', 'X-Requested-With': 'control-tower'}};
             const r = await fetch('{path}', {{
                 method: '{method}',
                 headers: headers,
+                credentials: 'same-origin',
                 body: {body_str if body else 'undefined'}
             }});
             return await r.json();
@@ -159,9 +160,19 @@ class E2ETest:
             result = json.loads(r.read())
 
         if result.get("code") == 0:
-            # Set localStorage to persist auth state across page reloads
+            # Install the session cookie in the browser context. The Web UI
+            # never stores the token itself (httpOnly cookie).
             token = result.get("data", {}).get("token", "")
-            self.page.evaluate(f"() => {{ localStorage.setItem('ct_auth', '1'); localStorage.setItem('ct_token', '{token}'); }}")
+            if token:
+                self.page.context.add_cookies([{
+                    "name": "ct_session",
+                    "value": token,
+                    "url": BASE,
+                    "httpOnly": True,
+                    "sameSite": "Strict",
+                }])
+                self.page.reload()
+                self.page.wait_for_load_state('networkidle')
 
 
 # ─────────────────────────────────────────────

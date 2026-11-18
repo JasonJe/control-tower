@@ -149,31 +149,8 @@ pub async fn put_dns_settings(
     }
 
     // Save DNS to settings.yaml
-    let settings = SettingsData {
-        api_host: None,
-        api_port: None,
-        http_port: None,
-        socks_port: None,
-        mixed_port: None,
-        service_port: None,
-        tun_enabled: None,
-        log_level: None,
-        allow_lan: None,
-        ipv6: None,
-        tcp_concurrent: None,
-        mode: None,
-        latency_test_mode: None,
-        auto_test: None,
-        custom_rules: None,
-        profile_rules_count: None,
-        auto_update_on_startup: None,
-        rule_providers: None,
-        dns: Some(dns_settings),
-        connection_history: None,
-        closed_connections: vec![],
-        https: None,
-        auth: None,
-    };
+    let mut settings = SettingsData::patch();
+    settings.dns = Some(dns_settings);
 
     let state_inner = state.clone();
     match task::spawn_blocking(move || state_inner.save_settings(&settings)).await {

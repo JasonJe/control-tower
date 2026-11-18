@@ -18,7 +18,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(name = "ctctl")]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(about = "Control Tower - Command line interface for proxy management")]
 #[command(long_about = "Control Tower - Command line interface for proxy management
 

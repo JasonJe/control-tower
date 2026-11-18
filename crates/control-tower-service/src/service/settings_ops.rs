@@ -8,17 +8,45 @@ use crate::settings::consts::{
     DEFAULT_MIHOMO_SOCKS_PORT, DEFAULT_SERVICE_PORT,
 };
 
-/// Last successfully parsed settings.
+/// Identity of the settings file contents: modification time plus size.
+///
+/// `None` means the file did not exist (first run). Comparing this before
+/// re-reading avoids parsing settings.yaml on every API request, which is
+/// otherwise on the authentication path.
+type SettingsStamp = Option<(std::time::SystemTime, u64)>;
+
+/// Last successfully parsed settings, tagged with the stamp it was read from.
 ///
 /// `get_settings` is on the authentication path. If settings.yaml is
 /// momentarily unreadable or invalid, falling back to `SettingsData::default()`
 /// would silently disable the password check. Keep the last known good copy
 /// instead and only fall back to defaults when nothing was ever parsed.
-static SETTINGS_CACHE: std::sync::OnceLock<std::sync::RwLock<Option<crate::SettingsData>>> =
+static SETTINGS_CACHE: std::sync::OnceLock<std::sync::RwLock<Option<(SettingsStamp, crate::SettingsData)>>> =
     std::sync::OnceLock::new();
 
-fn settings_cache() -> &'static std::sync::RwLock<Option<crate::SettingsData>> {
+fn settings_cache() -> &'static std::sync::RwLock<Option<(SettingsStamp, crate::SettingsData)>> {
     SETTINGS_CACHE.get_or_init(|| std::sync::RwLock::new(None))
+}
+
+/// Drop the cached parse result.
+///
+/// Needed after writing settings.yaml outside [`ServiceState::save_settings`]
+/// (e.g. rule edits): the file can keep the same size and land in the same
+/// timestamp tick, in which case the stamp comparison would keep serving the
+/// previous copy.
+pub(crate) fn invalidate_settings_cache() {
+    *settings_cache().write().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Compute the cache key for a settings file (`None` when it is missing).
+fn settings_stamp(path: &std::path::Path) -> SettingsStamp {
+    match std::fs::metadata(path) {
+        Ok(meta) => Some((
+            meta.modified().unwrap_or(std::time::UNIX_EPOCH),
+            meta.len(),
+        )),
+        Err(_) => None,
+    }
 }
 
 impl ServiceState {
@@ -123,43 +151,56 @@ impl ServiceState {
     /// Get all settings from settings.yaml
     pub fn get_settings(&self) -> crate::SettingsData {
         let settings_path = crate::settings::resolve_settings_path();
+        let stamp = settings_stamp(&settings_path);
 
-        if !settings_path.exists() {
-            // First run: remember the defaults so a later unreadable file does
-            // not flip authentication on/off unexpectedly.
-            let mut cache = settings_cache().write().unwrap_or_else(|e| e.into_inner());
-            return cache.get_or_insert_with(crate::SettingsData::default).clone();
+        // Fast path: the file has not changed since the last read, so the
+        // parsed copy is still valid. `get_settings` runs on every API request
+        // (including auth checks).
+        if let Some((cached_stamp, cached_settings)) = settings_cache()
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
+            if cached_stamp == stamp {
+                return cached_settings;
+            }
         }
 
-        let parsed = std::fs::read_to_string(&settings_path)
-            .ok()
-            .and_then(|content| serde_yaml_ng::from_str::<crate::SettingsData>(&content).ok());
+        let parsed = if stamp.is_some() {
+            std::fs::read_to_string(&settings_path)
+                .ok()
+                .and_then(|content| serde_yaml_ng::from_str::<crate::SettingsData>(&content).ok())
+        } else {
+            None
+        };
 
-        match parsed {
-            Some(settings) => {
-                *settings_cache().write().unwrap_or_else(|e| e.into_inner()) =
-                    Some(settings.clone());
-                settings
-            }
-            None => {
-                // Never drop back to defaults on a parse/read error: that would
-                // clear `auth` and let every request through.
-                let cached = settings_cache()
-                    .read()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone();
-                match cached {
-                    Some(settings) => {
-                        tracing::error!(
-                            "Failed to parse {}; keeping last known good settings",
-                            settings_path.display()
-                        );
-                        settings
-                    }
-                    None => crate::SettingsData::default(),
+        let settings = match parsed {
+            Some(settings) => settings,
+            // Never drop back to defaults on a parse/read error: that would
+            // clear `auth` and let every request through.
+            None => match settings_cache()
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+            {
+                Some((_, previous)) if stamp.is_some() => {
+                    tracing::error!(
+                        "Failed to parse {}; keeping last known good settings",
+                        settings_path.display()
+                    );
+                    previous.clone()
                 }
-            }
-        }
+                Some((_, previous)) => previous.clone(),
+                None => crate::SettingsData::default(),
+            },
+        };
+
+        // Remember the stamp we inspected even when parsing failed: a broken
+        // file should be reported once, not reparsed on every request. Any edit
+        // changes the stamp and triggers a fresh parse.
+        *settings_cache().write().unwrap_or_else(|e| e.into_inner()) =
+            Some((stamp, settings.clone()));
+        settings
     }
 
     /// Get latency test mode from settings (default: "http")
@@ -230,6 +271,11 @@ impl ServiceState {
             .map_err(|e| format!("Failed to write settings.yaml: {}", e))?;
         std::fs::rename(&tmp_path, &settings_path)
             .map_err(|e| format!("Failed to replace settings.yaml: {}", e))?;
+
+        // Seed the cache with exactly what was written so an immediate
+        // `get_settings` does not race the filesystem timestamp.
+        *settings_cache().write().unwrap_or_else(|e| e.into_inner()) =
+            Some((settings_stamp(&settings_path), merged));
 
         // Reload settings into state
         self.load_settings();

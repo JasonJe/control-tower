@@ -1172,7 +1172,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::subscriber::set_global_default(subscriber)?;
     }
 
-    tracing::info!("Control Tower Service v0.1.0");
+    tracing::info!("Control Tower Service v{}", env!("CARGO_PKG_VERSION"));
     tracing::info!("Log directory: {}", log_dir.display());
 
     // Determine socket path and service port

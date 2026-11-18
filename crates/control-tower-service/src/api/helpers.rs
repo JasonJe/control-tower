@@ -64,6 +64,7 @@ pub fn update_profile_rules_count(count: usize) -> anyhow::Result<()> {
     let temp = settings_path.with_extension("yaml.tmp");
     std::fs::write(&temp, &yaml_str)?;
     std::fs::rename(&temp, &settings_path)?;
+    crate::service::settings_ops::invalidate_settings_cache();
     Ok(())
 }
 
@@ -131,31 +132,95 @@ pub fn auth_required(settings: &crate::SettingsData) -> bool {
     }
 }
 
-/// Check if an `Authorization` header value grants access.
+/// Name of the httpOnly session cookie used by the Web UI.
+pub const SESSION_COOKIE: &str = "ct_session";
+
+/// Header the Web UI must send on cookie-authenticated requests.
 ///
-/// Split out from [`check_auth`] so the global middleware (which only has a
-/// `ServiceRequest`) can reuse the exact same rules.
-pub fn check_auth_header(state: &Arc<crate::ServiceState>, auth_header: Option<&str>) -> bool {
+/// Browsers attach cookies automatically, so a cookie alone cannot prove the
+/// request originated from our own page. A custom header cannot be added
+/// cross-origin without a CORS preflight (which this server does not grant),
+/// which blocks CSRF even from same-site origins such as another port on
+/// 127.0.0.1.
+pub const CSRF_HEADER: &str = "X-Requested-With";
+pub const CSRF_HEADER_VALUE: &str = "control-tower";
+
+/// Where the session token in a request came from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TokenSource {
+    /// `Authorization: Bearer <token>` — used by `ctctl`/scripts.
+    Header,
+    /// httpOnly cookie — used by the Web UI, requires the CSRF header.
+    Cookie,
+}
+
+/// Read a single value from a raw `Cookie` header.
+pub fn cookie_value<'a>(cookie_header: Option<&'a str>, name: &str) -> Option<&'a str> {
+    cookie_header?.split(';').find_map(|pair| {
+        let (key, value) = pair.trim().split_once('=')?;
+        if key == name { Some(value) } else { None }
+    })
+}
+
+/// Extract the session token from the `Authorization` header or the session
+/// cookie. The header wins when both are present.
+pub fn session_token(
+    headers: &actix_web::http::header::HeaderMap,
+) -> Option<(TokenSource, String)> {
+    let bearer = headers
+        .get("Authorization")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|token| !token.is_empty());
+    if let Some(token) = bearer {
+        return Some((TokenSource::Header, token.to_string()));
+    }
+
+    let cookie_header = headers.get("Cookie").and_then(|value| value.to_str().ok());
+    cookie_value(cookie_header, SESSION_COOKIE)
+        .filter(|token| !token.is_empty())
+        .map(|token| (TokenSource::Cookie, token.to_string()))
+}
+
+/// Verify the credentials carried by a request.
+///
+/// Auth is a no-op unless it is enabled and a password is configured. Bearer
+/// tokens are accepted from any client; the cookie path additionally requires
+/// [`CSRF_HEADER`] so a foreign page cannot drive the API with the user's
+/// session cookie.
+pub fn check_request_auth(
+    state: &Arc<crate::ServiceState>,
+    headers: &actix_web::http::header::HeaderMap,
+) -> bool {
+    match session_token(headers) {
+        Some((TokenSource::Header, token)) => check_token(state, Some(&token)),
+        Some((TokenSource::Cookie, token)) => {
+            let csrf_ok = headers
+                .get(CSRF_HEADER)
+                .and_then(|value| value.to_str().ok())
+                == Some(CSRF_HEADER_VALUE);
+            csrf_ok && check_token(state, Some(&token))
+        }
+        // No credentials offered: allowed only when auth is not required.
+        None => check_token(state, None),
+    }
+}
+
+/// Verify a raw session token. `None` is denied only when auth is required.
+pub fn check_token(state: &Arc<crate::ServiceState>, token: Option<&str>) -> bool {
     // Auth disabled or not configured yet: allow all.
     let settings = state.get_settings();
     if !auth_required(&settings) {
         return true;
     }
 
-    auth_header
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .map(|token| state.verify_session(token))
-        .unwrap_or(false)
+    token.map(|token| state.verify_session(token)).unwrap_or(false)
 }
 
 /// Check if request has valid auth token
 /// Returns true if authenticated (or auth is disabled), false otherwise
 pub fn check_auth(req: &HttpRequest, state: &Arc<crate::ServiceState>) -> bool {
-    let auth_header = req
-        .headers()
-        .get("Authorization")
-        .and_then(|value| value.to_str().ok());
-    check_auth_header(state, auth_header)
+    check_request_auth(state, req.headers())
 }
 
 /// Require auth helper - returns Some(()) if authenticated, None otherwise
@@ -171,6 +236,57 @@ pub fn require_auth(req: &HttpRequest, state: &Arc<ServiceState>) -> Option<()> 
 mod tests {
     use super::*;
     use crate::settings::{AuthConfig, SettingsData};
+
+    #[test]
+    fn cookie_value_is_parsed() {
+        assert_eq!(
+            cookie_value(Some("a=1; ct_session=abc; b=2"), SESSION_COOKIE),
+            Some("abc")
+        );
+        assert_eq!(cookie_value(Some("other=1"), SESSION_COOKIE), None);
+        assert_eq!(cookie_value(None, SESSION_COOKIE), None);
+        // The cookie name must match exactly, not as a prefix.
+        assert_eq!(cookie_value(Some("xct_session=abc"), SESSION_COOKIE), None);
+    }
+
+    #[test]
+    fn session_token_prefers_authorization_header() {
+        use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer header-token"),
+        );
+        headers.insert(
+            HeaderName::from_static("cookie"),
+            HeaderValue::from_static("ct_session=cookie-token"),
+        );
+
+        let (source, token) = session_token(&headers).expect("token");
+        assert_eq!(source, TokenSource::Header);
+        assert_eq!(token, "header-token");
+    }
+
+    #[test]
+    fn session_token_falls_back_to_cookie() {
+        use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("cookie"),
+            HeaderValue::from_static("a=1; ct_session=cookie-token"),
+        );
+
+        let (source, token) = session_token(&headers).expect("token");
+        assert_eq!(source, TokenSource::Cookie);
+        assert_eq!(token, "cookie-token");
+    }
+
+    #[test]
+    fn session_token_absent_without_header_or_cookie() {
+        assert!(session_token(&actix_web::http::header::HeaderMap::new()).is_none());
+    }
 
     #[test]
     fn auth_is_not_required_when_section_is_missing() {

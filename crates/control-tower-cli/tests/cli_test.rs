@@ -264,7 +264,7 @@ fn test_main_version() {
     let result = run_cli(&["--version"]);
     assert!(result.is_ok());
     let output = result.unwrap();
-    assert!(output.contains("0.1.0") || output.contains("clash"));
+    assert!(output.contains(env!("CARGO_PKG_VERSION")), "got: {output}");
 }
 
 // ============================================================================

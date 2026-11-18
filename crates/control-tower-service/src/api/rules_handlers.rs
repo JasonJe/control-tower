@@ -477,5 +477,9 @@ fn write_custom_rules_to_settings(settings_path: &std::path::Path, custom_rules:
     std::fs::write(&temp, &yaml_str)?;
     std::fs::rename(&temp, settings_path)?;
 
+    // Drop the cached parse: the new file can share size and mtime tick with
+    // the previous one, which would otherwise keep serving stale rules.
+    crate::service::settings_ops::invalidate_settings_cache();
+
     Ok(())
 }

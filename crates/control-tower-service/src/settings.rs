@@ -65,6 +65,21 @@ mod tests {
         assert!(settings.auto_test.is_some());
         assert!(!settings.auto_test.as_ref().unwrap().enabled);
     }
+
+    #[test]
+    fn test_settings_patch_is_empty() {
+        // `patch()` must not carry any value that `save_settings` would merge
+        // into the existing file. `auto_test` is the one field `Default` sets.
+        let patch = SettingsData::patch();
+        assert!(patch.auto_test.is_none());
+        let yaml = serde_yaml_ng::to_string(&patch).expect("serialize patch");
+        let body = yaml
+            .trim()
+            .trim_start_matches('{')
+            .trim_end_matches('}')
+            .trim();
+        assert!(body.is_empty(), "patch must serialize to an empty map: {yaml}");
+    }
 }
 
 /// Auto test configuration for proxy latency testing
@@ -286,6 +301,20 @@ impl Default for SettingsData {
             closed_connections: vec![],
             https: None,
             auth: None,
+        }
+    }
+}
+
+impl SettingsData {
+    /// An empty update patch: every field is `None`, so `ServiceState::save_settings`
+    /// keeps the existing values.
+    ///
+    /// Do not use `SettingsData::default()` for this: it sets `auto_test` to
+    /// its default value, which would silently reset the user's interval.
+    pub fn patch() -> Self {
+        Self {
+            auto_test: None,
+            ..Self::default()
         }
     }
 }

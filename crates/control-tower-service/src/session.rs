@@ -44,7 +44,7 @@ impl ServiceState {
         token
     }
 
-    /// Verify a session token and remove it if valid
+    /// Verify a session token. Expired tokens are dropped in passing.
     pub fn verify_session(&self, token: &str) -> bool {
         let mut sessions = self.sessions.write();
         if let Some(session) = sessions.get(token) {

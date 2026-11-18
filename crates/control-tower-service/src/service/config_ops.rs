@@ -1,11 +1,9 @@
 //! Config file operations: mode / ports / TUN settings, hot-patch, and YAML updates.
 
 use std::time::Duration;
-use serde::Deserialize;
 use reqwest::blocking::Client as BlockingClient;
 
 use crate::ServiceState;
-use crate::settings::consts::DEFAULT_SERVICE_PORT;
 
 /// Hot-patch Mihomo via PATCH /configs for immediate effect (runtime-only, no file write).
 fn hot_patch_configs(api_url: &str, log_level: Option<&str>, allow_lan: Option<bool>,
@@ -155,33 +153,17 @@ impl ServiceState {
     pub fn apply_port_settings(&self, http_port: u16, socks_port: u16) -> Result<(), String> {
         self.update_config_ports(http_port, socks_port)?;
 
-        let (_, _, tun_enabled) = self.load_settings_ports();
-        let current_settings = self.get_settings();
-        let settings = crate::SettingsData {
-            api_host: Some("127.0.0.1".to_string()),
-            api_port: Some(*self.api_port.read()),
-            http_port: Some(http_port),
-            socks_port: Some(socks_port),
-            mixed_port: current_settings.mixed_port,
-            service_port: Some(DEFAULT_SERVICE_PORT),
-            tun_enabled,
-            log_level: None,
-            allow_lan: None,
-            ipv6: None,
-            tcp_concurrent: None,
-            mode: None,
-            latency_test_mode: current_settings.latency_test_mode,
-            auto_test: None,
-            custom_rules: current_settings.custom_rules,
-            profile_rules_count: current_settings.profile_rules_count,
-            auto_update_on_startup: current_settings.auto_update_on_startup,
-            rule_providers: current_settings.rule_providers.clone(),
-            dns: current_settings.dns.clone(),
-            connection_history: current_settings.connection_history.clone(),
-            closed_connections: current_settings.closed_connections.clone(),
-            https: None,
-            auth: None,
-        };
+        // Only touch the fields this endpoint owns. `save_settings` merges by
+        // `Some`-ness, so anything left `None` keeps the user's existing value.
+        // The previous code rebuilt the whole struct and forced `api_host` to
+        // 127.0.0.1 and `service_port` to its default, silently reverting a
+        // customised API bind address or service port.
+        let mut settings = crate::SettingsData::patch();
+        settings.http_port = Some(http_port);
+        settings.socks_port = Some(socks_port);
+        // Profile generation prefers `mixed_port` over `http_port`, so a stale
+        // value there would ignore the port the user just set.
+        settings.mixed_port = Some(http_port);
         self.save_settings(&settings)?;
 
         let config_path = self.last_config_path.read().clone();
@@ -193,26 +175,6 @@ impl ServiceState {
 
         tracing::info!("Port settings applied");
         Ok(())
-    }
-
-    /// Load http_port, socks_port, and tun_enabled from settings.yaml in a single read.
-    fn load_settings_ports(&self) -> (Option<u16>, Option<u16>, Option<bool>) {
-        let settings_path = crate::settings::resolve_settings_path();
-        if let Ok(content) = std::fs::read_to_string(&settings_path) {
-            #[derive(Deserialize)]
-            struct Settings {
-                #[serde(rename = "http_port", default)]
-                http_port: Option<u16>,
-                #[serde(rename = "socks_port", default)]
-                socks_port: Option<u16>,
-                #[serde(rename = "tun_enabled", default)]
-                tun_enabled: Option<bool>,
-            }
-            if let Ok(settings) = serde_yaml_ng::from_str::<Settings>(&content) {
-                return (settings.http_port, settings.socks_port, settings.tun_enabled);
-            }
-        }
-        (None, None, None)
     }
 
     /// Update tun section in config.yaml (does NOT touch dns section)
@@ -346,33 +308,10 @@ impl ServiceState {
     pub fn apply_tun_settings(&self, tun_enabled: bool) -> Result<(), String> {
         self.update_config_tun(tun_enabled)?;
 
-        let (http_port, socks_port, _) = self.load_settings_ports();
-        let current_settings = self.get_settings();
-        let settings = crate::SettingsData {
-            api_host: Some("127.0.0.1".to_string()),
-            api_port: Some(*self.api_port.read()),
-            http_port,
-            socks_port,
-            mixed_port: current_settings.mixed_port,
-            service_port: Some(DEFAULT_SERVICE_PORT),
-            tun_enabled: Some(tun_enabled),
-            log_level: None,
-            allow_lan: None,
-            ipv6: None,
-            tcp_concurrent: None,
-            mode: current_settings.mode,
-            latency_test_mode: current_settings.latency_test_mode,
-            auto_test: current_settings.auto_test,
-            custom_rules: current_settings.custom_rules,
-            profile_rules_count: current_settings.profile_rules_count,
-            auto_update_on_startup: current_settings.auto_update_on_startup,
-            rule_providers: current_settings.rule_providers.clone(),
-            dns: current_settings.dns.clone(),
-            connection_history: current_settings.connection_history.clone(),
-            closed_connections: current_settings.closed_connections.clone(),
-            https: None,
-            auth: None,
-        };
+        // Same partial-update rule as `apply_port_settings`: do not rewrite
+        // unrelated settings (api_host, service_port, auto_test, ...).
+        let mut settings = crate::SettingsData::patch();
+        settings.tun_enabled = Some(tun_enabled);
         self.save_settings(&settings)?;
 
         let config_path = self.last_config_path.read().clone();

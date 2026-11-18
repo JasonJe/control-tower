@@ -49,8 +49,7 @@ impl ServiceState {
         // because settings.yaml may have stale allow_lan values from before the
         // profile was activated, which would override the profile's own setting.
         let allow_lan = {
-            let exe_dir = control_tower_service_core::exe_dir();
-            let config_path = exe_dir.join("config.yaml");
+            let config_path = crate::settings::resolve_paths().active_config_path;
             if let Ok(content) = std::fs::read_to_string(&config_path) {
                 #[derive(Deserialize)]
                 struct Config {
@@ -79,8 +78,7 @@ impl ServiceState {
 
     /// Load selected proxy name from settings.yaml
     fn load_selected_proxy(&self) -> Option<String> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let settings_path = exe_dir.join("settings.yaml");
+        let settings_path = crate::settings::resolve_settings_path();
         if !settings_path.exists() {
             return None;
         }
@@ -97,8 +95,7 @@ impl ServiceState {
 
     /// Load mode from settings.yaml
     fn load_mode(&self) -> Option<String> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let settings_path = exe_dir.join("settings.yaml");
+        let settings_path = crate::settings::resolve_settings_path();
         if !settings_path.exists() {
             return None;
         }

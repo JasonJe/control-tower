@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::api;
+use crate::auth_middleware::AuthMiddleware;
 use crate::html;
 use crate::ServiceState;
 
@@ -34,8 +35,10 @@ pub async fn start_http_server(
         HttpServer::new(move || {
             App::new()
                 .app_data(state_data.clone())
+                .wrap(AuthMiddleware)
                 .wrap(middleware::Logger::default())
                 .route("/", web::get().to(index))
+                .route("/vendor/crypto-js.min.js", web::get().to(crypto_js))
                 .service(api::configure_routes())
         })
         .bind_rustls_0_23(("0.0.0.0", port), config)?
@@ -48,8 +51,10 @@ pub async fn start_http_server(
         HttpServer::new(move || {
             App::new()
                 .app_data(state_data.clone())
+                .wrap(AuthMiddleware)
                 .wrap(middleware::Logger::default())
                 .route("/", web::get().to(index))
+                .route("/vendor/crypto-js.min.js", web::get().to(crypto_js))
                 .service(api::configure_routes())
         })
         .bind(("0.0.0.0", port))?
@@ -62,4 +67,11 @@ async fn index() -> HttpResponse {
     HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
         .body(html::INDEX_HTML)
+}
+
+async fn crypto_js() -> HttpResponse {
+    HttpResponse::Ok()
+        .content_type("application/javascript; charset=utf-8")
+        .insert_header(("Cache-Control", "public, max-age=86400"))
+        .body(html::CRYPTO_JS)
 }

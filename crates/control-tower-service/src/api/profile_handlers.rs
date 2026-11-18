@@ -225,10 +225,27 @@ pub async fn add_profile(
                 }
             };
 
-            let client = match reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-            {
+            let options = body.options.as_ref();
+            let timeout_secs = options.map(|o| o.timeout_or(30)).unwrap_or(30);
+            let with_proxy = options.and_then(|o| o.with_proxy).unwrap_or(false);
+            let danger_accept_invalid_certs = options
+                .and_then(|o| o.danger_accept_invalid_certs)
+                .unwrap_or(false);
+
+            let mut builder = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(timeout_secs))
+                .danger_accept_invalid_certs(danger_accept_invalid_certs);
+            if with_proxy {
+                let proxy_url = format!("http://127.0.0.1:{}", super::get_mihomo_http_port());
+                match reqwest::Proxy::http(&proxy_url) {
+                    Ok(proxy) => builder = builder.proxy(proxy),
+                    Err(e) => {
+                        return HttpResponse::InternalServerError()
+                            .json(ApiResponse::<()>::error(format!("Failed to create proxy: {}", e)))
+                    }
+                }
+            }
+            let client = match builder.build() {
                 Ok(c) => c,
                 Err(e) => {
                     return HttpResponse::InternalServerError()
@@ -236,14 +253,25 @@ pub async fn add_profile(
                 }
             };
 
-            let response = match client
-                .get(&url)
-                .header("User-Agent", body.options.as_ref()
-                    .and_then(|o| o.user_agent.clone())
-                    .unwrap_or_else(|| "clash-verge/v2.4.7".to_string()))
-                .send()
-                .await
-            {
+            let mut request = client.get(&url);
+            let has_custom_user_agent = options
+                .map(|o| o.has_header("user-agent"))
+                .unwrap_or(false);
+            if !has_custom_user_agent {
+                request = request.header(
+                    "User-Agent",
+                    options
+                        .map(|o| o.user_agent_or("clash-verge/v2.4.7"))
+                        .unwrap_or("clash-verge/v2.4.7"),
+                );
+            }
+            if let Some(options) = options {
+                for (name, value) in options.header_pairs() {
+                    request = request.header(name, value);
+                }
+            }
+
+            let response = match request.send().await {
                 Ok(r) => r,
                 Err(e) => {
                     return HttpResponse::BadRequest()
@@ -558,13 +586,19 @@ pub async fn update_profile(
 
     // Parse options field if provided
     let options_provided = obj.contains_key("options");
-    let new_options = obj.get("options").and_then(|v| {
-        if v.is_null() {
-            Some(None)
-        } else {
-            serde_json::from_value::<ProfileDownloadOptions>(v.clone()).ok().map(Some)
-        }
-    }).flatten();
+    let new_options = match obj.get("options") {
+        None => None,
+        Some(v) if v.is_null() => Some(None),
+        Some(v) => match serde_json::from_value::<ProfileDownloadOptions>(v.clone()) {
+            Ok(options) => Some(Some(options)),
+            // Never treat a malformed options object as "clear the options":
+            // that silently drops headers / proxy settings on a typo.
+            Err(e) => {
+                return HttpResponse::BadRequest()
+                    .json(ApiResponse::<()>::error(format!("Invalid options: {}", e)))
+            }
+        },
+    };
 
     // Validate URL if explicitly provided (even as empty string → clear not allowed for URL)
     if url_provided {
@@ -638,7 +672,19 @@ pub async fn update_profile(
 
     // Apply options: null → clear, otherwise update
     if options_provided {
-        item.options = new_options;
+        match new_options {
+            Some(Some(mut options)) => {
+                // `GET /api/profiles` deliberately omits header values, so a
+                // missing `headers` field means "keep the stored headers".
+                // Sending `"headers": {}` explicitly clears them.
+                if options.headers.is_none() {
+                    options.headers = item.options.as_ref().and_then(|o| o.headers.clone());
+                }
+                item.options = Some(options);
+            }
+            Some(None) => item.options = None,
+            None => {}
+        }
     }
 
     // Apply URL: null or "" → clear, otherwise update (but re-download only if changed)
@@ -655,30 +701,68 @@ pub async fn update_profile(
     // Capture options for download (before ownership moves)
     let download_options = item.options.clone();
 
-    // If URL changed, download new content in a blocking task
+    // If URL changed, download new content in a blocking task.
     if url_changed {
         let download_url = url.clone().unwrap(); // url_changed means url_provided && Some
-        let uid_clone = uid.clone();
         let profile_file_clone = profile_file.clone();
         let profiles_path_clone = profiles_path.clone();
         let options_clone = download_options.clone();
 
-        let timeout_secs = options_clone.as_ref()
-            .and_then(|o| o.timeout_seconds)
-            .unwrap_or(30);
-        let user_agent = options_clone.as_ref()
-            .and_then(|o| o.user_agent.clone())
-            .unwrap_or_else(|| "clash-verge/v2.4.7".to_string());
+        // Apply url/updated_at to the in-memory manifest and hand the whole
+        // manifest to the blocking task. Re-reading profiles.yaml inside the
+        // task would discard the name/cron/options edits applied above.
+        if let Some(item) = yaml.items.iter_mut().find(|i| i.uid == uid) {
+            item.url = Some(download_url.clone());
+            item.updated_at = Some(chrono::Utc::now().timestamp());
+        }
+        let yaml_to_write = yaml;
+
+        let timeout_secs = options_clone.as_ref().map(|o| o.timeout_or(30)).unwrap_or(30);
+        let with_proxy = options_clone
+            .as_ref()
+            .and_then(|o| o.with_proxy)
+            .unwrap_or(false);
+        let danger_accept_invalid_certs = options_clone
+            .as_ref()
+            .and_then(|o| o.danger_accept_invalid_certs)
+            .unwrap_or(false);
+        let proxy_url = format!("http://127.0.0.1:{}", super::get_mihomo_http_port());
 
         let result = tokio::task::spawn_blocking(move || {
-            let client = reqwest::blocking::Client::builder()
+            let mut builder = reqwest::blocking::Client::builder()
                 .timeout(std::time::Duration::from_secs(timeout_secs))
+                .danger_accept_invalid_certs(danger_accept_invalid_certs);
+            if with_proxy {
+                builder = builder.proxy(
+                    reqwest::Proxy::http(&proxy_url)
+                        .map_err(|e| anyhow::anyhow!("Failed to create proxy: {}", e))?,
+                );
+            }
+            let client = builder
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
-            let response = client
-                .get(&download_url)
-                .header("User-Agent", user_agent)
+            let mut request = client.get(&download_url);
+            let has_custom_user_agent = options_clone
+                .as_ref()
+                .map(|o| o.has_header("user-agent"))
+                .unwrap_or(false);
+            if !has_custom_user_agent {
+                request = request.header(
+                    "User-Agent",
+                    options_clone
+                        .as_ref()
+                        .map(|o| o.user_agent_or("clash-verge/v2.4.7"))
+                        .unwrap_or("clash-verge/v2.4.7"),
+                );
+            }
+            if let Some(options) = options_clone.as_ref() {
+                for (name, value) in options.header_pairs() {
+                    request = request.header(name, value);
+                }
+            }
+
+            let response = request
                 .send()
                 .map_err(|e| anyhow::anyhow!("Failed to download: {}", e))?;
 
@@ -698,20 +782,8 @@ pub async fn update_profile(
             // Write new content to profile file
             std::fs::write(&profile_file_clone, &new_content)?;
 
-            // Update updated_at and url in profiles.yaml
-            let content = std::fs::read_to_string(&profiles_path_clone)?;
-            let mut yaml = serde_yaml_ng::from_str::<ProfilesYaml>(&content)?;
-
-            let now = chrono::Utc::now().timestamp();
-            for item in &mut yaml.items {
-                if item.uid == uid_clone {
-                    item.updated_at = Some(now);
-                    item.url = Some(download_url.clone());
-                    break;
-                }
-            }
-
-            let new_content_str = serde_yaml_ng::to_string(&yaml)?;
+            // Persist the full manifest (name/cron/options/url/updated_at).
+            let new_content_str = serde_yaml_ng::to_string(&yaml_to_write)?;
             std::fs::write(&profiles_path_clone, new_content_str)?;
 
             Ok::<(), anyhow::Error>(())
@@ -862,32 +934,62 @@ pub async fn refresh_profile(
     // Clone for blocking task
     let profile_file_clone = profile_file.clone();
     let profiles_path_clone = profiles_path.clone();
-    let use_proxy = body.as_ref().map(|b| b.use_proxy.unwrap_or(false)).unwrap_or(false);
+    let use_proxy = body
+        .as_ref()
+        .and_then(|b| b.use_proxy)
+        .or_else(|| profile_item.options.as_ref().and_then(|o| o.with_proxy))
+        .unwrap_or(false);
     let http_port = super::get_mihomo_http_port();
     let paths_clone = paths.clone();
     let custom_rules_clone = custom_rules.clone();
     let port_overrides_clone = port_overrides.clone();
     let settings_clone = state.get_settings();
     let uid_clone = uid.clone();
+    let download_options = profile_item.options.clone();
+    let download_timeout = download_options.as_ref().map(|o| o.timeout_or(60)).unwrap_or(60);
+    let danger_accept_invalid_certs = download_options
+        .as_ref()
+        .and_then(|o| o.danger_accept_invalid_certs)
+        .unwrap_or(false);
 
     let result = tokio::task::spawn_blocking(move || {
         // Download subscription (optionally through Mihomo proxy)
-        let client = if use_proxy {
+        let timeout = std::time::Duration::from_secs(download_timeout);
+        let mut builder = reqwest::blocking::Client::builder()
+            .timeout(timeout)
+            .danger_accept_invalid_certs(danger_accept_invalid_certs);
+        if use_proxy {
             // Route through Mihomo HTTP proxy
             let proxy_url = format!("http://127.0.0.1:{}", http_port);
             let proxy = reqwest::Proxy::http(proxy_url)
                 .map_err(|e| anyhow::anyhow!("Failed to create proxy: {}", e))?;
-            reqwest::blocking::Client::builder()
-                .proxy(proxy)
-                .build()
-                .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?
-        } else {
-            reqwest::blocking::Client::new()
-        };
+            builder = builder.proxy(proxy);
+        }
+        let client = builder
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
-        let response = client
-            .get(&url)
-            .header("User-Agent", "clash-verge/v2.4.7")
+        let mut request = client.get(&url);
+        let has_custom_user_agent = download_options
+            .as_ref()
+            .map(|o| o.has_header("user-agent"))
+            .unwrap_or(false);
+        if !has_custom_user_agent {
+            request = request.header(
+                "User-Agent",
+                download_options
+                    .as_ref()
+                    .map(|o| o.user_agent_or("clash-verge/v2.4.7"))
+                    .unwrap_or("clash-verge/v2.4.7"),
+            );
+        }
+        if let Some(options) = download_options.as_ref() {
+            for (name, value) in options.header_pairs() {
+                request = request.header(name, value);
+            }
+        }
+
+        let response = request
             .send()
             .map_err(|e| anyhow::anyhow!("Failed to download: {}", e))?;
 

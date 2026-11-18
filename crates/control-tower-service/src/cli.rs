@@ -51,7 +51,7 @@ pub fn setup_signal_handlers() {
 
 /// Get the service HTTP port from settings.yaml, defaulting to DEFAULT_SERVICE_PORT
 pub fn get_service_port() -> u16 {
-    let settings_path = control_tower_service_core::exe_dir().join("settings.yaml");
+    let settings_path = crate::settings::resolve_settings_path();
 
     if settings_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&settings_path) {

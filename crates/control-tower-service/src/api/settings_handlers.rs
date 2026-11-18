@@ -14,7 +14,16 @@ use super::{ApiResponse, UpdateSettingsRequest, ApplyPortsRequest, ApplyTunReque
 pub async fn get_settings(
     state: web::Data<Arc<ServiceState>>,
 ) -> HttpResponse {
-    let settings = state.get_settings();
+    let mut settings = state.get_settings();
+
+    // Never expose the stored credential. The login protocol verifies
+    // `sha256(stored_key + nonce)` and the nonce is handed out publicly, so
+    // leaking `auth.password` would let anyone forge a login without knowing
+    // the real password.
+    if let Some(auth) = settings.auth.as_mut() {
+        auth.password = None;
+    }
+
     HttpResponse::Ok().json(ApiResponse::success(settings))
 }
 

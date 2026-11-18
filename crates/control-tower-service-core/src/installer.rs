@@ -203,7 +203,10 @@ mod tests {
     #[test]
     fn test_default_install_dir() {
         let dir = MihomoInstaller::default_install_dir();
-        assert!(dir.to_str().unwrap().contains("clash-verge"));
+        // The install dir is the executable's directory, which depends on where
+        // the binary lives. Do not assert a project-specific path segment here:
+        // `target/debug` is just as valid as an installed location.
+        assert!(dir.is_absolute(), "expected an absolute path, got {:?}", dir);
     }
 
     #[test]

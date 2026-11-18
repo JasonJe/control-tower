@@ -146,6 +146,9 @@ enum ProfileAction {
         url: String,
         /// Profile name (optional)
         name: Option<String>,
+        /// Custom request header, e.g. -H "X-Token: abc" (repeatable)
+        #[arg(short = 'H', long = "header", value_name = "KEY: VALUE")]
+        headers: Vec<String>,
     },
     /// List all profiles
     ///
@@ -166,6 +169,9 @@ enum ProfileAction {
     Update {
         /// Profile ID (optional, updates current if not specified)
         id: Option<String>,
+        /// Override stored request headers, e.g. -H "X-Token: abc" (repeatable)
+        #[arg(short = 'H', long = "header", value_name = "KEY: VALUE")]
+        headers: Vec<String>,
     },
     /// Activate a profile
     ///

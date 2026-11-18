@@ -81,17 +81,9 @@ impl ServiceState {
 
     /// Save mode to settings.yaml (preserves all other settings)
     fn save_mode(&self, mode: &str) -> Result<(), String> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let settings_path = exe_dir.join("settings.yaml");
-
-        let mut settings = if settings_path.exists() {
-            match std::fs::read_to_string(&settings_path) {
-                Ok(c) => serde_yaml_ng::from_str(&c).unwrap_or_default(),
-                Err(_) => crate::SettingsData::default(),
-            }
-        } else {
-            crate::SettingsData::default()
-        };
+        // Reuse the shared loader: a malformed settings.yaml must not silently
+        // be replaced with defaults (that would wipe auth and rules).
+        let mut settings = self.get_settings();
         settings.mode = Some(mode.to_string());
 
         self.save_settings(&settings)?;
@@ -101,8 +93,7 @@ impl ServiceState {
 
     /// Update mode in config.yaml directly
     fn update_config_mode(&self, mode: &str) -> Result<(), String> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let config_path = exe_dir.join("config.yaml");
+        let config_path = crate::settings::resolve_paths().active_config_path;
         if !config_path.exists() {
             return Err("config.yaml not found".to_string());
         }
@@ -129,8 +120,7 @@ impl ServiceState {
 
     /// Update port settings in config.yaml (mixed-port, socks-port, external-controller)
     fn update_config_ports(&self, http_port: u16, socks_port: u16) -> Result<(), String> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let config_path = exe_dir.join("config.yaml");
+        let config_path = crate::settings::resolve_paths().active_config_path;
         if !config_path.exists() {
             return Err("config.yaml not found".to_string());
         }
@@ -207,8 +197,7 @@ impl ServiceState {
 
     /// Load http_port, socks_port, and tun_enabled from settings.yaml in a single read.
     fn load_settings_ports(&self) -> (Option<u16>, Option<u16>, Option<bool>) {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let settings_path = exe_dir.join("settings.yaml");
+        let settings_path = crate::settings::resolve_settings_path();
         if let Ok(content) = std::fs::read_to_string(&settings_path) {
             #[derive(Deserialize)]
             struct Settings {
@@ -228,8 +217,7 @@ impl ServiceState {
 
     /// Update tun section in config.yaml (does NOT touch dns section)
     fn update_config_tun(&self, tun_enabled: bool) -> Result<(), String> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let config_path = exe_dir.join("config.yaml");
+        let config_path = crate::settings::resolve_paths().active_config_path;
         if !config_path.exists() {
             return Err("config.yaml not found".to_string());
         }
@@ -268,8 +256,7 @@ impl ServiceState {
 
     /// Apply DNS settings: write dns section to config.yaml
     pub fn apply_dns_settings(&self, dns_settings: &crate::settings::DnsSettings) -> Result<(), String> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let config_path = exe_dir.join("config.yaml");
+        let config_path = crate::settings::resolve_paths().active_config_path;
         if !config_path.exists() {
             return Err("config.yaml not found".to_string());
         }

@@ -3,7 +3,7 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::service::{get_mode, set_mode};
+use crate::service::{apply_tun, get_mode, set_mode};
 use crate::ModeAction;
 
 const CLASH_API_HOST: &str = "127.0.0.1";
@@ -92,39 +92,16 @@ async fn get_tun_status() -> Result<()> {
 }
 
 async fn enable_tun() -> Result<()> {
-    let url = format!("http://127.0.0.1:{}/api/settings/apply-tun", crate::settings::get_service_port());
-    let client = reqwest::Client::new();
-    let response = client
-        .post(&url)
-        .json(&serde_json::json!({ "tun_enabled": true }))
-        .timeout(std::time::Duration::from_secs(5))
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to call apply-tun: {}", e))?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to enable TUN: {}", response.status());
-    }
-
+    // Use the IPC socket (not the HTTP API) so this keeps working when API
+    // authentication is enabled — the CLI has no session token.
+    apply_tun(true)?;
     println!("TUN mode enabled. Mihomo is restarting with TUN enabled.");
     Ok(())
 }
 
 async fn disable_tun() -> Result<()> {
-    let url = format!("http://127.0.0.1:{}/api/settings/apply-tun", crate::settings::get_service_port());
-    let client = reqwest::Client::new();
-    let response = client
-        .post(&url)
-        .json(&serde_json::json!({ "tun_enabled": false }))
-        .timeout(std::time::Duration::from_secs(5))
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to call apply-tun: {}", e))?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to disable TUN: {}", response.status());
-    }
-
+    // Use the IPC socket (not the HTTP API) for the same reason as enable_tun.
+    apply_tun(false)?;
     println!("TUN mode disabled. Mihomo is restarting.");
     Ok(())
 }

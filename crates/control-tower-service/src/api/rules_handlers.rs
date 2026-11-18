@@ -456,8 +456,13 @@ fn write_custom_rules_to_settings(settings_path: &std::path::Path, custom_rules:
         String::new()
     };
 
-    let mut settings: SettingsData = serde_yaml_ng::from_str(&content)
-        .unwrap_or_else(|_| SettingsData::default());
+    let mut settings: SettingsData = if content.trim().is_empty() {
+        SettingsData::default()
+    } else {
+        // Do not fall back to defaults here: that would overwrite a malformed
+        // settings.yaml (including its auth hash) with a near-empty file.
+        serde_yaml_ng::from_str(&content)?
+    };
 
     if custom_rules.is_empty() {
         settings.custom_rules = None;

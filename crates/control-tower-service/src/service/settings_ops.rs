@@ -8,11 +8,23 @@ use crate::settings::consts::{
     DEFAULT_MIHOMO_SOCKS_PORT, DEFAULT_SERVICE_PORT,
 };
 
+/// Last successfully parsed settings.
+///
+/// `get_settings` is on the authentication path. If settings.yaml is
+/// momentarily unreadable or invalid, falling back to `SettingsData::default()`
+/// would silently disable the password check. Keep the last known good copy
+/// instead and only fall back to defaults when nothing was ever parsed.
+static SETTINGS_CACHE: std::sync::OnceLock<std::sync::RwLock<Option<crate::SettingsData>>> =
+    std::sync::OnceLock::new();
+
+fn settings_cache() -> &'static std::sync::RwLock<Option<crate::SettingsData>> {
+    SETTINGS_CACHE.get_or_init(|| std::sync::RwLock::new(None))
+}
+
 impl ServiceState {
     /// Load api_host and api_port from settings.yaml, also sync AutoTestState
     pub fn load_settings(&self) {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let settings_path = exe_dir.join("settings.yaml");
+        let settings_path = crate::settings::resolve_settings_path();
         if !settings_path.exists() {
             tracing::info!("settings.yaml not found, using defaults");
             return;
@@ -63,8 +75,7 @@ impl ServiceState {
 
     /// Ensure settings.yaml exists with default values, create if missing
     pub fn ensure_settings_file() {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let settings_path = exe_dir.join("settings.yaml");
+        let settings_path = crate::settings::resolve_settings_path();
 
         if settings_path.exists() {
             return;
@@ -111,18 +122,44 @@ impl ServiceState {
 
     /// Get all settings from settings.yaml
     pub fn get_settings(&self) -> crate::SettingsData {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let settings_path = exe_dir.join("settings.yaml");
+        let settings_path = crate::settings::resolve_settings_path();
+
         if !settings_path.exists() {
-            return crate::SettingsData::default();
+            // First run: remember the defaults so a later unreadable file does
+            // not flip authentication on/off unexpectedly.
+            let mut cache = settings_cache().write().unwrap_or_else(|e| e.into_inner());
+            return cache.get_or_insert_with(crate::SettingsData::default).clone();
         }
 
-        let content = match std::fs::read_to_string(&settings_path) {
-            Ok(c) => c,
-            Err(_) => return crate::SettingsData::default(),
-        };
+        let parsed = std::fs::read_to_string(&settings_path)
+            .ok()
+            .and_then(|content| serde_yaml_ng::from_str::<crate::SettingsData>(&content).ok());
 
-        serde_yaml_ng::from_str(&content).unwrap_or_default()
+        match parsed {
+            Some(settings) => {
+                *settings_cache().write().unwrap_or_else(|e| e.into_inner()) =
+                    Some(settings.clone());
+                settings
+            }
+            None => {
+                // Never drop back to defaults on a parse/read error: that would
+                // clear `auth` and let every request through.
+                let cached = settings_cache()
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                match cached {
+                    Some(settings) => {
+                        tracing::error!(
+                            "Failed to parse {}; keeping last known good settings",
+                            settings_path.display()
+                        );
+                        settings
+                    }
+                    None => crate::SettingsData::default(),
+                }
+            }
+        }
     }
 
     /// Get latency test mode from settings (default: "http")
@@ -134,8 +171,7 @@ impl ServiceState {
 
     /// Save settings to settings.yaml (preserving existing values for None fields)
     pub fn save_settings(&self, new_settings: &crate::SettingsData) -> Result<(), String> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let settings_path = exe_dir.join("settings.yaml");
+        let settings_path = crate::settings::resolve_settings_path();
 
         // Hot-patch runtime first for immediate effect
         self.hot_patch_runtime(
@@ -145,12 +181,14 @@ impl ServiceState {
             new_settings.tcp_concurrent,
         );
 
-        // Merge with existing settings to preserve values for None fields
+        // Merge with existing settings to preserve values for None fields.
+        // A parse failure must abort instead of silently replacing the file
+        // with defaults (which would wipe auth, rules, DNS, ...).
         let mut merged = if settings_path.exists() {
-            match std::fs::read_to_string(&settings_path) {
-                Ok(c) => serde_yaml_ng::from_str::<crate::SettingsData>(&c).unwrap_or_default(),
-                Err(_) => crate::SettingsData::default(),
-            }
+            let content = std::fs::read_to_string(&settings_path)
+                .map_err(|e| format!("Failed to read settings.yaml: {}", e))?;
+            serde_yaml_ng::from_str::<crate::SettingsData>(&content)
+                .map_err(|e| format!("Failed to parse settings.yaml: {}", e))?
         } else {
             crate::SettingsData::default()
         };
@@ -159,6 +197,7 @@ impl ServiceState {
         if new_settings.api_port.is_some() { merged.api_port = new_settings.api_port; }
         if new_settings.http_port.is_some() { merged.http_port = new_settings.http_port; }
         if new_settings.socks_port.is_some() { merged.socks_port = new_settings.socks_port; }
+        if new_settings.mixed_port.is_some() { merged.mixed_port = new_settings.mixed_port; }
         if new_settings.service_port.is_some() { merged.service_port = new_settings.service_port; }
         if new_settings.tun_enabled.is_some() { merged.tun_enabled = new_settings.tun_enabled; }
         if new_settings.log_level.is_some() { merged.log_level = new_settings.log_level.clone(); }
@@ -183,8 +222,14 @@ impl ServiceState {
         let yaml_str = serde_yaml_ng::to_string(&merged)
             .map_err(|e| format!("Failed to serialize settings: {}", e))?;
 
-        std::fs::write(&settings_path, yaml_str)
+        // Write atomically: readers (`get_settings`, including the auth
+        // middleware) must never observe a truncated file, which would parse as
+        // defaults and temporarily disable authentication.
+        let tmp_path = settings_path.with_extension("yaml.tmp");
+        std::fs::write(&tmp_path, yaml_str)
             .map_err(|e| format!("Failed to write settings.yaml: {}", e))?;
+        std::fs::rename(&tmp_path, &settings_path)
+            .map_err(|e| format!("Failed to replace settings.yaml: {}", e))?;
 
         // Reload settings into state
         self.load_settings();
@@ -195,8 +240,9 @@ impl ServiceState {
 
     /// Record a closed connection to history in connection_history.yaml
     pub fn record_closed_connection(&self, closed: crate::settings::ClosedConnection) -> Result<(), String> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let history_path = exe_dir.join("connection_history.yaml");
+        let history_path = crate::settings::resolve_paths()
+            .config_dir
+            .join("connection_history.yaml");
 
         // Load existing history from separate file
         let mut connections: Vec<crate::settings::ClosedConnection> = if history_path.exists() {
@@ -209,7 +255,7 @@ impl ServiceState {
         };
 
         // Get max_count from connection_history config (in settings.yaml)
-        let settings_path = exe_dir.join("settings.yaml");
+        let settings_path = crate::settings::resolve_settings_path();
         let max_count = if settings_path.exists() {
             match std::fs::read_to_string(&settings_path) {
                 Ok(c) => {
@@ -246,8 +292,9 @@ impl ServiceState {
 
     /// Get connection history from connection_history.yaml
     pub fn get_connection_history(&self) -> Vec<crate::settings::ClosedConnection> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let history_path = exe_dir.join("connection_history.yaml");
+        let history_path = crate::settings::resolve_paths()
+            .config_dir
+            .join("connection_history.yaml");
         if !history_path.exists() {
             return vec![];
         }
@@ -259,8 +306,9 @@ impl ServiceState {
 
     /// Clear connection history file
     pub fn clear_connection_history_file(&self) -> Result<(), String> {
-        let exe_dir = control_tower_service_core::exe_dir();
-        let history_path = exe_dir.join("connection_history.yaml");
+        let history_path = crate::settings::resolve_paths()
+            .config_dir
+            .join("connection_history.yaml");
         if history_path.exists() {
             std::fs::remove_file(&history_path)
                 .map_err(|e| format!("Failed to remove connection_history.yaml: {}", e))?;

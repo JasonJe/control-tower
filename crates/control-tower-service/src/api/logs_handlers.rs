@@ -8,18 +8,20 @@ use super::{ApiResponse, LogsQuery};
 pub async fn get_logs(
     query: web::Query<LogsQuery>,
 ) -> HttpResponse {
-    let exe_dir = control_tower_service_core::exe_dir();
-    let log_dir = exe_dir.join("logs");
+    let log_dir = crate::settings::resolve_paths().log_dir;
     let lines = query.lines.unwrap_or(200).min(1000);
 
     let file_path = match query.source.as_deref() {
         Some("mihomo") => log_dir.join("mihomo.log"),
         _ => {
-            let entries = std::fs::read_dir(&log_dir).ok()
+            // Prefer the newest file by mtime. `ctsvc.log` is the currently
+            // active file; `ctsvc.log.YYYY-MM-DD` files are older rotations.
+            // (Picking the max *name* used to select yesterday's rotation.)
+            let newest = std::fs::read_dir(&log_dir).ok()
                 .into_iter().flatten().flatten()
-                .filter(|e| e.file_name().to_string_lossy().starts_with("ctsvc.log."))
-                .max_by_key(|e| e.file_name().to_string_lossy().to_string());
-            match entries {
+                .filter(|e| e.file_name().to_string_lossy().starts_with("ctsvc.log"))
+                .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+            match newest {
                 Some(e) => e.path(),
                 None => log_dir.join("ctsvc.log"),
             }

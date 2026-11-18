@@ -36,6 +36,8 @@ impl ServiceState {
             active_connections: RwLock::new(HashMap::new()),
             // Session tokens for API authentication
             sessions: RwLock::new(HashMap::new()),
+            // Single-use challenge nonces for login
+            auth_nonces: RwLock::new(HashMap::new()),
         }
     }
 

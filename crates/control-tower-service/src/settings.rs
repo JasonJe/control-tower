@@ -16,6 +16,38 @@ pub mod consts {
     pub const MAX_CRON_INTERVAL_MINS: u32 = 10080;
 }
 
+/// Resolve the settings.yaml path using the same priority everywhere:
+///
+/// 1. `settings.yaml` next to the executable (normal install layout)
+/// 2. `~/.config/control-tower/settings.yaml`
+/// 3. Executable directory (used when creating a new file)
+///
+/// Keeping this in one place avoids the service reading a different settings
+/// file from the one the CLI/user edited.
+pub fn resolve_settings_path() -> std::path::PathBuf {
+    let exe_settings = control_tower_service_core::exe_dir().join("settings.yaml");
+    if exe_settings.exists() {
+        return exe_settings;
+    }
+    if let Some(config_dir) = dirs::config_dir() {
+        let user_settings = config_dir.join("control-tower").join("settings.yaml");
+        if user_settings.exists() {
+            return user_settings;
+        }
+    }
+    exe_settings
+}
+
+/// Shared path model derived from [`resolve_settings_path`].
+///
+/// Every subsystem (scheduler, config writes, logs, connection history) must
+/// resolve paths through this instead of `exe_dir()`. Otherwise a settings file
+/// under `~/.config/control-tower/` points at one directory while the scheduler
+/// and TUN/DNS writers use another.
+pub fn resolve_paths() -> control_tower_service_core::ControlTowerPaths {
+    control_tower_service_core::ControlTowerPaths::from_settings(resolve_settings_path(), None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -271,7 +271,7 @@ body,html{height:100%;overflow:visible}body{font-family:'Inter',system-ui,sans-s
 .conn-meta{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2)}
 .conn-badge{margin-top:2px}
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+<script src="/vendor/crypto-js.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -334,6 +334,10 @@ body,html{height:100%;overflow:visible}body{font-family:'Inter',system-ui,sans-s
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
           <span>Settings</span>
         </div>
+      </div>
+      <div class="nav-item" id="logout-nav" onclick="logout()" style="display:none">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+        <span>Sign Out</span>
       </div>
       <div class="nav-spacer"></div>
       <div class="nav-footer">Control Tower v0.2.0</div>
@@ -1308,7 +1312,7 @@ function showToast(msg, type = 'success') {
   setTimeout(() => t.classList.remove('show'), 3500);
 }
 
-document.querySelectorAll('.nav-item').forEach(el => {
+document.querySelectorAll('.nav-item[data-view]').forEach(el => {
   el.addEventListener('click', () => { switchView(el.dataset.view); });
 });
 
@@ -1354,6 +1358,7 @@ function showMainView() {
   isAuthenticated = true;
   document.getElementById('view-login').style.display = 'none';
   document.getElementById('view-setup-password').style.display = 'none';
+  updateAuthNav();
   switchView('dashboard');
 }
 
@@ -1361,12 +1366,38 @@ function showLoginView() {
   isAuthenticated = false;
   document.getElementById('view-setup-password').style.display = 'none';
   document.getElementById('view-login').style.display = 'flex';
+  updateAuthNav();
 }
 
 function showSetupPasswordView() {
   isAuthenticated = false;
   document.getElementById('view-login').style.display = 'none';
   document.getElementById('view-setup-password').style.display = 'flex';
+  updateAuthNav();
+}
+
+// Show the "Sign Out" entry only when a session token is stored.
+function updateAuthNav() {
+  const el = document.getElementById('logout-nav');
+  if (!el) return;
+  const hasToken = !!localStorage.getItem('ct_token') && localStorage.getItem('ct_auth') === '1';
+  el.style.display = hasToken ? 'flex' : 'none';
+}
+
+async function logout() {
+  const token = localStorage.getItem('ct_token');
+  if (token) {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+    } catch (e) { /* server may already be gone */ }
+  }
+  localStorage.removeItem('ct_token');
+  localStorage.removeItem('ct_auth');
+  showLoginView();
+  showToast('Signed out');
 }
 
 async function loginSubmit() {
@@ -1440,10 +1471,13 @@ async function setupPasswordSubmit() {
     return;
   }
   try {
+    // Send the PBKDF2-derived key, not the plaintext password: this request
+    // may travel over plain HTTP.
+    const key = deriveKey(pwd, 'control-tower-auth-key-v1');
     const resp = await fetch('/api/auth/setup-password', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({password: pwd})
+      body: JSON.stringify({key})
     });
     const json = await resp.json();
     if (json.code === 0) {
@@ -1524,7 +1558,19 @@ function escapeHtml(s) {
 
 // Escape for JavaScript single-quote string context (e.g. onclick="func('${...}')")
 function escapeForJs(s) {
-  return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  // Two layers are required: JS-string escaping (for the inline handler body)
+  // and HTML-attribute escaping (because the handler lives in a double-quoted
+  // attribute). Without the second layer a name containing `"` can break out
+  // of the attribute and inject a new event handler.
+  return String(s)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function truncate(s, len) { return (s && s.length > len) ? s.slice(0, len) + '...' : (s || '-'); }
@@ -2202,7 +2248,10 @@ function openCronModal(uid) {
     cron: profile && profile.cron ? profile.cron : '',
     userAgent: opts.user_agent || '',
     withProxy: !!opts.with_proxy,
-    timeout: opts.timeout_seconds || '',
+    timeout: opts.timeout_seconds != null ? String(opts.timeout_seconds) : '',
+    // Keep the full options object so headers / danger_accept_invalid_certs
+    // (which this modal does not edit) survive a save.
+    options: opts,
   };
   document.getElementById('editProfileName').value = cronEditOriginal.name;
   document.getElementById('editProfileUrl').value = cronEditOriginal.url;
@@ -2232,14 +2281,17 @@ document.getElementById('cronModalSaveBtn').addEventListener('click', async () =
     if (cronVal !== cronEditOriginal.cron) body.cron = cronVal || null;
     const optionsChanged = userAgent !== cronEditOriginal.userAgent || withProxy !== cronEditOriginal.withProxy || timeout !== cronEditOriginal.timeout;
     if (optionsChanged) {
-      body.options = {};
-      if (userAgent) body.options.user_agent = userAgent;
-      if (withProxy) body.options.with_proxy = true;
-      if (timeout) body.options.timeout_seconds = parseInt(timeout, 10);
+      // Start from the existing options instead of `{}`, otherwise editing the
+      // user agent silently deletes custom headers and TLS settings.
+      const options = Object.assign({}, cronEditOriginal.options || {});
+      if (userAgent) options.user_agent = userAgent; else delete options.user_agent;
+      if (withProxy) options.with_proxy = true; else delete options.with_proxy;
+      if (timeout) options.timeout_seconds = parseInt(timeout, 10); else delete options.timeout_seconds;
+      // Send `{}` (not null) when every field was cleared: null would drop
+      // stored headers too, while an empty object means "keep headers".
+      body.options = options;
     }
-    const res = await fetch('/api/profiles/' + uid, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-    const json = await res.json();
-    if (json.code !== 0) throw new Error(json.message);
+    await api('PATCH', '/api/profiles/' + uid, body);
     showToast('Profile updated');
     loadProfiles();
   } catch (e) { showToast('Failed: ' + e.message, 'error'); }
@@ -2343,8 +2395,8 @@ function renderProviders() {
       <td><span class="badge neutral">${escapeHtml(p.type)}</span></td>
       <td><span class="badge info">${escapeHtml(p.behavior)}</span></td>
       <td><span class="truncate" style="max-width:280px;display:block" title="${escapeHtml(url)}">${escapeHtml(url)}</span></td>
-      <td><span class="mono text-muted" style="cursor:pointer;color:var(--accent)" onclick="openIntervalModal('${escapeHtml(p.name)}', ${intSec})" title="Click to edit">${int}</span></td>
-      <td><button class="btn ghost xs" onclick="deleteProvider('${escapeHtml(p.name)}')" title="Delete provider"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/><path d="M10,11v6M14,11v6"/></svg></button></td>
+      <td><span class="mono text-muted" style="cursor:pointer;color:var(--accent)" onclick="openIntervalModal('${escapeForJs(p.name)}', ${intSec})" title="Click to edit">${int}</span></td>
+      <td><button class="btn ghost xs" onclick="deleteProvider('${escapeForJs(p.name)}')" title="Delete provider"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2,0,0,1-2,2H8a2,2,0,0,1-2-2L5,6"/><path d="M10,11v6M14,11v6"/></svg></button></td>
     </tr>`;
   }).join('');
 }
@@ -3323,11 +3375,10 @@ async function saveAutoTestSettings() {
 function loadLogs() {
   const source = document.getElementById('log-source').value;
   const container = document.getElementById('logs-content');
-  fetch(`/api/logs?source=${source}&lines=300`)
-    .then(r => r.json())
-    .then(resp => {
-      if (resp && resp.data && resp.data.items) {
-        container.innerHTML = resp.data.items.map(line => {
+  api('GET', `/api/logs?source=${source}&lines=300`)
+    .then(data => {
+      if (data && data.items) {
+        container.innerHTML = data.items.map(line => {
           const escaped = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
           return `<div style="white-space:pre-wrap">${escaped}</div>`;
         }).join('');
@@ -3345,11 +3396,10 @@ function onLogRefreshChange() {
 function loadLogsNav() {
   const source = document.getElementById('log-source-nav').value;
   const container = document.getElementById('logs-content-nav');
-  fetch(`/api/logs?source=${source}&lines=100`)
-    .then(r => r.json())
-    .then(resp => {
-      if (resp && resp.data && resp.data.items) {
-        container.innerHTML = resp.data.items.map(line => {
+  api('GET', `/api/logs?source=${source}&lines=100`)
+    .then(data => {
+      if (data && data.items) {
+        container.innerHTML = data.items.map(line => {
           const escaped = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
           return `<div style="white-space:pre-wrap">${escaped}</div>`;
         }).join('');

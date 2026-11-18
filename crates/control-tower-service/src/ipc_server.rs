@@ -66,14 +66,38 @@ impl IpcServer {
         // but for testing we use blocking
         match listener.accept() {
             Ok((mut stream, _)) => {
+                // The accepted stream is blocking, so a client that connects and
+                // never sends a newline would freeze this loop (cron jobs, auto
+                // latency tests). Bound both read and write, and cap the request
+                // size so a single client cannot exhaust memory.
+                const IPC_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+                const IPC_WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+                const MAX_IPC_MESSAGE: usize = 1024 * 1024;
+                if let Err(e) = stream.set_read_timeout(Some(IPC_READ_TIMEOUT)) {
+                    tracing::warn!("Failed to set IPC read timeout: {}", e);
+                }
+                if let Err(e) = stream.set_write_timeout(Some(IPC_WRITE_TIMEOUT)) {
+                    tracing::warn!("Failed to set IPC write timeout: {}", e);
+                }
+
                 // Read request
                 let mut buffer = Vec::new();
                 let mut temp = [0u8; 1024];
                 loop {
                     match stream.read(&mut temp) {
                         Ok(0) => break, // EOF
-                        Ok(n) => buffer.extend_from_slice(&temp[..n]),
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+                        Ok(n) => {
+                            buffer.extend_from_slice(&temp[..n]);
+                            if buffer.len() > MAX_IPC_MESSAGE {
+                                return Err("IPC request too large".to_string());
+                            }
+                        }
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut =>
+                        {
+                            return Err("Timed out reading IPC request".to_string());
+                        }
                         Err(e) => return Err(format!("Read error: {}", e)),
                     }
                     // Check if we got the complete message (newline delimited)

@@ -5,6 +5,7 @@
 
 mod scheduler;
 mod api;
+mod auth_middleware;
 mod cli;
 mod html;
 mod http_server;
@@ -69,6 +70,8 @@ pub struct ServiceState {
     active_connections: RwLock<std::collections::HashMap<String, crate::service::logging::ConnectionMetadata>>,
     /// Session tokens for API authentication
     sessions: RwLock<std::collections::HashMap<String, Session>>,
+    /// Single-use challenge nonces for login (nonce -> issued_at unix seconds)
+    auth_nonces: RwLock<std::collections::HashMap<String, u64>>,
 }
 
 impl Default for ServiceState {
@@ -236,6 +239,17 @@ pub fn handle_command_with_state(state: &ServiceState, cmd: IpcCommand) -> IpcRe
                     }
                 }
                 Err(e) => IpcResponse::error(format!("Failed to create HTTP client: {}", e)),
+            }
+        }
+        IpcCommand::ApplyTun { tun_enabled } => {
+            tracing::info!("ApplyTun command: {}", tun_enabled);
+            state.append_log(format!("Applying TUN settings: enabled={}", tun_enabled));
+            match state.apply_tun_settings(tun_enabled) {
+                Ok(()) => IpcResponse::success(),
+                Err(e) => {
+                    state.append_log(format!("Failed to apply TUN settings: {}", e));
+                    IpcResponse::error(e)
+                }
             }
         }
     }
@@ -996,6 +1010,13 @@ fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Re
     // Main loop - keep accepting connections until shutdown
     // Note: In production, this should use proper async I/O with tokio
     while !cli::SHUTDOWN.load(Ordering::SeqCst) {
+        // Serve at most one pending IPC request. `handle_one` uses a
+        // non-blocking accept, so this returns immediately when no client is
+        // waiting. Errors are per-connection and must not stop the service.
+        if let Err(e) = server.handle_one() {
+            tracing::warn!("IPC request failed: {}", e);
+        }
+
         // Check if it's time to check cron jobs
         if last_cron_check.elapsed() >= CRON_CHECK_INTERVAL {
             state.check_and_run_crons();
@@ -1083,14 +1104,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = cli::Args::parse();
 
-    // Determine working directory from executable location
-    let work_dir = control_tower_service_core::exe_dir();
-
-    // Build shared paths model
+    // Build shared paths model. Resolve settings first: a settings.yaml under
+    // ~/.config/control-tower must keep config/profiles/logs together.
     let paths = control_tower_service_core::ControlTowerPaths::from_settings(
-        work_dir.join("settings.yaml"),
+        crate::settings::resolve_settings_path(),
         None,
     );
+
+    // Refuse to start with an unparsable settings.yaml. The runtime fallback is
+    // the last known good copy, and on a cold start there is none — silently
+    // using defaults would disable authentication (fail open).
+    let resolved_settings = crate::settings::resolve_settings_path();
+    if resolved_settings.exists() {
+        let content = std::fs::read_to_string(&resolved_settings)
+            .map_err(|e| format!("failed to read {}: {}", resolved_settings.display(), e))?;
+        serde_yaml_ng::from_str::<crate::SettingsData>(&content)
+            .map_err(|e| format!("failed to parse {}: {}", resolved_settings.display(), e))?;
+    }
 
     // Create logs directory
     let log_dir = paths.log_dir.clone();
@@ -1194,8 +1224,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.load_settings();
 
     // Auto-start Mihomo if config.yaml exists and no --no-auto-start flag
-    let exe_dir = control_tower_service_core::exe_dir();
-    let config_path = exe_dir.join("config.yaml");
+    let config_path = paths.active_config_path.clone();
     if config_path.exists() {
         tracing::info!("Auto-starting Mihomo with config: {}", config_path.display());
         match state.start(&config_path) {

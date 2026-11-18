@@ -202,10 +202,15 @@ impl MihomoManager {
             anyhow::bail!("Config file not found: {:?}", config_path);
         }
 
-        // Create logs directory and mihomo log file
+        // Create logs directory and mihomo log file. Keep it next to the active
+        // config, which is not necessarily the executable directory (e.g. when
+        // settings.yaml lives under ~/.config/control-tower).
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
-                let log_dir = exe_dir.join("logs");
+                let log_dir = config_path
+                    .parent()
+                    .map(|p| p.join("logs"))
+                    .unwrap_or_else(|| exe_dir.join("logs"));
                 let _ = std::fs::create_dir_all(&log_dir);
                 let log_file = log_dir.join("mihomo.log");
 
@@ -426,6 +431,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_start_twice_is_idempotent() {
         use std::os::unix::fs::PermissionsExt;

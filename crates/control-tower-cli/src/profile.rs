@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+use control_tower_service_core::ProfileDownloadOptions;
+
 use crate::config::{get_config_dir, load_profiles, save_profiles};
 use crate::service::reload_cron;
 use crate::ProfileAction;
@@ -23,25 +25,38 @@ pub struct Profile {
     /// Cron schedule for automatic updates (e.g., "0 6 * * *" for daily 6am)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cron: Option<String>,
+    /// Download options such as custom headers. Preserved across CLI writes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<ProfileDownloadOptions>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub profile_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merge: Vec<String>,
 }
 
 pub async fn handle(action: ProfileAction) -> Result<()> {
     match action {
-        ProfileAction::Add { url, name } => add_profile(&url, name.as_deref()).await?,
+        ProfileAction::Add { url, name, headers } => {
+            add_profile(&url, name.as_deref(), &headers).await?
+        }
         ProfileAction::List => list_profiles().await?,
         ProfileAction::Remove { id } => remove_profile(&id).await?,
-        ProfileAction::Update { id } => update_profile(id.as_deref()).await?,
+        ProfileAction::Update { id, headers } => update_profile(id.as_deref(), &headers).await?,
         ProfileAction::Activate { id } => activate_profile(&id).await?,
         ProfileAction::Cron { id, schedule } => set_cron(&id, schedule.as_deref()).await?,
     }
     Ok(())
 }
 
-async fn add_profile(url: &str, name: Option<&str>) -> Result<()> {
+async fn add_profile(url: &str, name: Option<&str>, headers: &[String]) -> Result<()> {
     tracing::info!("Adding profile from URL: {}", url);
 
+    let options = build_download_options(headers)?;
+
     // Download subscription
-    let content = download_subscription(url).await?;
+    let content = download_subscription(url, options.as_ref()).await?;
 
     // Generate ID
     let id = format!("profile-{}", Uuid::new_v4());
@@ -64,6 +79,10 @@ async fn add_profile(url: &str, name: Option<&str>) -> Result<()> {
         active: false,
         updated_at: Some(chrono::Utc::now().timestamp()),
         cron: None,
+        options,
+        profile_type: Some("remote".to_string()),
+        script: None,
+        merge: Vec::new(),
     };
 
     // Load existing profiles
@@ -156,7 +175,7 @@ async fn remove_profile(id: &str) -> Result<()> {
     Ok(())
 }
 
-async fn update_profile(id: Option<&str>) -> Result<()> {
+async fn update_profile(id: Option<&str>, headers: &[String]) -> Result<()> {
     let mut profiles = load_profiles()?;
 
     let target_id = if let Some(id) = id {
@@ -174,17 +193,36 @@ async fn update_profile(id: Option<&str>) -> Result<()> {
     let profile_idx = profiles.iter().position(|p| p.id == target_id)
         .ok_or_else(|| anyhow::anyhow!("Profile not found: {}", target_id))?;
 
-    let url = profiles[profile_idx].url.as_ref()
+    let url = profiles[profile_idx]
+        .url
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("Profile has no URL"))?;
 
     tracing::info!("Updating profile {} from URL: {}", target_id, url);
 
+    // Reuse stored download options (headers, timeout, ...). An explicit
+    // --header on the command line replaces the stored header set.
+    let mut options = profiles[profile_idx]
+        .options
+        .clone()
+        .unwrap_or_default();
+    if !headers.is_empty() {
+        options.headers = Some(parse_headers(headers)?);
+    }
+
     // Download new content
-    let content = download_subscription(url).await?;
+    let content = download_subscription(&url, Some(&options)).await?;
 
     // Update file
     if let Some(ref file) = profiles[profile_idx].file {
         std::fs::write(file, &content)?;
+    }
+
+    // Persist options so later updates (and cron jobs) keep using the headers.
+    // Only write the field when it was already present or the user supplied
+    // headers, otherwise every update would add a noisy `options: {}` block.
+    if profiles[profile_idx].options.is_some() || !headers.is_empty() {
+        profiles[profile_idx].options = Some(options);
     }
 
     // Update timestamp
@@ -304,14 +342,80 @@ fn cron_to_human(cron: &str) -> String {
     cron.to_string()
 }
 
-async fn download_subscription(url: &str) -> Result<String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+/// Parse `KEY: VALUE` command-line headers into a header map.
+fn parse_headers(headers: &[String]) -> Result<std::collections::BTreeMap<String, String>> {
+    let mut map = std::collections::BTreeMap::new();
+    for raw in headers {
+        let (name, value) = raw
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("Invalid header '{}': expected 'KEY: VALUE'", raw))?;
+        let name = name.trim();
+        let value = value.trim();
+        if name.is_empty() {
+            anyhow::bail!("Invalid header '{}': header name is empty", raw);
+        }
+        if name.contains(['\r', '\n']) || value.contains(['\r', '\n']) {
+            anyhow::bail!("Invalid header '{}': line breaks are not allowed", raw);
+        }
+        map.insert(name.to_string(), value.to_string());
+    }
+    Ok(map)
+}
+
+/// Build download options from CLI headers (None when no headers were given).
+fn build_download_options(headers: &[String]) -> Result<Option<ProfileDownloadOptions>> {
+    if headers.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(ProfileDownloadOptions {
+        headers: Some(parse_headers(headers)?),
+        ..Default::default()
+    }))
+}
+
+async fn download_subscription(
+    url: &str,
+    options: Option<&ProfileDownloadOptions>,
+) -> Result<String> {
+    let timeout = options.map(|o| o.timeout_or(30)).unwrap_or(30);
+    let with_proxy = options.and_then(|o| o.with_proxy).unwrap_or(false);
+    let danger_accept_invalid_certs = options
+        .and_then(|o| o.danger_accept_invalid_certs)
+        .unwrap_or(false);
+
+    let mut builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout))
+        .danger_accept_invalid_certs(danger_accept_invalid_certs);
+    if with_proxy {
+        let proxy_url = format!("http://127.0.0.1:{}", crate::settings::get_http_port());
+        builder = builder.proxy(
+            reqwest::Proxy::http(&proxy_url)
+                .map_err(|e| anyhow::anyhow!("Failed to create proxy: {}", e))?,
+        );
+    }
+    let client = builder
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
-    let response = client
-        .get(url)
-        .header("User-Agent", "clash-verge/v2.4.7")
+
+    let mut request = client.get(url);
+    let has_custom_user_agent = options
+        .map(|o| o.has_header("user-agent"))
+        .unwrap_or(false);
+    if !has_custom_user_agent {
+        request = request.header(
+            "User-Agent",
+            options
+                .map(|o| o.user_agent_or("clash-verge/v2.4.7"))
+                .unwrap_or("clash-verge/v2.4.7"),
+        );
+    }
+    if let Some(options) = options {
+        for (name, value) in options.header_pairs() {
+            request = request.header(name, value);
+        }
+    }
+
+    let response = request
         .send()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to download: {}", e))?;
@@ -325,6 +429,37 @@ async fn download_subscription(url: &str) -> Result<String> {
         .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
 
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_custom_headers() {
+        let headers = vec![
+            "X-Token: abc".to_string(),
+            "Authorization:Bearer x:y".to_string(),
+        ];
+        let map = parse_headers(&headers).unwrap();
+        assert_eq!(map.get("X-Token").map(String::as_str), Some("abc"));
+        assert_eq!(
+            map.get("Authorization").map(String::as_str),
+            Some("Bearer x:y")
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_header() {
+        assert!(parse_headers(&["NoColon".to_string()]).is_err());
+        assert!(parse_headers(&[": value".to_string()]).is_err());
+        assert!(parse_headers(&["X-Test: a\r\nInjected: b".to_string()]).is_err());
+    }
+
+    #[test]
+    fn empty_header_list_produces_no_options() {
+        assert!(build_download_options(&[]).unwrap().is_none());
+    }
 }
 
 /// Truncate string to max_width characters, showing start and end with "..." in middle if truncated

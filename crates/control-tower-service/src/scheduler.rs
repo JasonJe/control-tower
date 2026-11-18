@@ -212,8 +212,7 @@ impl ServiceState {
     /// Load cron jobs from profiles.yaml
     pub fn load_cron_jobs(&self) {
         let mut jobs = self.cron_jobs.write();
-        let exe_dir = control_tower_service_core::exe_dir();
-        let profiles_path = exe_dir.join("profiles.yaml");
+        let profiles_path = crate::settings::resolve_paths().profiles_path;
 
         if !profiles_path.exists() {
             tracing::info!("No profiles.yaml found, no cron jobs to load");
@@ -273,8 +272,7 @@ impl ServiceState {
         // Collect due jobs first to avoid holding the write lock during HTTP requests.
         let due_jobs: Vec<(usize, String, Option<String>, String, Option<control_tower_service_core::ProfileDownloadOptions>)> = {
             let mut jobs = self.cron_jobs.write();
-            let exe_dir = control_tower_service_core::exe_dir();
-            let profiles_dir = exe_dir.join("profiles");
+            let profiles_dir = crate::settings::resolve_paths().config_dir.join("profiles");
 
             let due: Vec<_> = jobs.iter_mut().enumerate().filter(|(_, j)| j.is_due()).collect();
 
@@ -350,9 +348,9 @@ impl ServiceState {
 /// Check and update ALL profiles with subscription URLs (used for startup auto-update).
 /// Returns a list of (profile_uid, success) for each profile that was updated.
 pub fn check_and_update_all_profiles() -> Vec<(String, bool)> {
-    let exe_dir = control_tower_service_core::exe_dir();
-    let profiles_path = exe_dir.join("profiles.yaml");
-    let profiles_dir = exe_dir.join("profiles");
+    let paths = crate::settings::resolve_paths();
+    let profiles_path = paths.profiles_path;
+    let profiles_dir = paths.config_dir.join("profiles");
 
     if !profiles_path.exists() {
         tracing::info!("No profiles.yaml found, skipping startup profile check");
@@ -437,8 +435,7 @@ pub fn check_and_update_all_profiles() -> Vec<(String, bool)> {
 
 /// Update the updated_at timestamp for a profile in profiles.yaml.
 fn update_profile_updated_at(profile_id: &str) {
-    let exe_dir = control_tower_service_core::exe_dir();
-    let profiles_path = exe_dir.join("profiles.yaml");
+    let profiles_path = crate::settings::resolve_paths().profiles_path;
 
     if !profiles_path.exists() {
         tracing::warn!("profiles.yaml not found, cannot update updated_at");
@@ -529,38 +526,47 @@ pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::P
     use reqwest::blocking::Client as BlockingClient;
     use std::time::Duration as StdDuration;
 
-    let timeout_secs = options
-        .and_then(|o| o.timeout_seconds)
-        .unwrap_or(60);
+    let timeout_secs = options.map(|o| o.timeout_or(60)).unwrap_or(60);
     let user_agent = options
-        .and_then(|o| o.user_agent.clone())
-        .unwrap_or_else(|| "clash-verge/v2.4.7".to_string());
+        .map(|o| o.user_agent_or("clash-verge/v2.4.7"))
+        .unwrap_or("clash-verge/v2.4.7");
     let with_proxy = options
         .and_then(|o| o.with_proxy)
+        .unwrap_or(false);
+    let danger_accept_invalid_certs = options
+        .and_then(|o| o.danger_accept_invalid_certs)
         .unwrap_or(false);
 
     // Get Mihomo HTTP port for proxy routing (same logic as api::helpers::get_mihomo_http_port)
     let mihomo_port = get_mihomo_http_port();
 
-    let client = if with_proxy {
+    let mut builder = BlockingClient::builder()
+        .timeout(StdDuration::from_secs(timeout_secs))
+        .danger_accept_invalid_certs(danger_accept_invalid_certs);
+    if with_proxy {
         let proxy_url = format!("http://127.0.0.1:{}", mihomo_port);
         let proxy = reqwest::Proxy::http(&proxy_url)
             .map_err(|e| format!("Failed to create proxy: {}", e))?;
-        BlockingClient::builder()
-            .proxy(proxy)
-            .timeout(StdDuration::from_secs(timeout_secs))
-            .build()
-            .map_err(|e| format!("Failed to create HTTP client with proxy: {}", e))?
-    } else {
-        BlockingClient::builder()
-            .timeout(StdDuration::from_secs(timeout_secs))
-            .build()
-            .map_err(|e| format!("Failed to create HTTP client: {}", e))?
-    };
+        builder = builder.proxy(proxy);
+    }
+    let client = builder
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let response = client
-        .get(url)
-        .header("User-Agent", user_agent)
+    let mut request = client.get(url);
+    let has_custom_user_agent = options
+        .map(|o| o.has_header("user-agent"))
+        .unwrap_or(false);
+    if !has_custom_user_agent {
+        request = request.header("User-Agent", user_agent);
+    }
+    if let Some(options) = options {
+        for (name, value) in options.header_pairs() {
+            request = request.header(name, value);
+        }
+    }
+
+    let response = request
         .send()
         .map_err(|e| format!("Failed to fetch subscription: {}", e))?;
 

@@ -39,6 +39,25 @@ pub enum IpcCommand {
     SetMode { mode: String },
     SelectProxy { name: String },
     TestProxy { name: String, timeout_ms: Option<u64> },
+    ApplyTun { tun_enabled: bool },
+}
+
+/// Enable or disable TUN mode through the service IPC socket.
+///
+/// This is used instead of the HTTP `/api/settings/apply-tun` endpoint so the
+/// CLI keeps working when API authentication is enabled (the CLI has no
+/// session token).
+pub fn apply_tun(tun_enabled: bool) -> Result<()> {
+    let resp = ipc_connect_and_send(&IpcCommand::ApplyTun { tun_enabled })
+        .map_err(|e| anyhow::anyhow!(e))?;
+    if !resp.is_success() {
+        anyhow::bail!(if resp.message.is_empty() {
+            "Failed to apply TUN settings".to_string()
+        } else {
+            resp.message
+        });
+    }
+    Ok(())
 }
 
 /// IPC response types

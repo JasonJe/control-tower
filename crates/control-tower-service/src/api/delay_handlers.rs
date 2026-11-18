@@ -17,12 +17,15 @@ pub async fn proxy_delay(
     query: web::Query<ProxyDelayRequest>,
 ) -> HttpResponse {
     let name = path.into_inner();
+    // Proxy names commonly contain spaces, CJK characters, `?` or `#`;
+    // without encoding they corrupt the request path/query.
+    let encoded_name = utf8_percent_encode(&name, NON_ALPHANUMERIC);
 
     // Call Mihomo's delay API
     let api_url = state.get_api_url();
     let url = format!(
         "{}/proxies/{}/delay?timeout={}",
-        api_url, name, query.timeout
+        api_url, encoded_name, query.timeout
     );
 
     let client = match reqwest::Client::builder()

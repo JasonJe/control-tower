@@ -116,10 +116,14 @@ class E2ETest:
             return
 
         if not data.get("password_set"):
-            # Need to set up password
+            # Need to set up password. The API expects the PBKDF2-derived key,
+            # not the plaintext password.
+            setup_key = hashlib.pbkdf2_hmac(
+                "sha256", b"test123", b"control-tower-auth-key-v1", 100000
+            ).hex()
             req = urllib.request.Request(
                 f"{API_BASE}/auth/setup-password",
-                data=json.dumps({"password": "test123"}).encode(),
+                data=json.dumps({"key": setup_key}).encode(),
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )

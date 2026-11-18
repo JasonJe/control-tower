@@ -96,7 +96,7 @@ impl ActiveConfigStore {
             if let Some(p) = port_overrides.http_port {
                 map.insert("http-port".into(), serde_yaml_ng::Value::Number(p.into()));
             }
-            if let Some((host, port)) = port_overrides.external_controller {
+            if let Some((host, port)) = port_overrides.external_controller.as_ref() {
                 map.insert(
                     "external-controller".into(),
                     serde_yaml_ng::Value::String(format!("{}:{}", host, port)),
@@ -104,11 +104,31 @@ impl ActiveConfigStore {
             }
         }
 
-        // Overlay user overrides onto the new config (except rules and ports — handled above)
+        // Overlay user overrides onto the new config (except rules — handled below).
+        //
+        // For ports the precedence is: settings.yaml override > value defined by
+        // the new profile > value from the previous config. Without the last
+        // fallback, switching to a profile that does not declare a port silently
+        // drops the port the user was running on.
         if let Some(map) = yaml.as_mapping_mut() {
             for (key, val) in user_overrides {
-                if key == "rules" || key == "mixed-port" || key == "socks-port" || key == "http-port" || key == "external-controller" {
+                if key == "rules" {
                     continue;
+                }
+                let is_port_key = matches!(
+                    key.as_str(),
+                    Some("mixed-port" | "socks-port" | "http-port" | "external-controller")
+                );
+                if is_port_key {
+                    let overridden = match key.as_str() {
+                        Some("mixed-port") => port_overrides.mixed_port.is_some(),
+                        Some("socks-port") => port_overrides.socks_port.is_some(),
+                        Some("http-port") => port_overrides.http_port.is_some(),
+                        _ => port_overrides.external_controller.is_some(),
+                    };
+                    if overridden || map.contains_key(&key) {
+                        continue;
+                    }
                 }
                 map.insert(key, val);
             }
@@ -376,9 +396,12 @@ impl ActiveConfigStore {
         let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)
             .unwrap_or(serde_yaml_ng::Value::Mapping(serde_yaml_ng::Mapping::new()));
 
-        // Build a map keyed by provider name (Mihomo format)
+        // Build a map keyed by provider name (Mihomo format).
+        // Disabled providers must not be written to config.yaml at all: Mihomo
+        // has no `enabled` switch, it would load and use them regardless.
         let rp_map: serde_yaml_ng::Mapping = providers
             .iter()
+            .filter(|p| p.enabled)
             .map(|p| {
                 let key = serde_yaml_ng::Value::String(p.name.clone());
                 let value = serde_yaml_ng::to_value(p)
@@ -448,7 +471,9 @@ mod tests {
         std::fs::write(&paths.active_config_path, "mode: global\nmixed-port: 7890\nold: content\n").unwrap();
 
         let store = ActiveConfigStore::new(paths.clone());
-        store.replace_from_profile(&profile_path, &[]).unwrap();
+        store
+            .replace_from_profile(&profile_path, &[], Default::default())
+            .unwrap();
 
         let content = std::fs::read_to_string(&paths.active_config_path).unwrap();
         // User overrides (mode, mixed-port) should be preserved

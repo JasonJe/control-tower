@@ -8,30 +8,9 @@ use crate::ServiceState;
 
 use crate::settings::consts::DEFAULT_MIHOMO_HTTP_PORT;
 
-/// Find settings.yaml path (same logic as CLI's settings.rs)
+/// Find settings.yaml path (same logic as the rest of the service)
 pub fn find_settings_path() -> Option<PathBuf> {
-    // First check executable directory
-    if let Ok(exe_dir) = std::env::current_exe() {
-        let exe_dir = exe_dir.parent()?.to_path_buf();
-        let path = exe_dir.join("settings.yaml");
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    // Then check ~/.config/control-tower/
-    if let Some(config_dir) = dirs::config_dir() {
-        let path = config_dir.join("control-tower").join("settings.yaml");
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    // Fallback to executable directory for new file creation
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .map(|p| p.join("settings.yaml"))
+    Some(crate::settings::resolve_settings_path())
 }
 
 /// Get Mihomo HTTP proxy port from settings.yaml, defaulting to DEFAULT_MIHOMO_HTTP_PORT
@@ -97,6 +76,14 @@ pub fn parse_profiles_yaml_full(content: &str) -> serde_json::Value {
                 .items
                 .into_iter()
                 .map(|item| {
+                    // Never expose custom header values (subscription tokens,
+                    // Authorization, ...) through the API. The Web UI does not
+                    // need them, and PATCH preserves stored headers when the
+                    // `headers` field is omitted.
+                    let mut options = item.options;
+                    if let Some(opts) = options.as_mut() {
+                        opts.headers = None;
+                    }
                     serde_json::json!({
                         "uid": item.uid,
                         "name": item.name,
@@ -107,7 +94,7 @@ pub fn parse_profiles_yaml_full(content: &str) -> serde_json::Value {
                         "type": item.type_,
                         "script": item.script,
                         "merge": item.merge,
-                        "options": item.options,
+                        "options": options,
                     })
                 })
                 .collect();
@@ -123,24 +110,52 @@ pub fn parse_profiles_yaml_full(content: &str) -> serde_json::Value {
     }
 }
 
+/// Whether API requests must carry a valid session token.
+///
+/// Auth is only enforced when it is explicitly enabled **and** a password has
+/// been configured. A missing `auth` section (the default settings layout),
+/// `auth.enabled: false`, or an enabled-but-not-yet-initialized auth config
+/// must not lock the API behind a 401 — otherwise the Web UI cannot even reach
+/// the setup-password endpoint and `ctctl`/API clients get stuck.
+pub fn auth_required(settings: &crate::SettingsData) -> bool {
+    match settings.auth.as_ref() {
+        Some(auth) => {
+            auth.enabled
+                && auth
+                    .password
+                    .as_deref()
+                    .map(|p| !p.trim().is_empty())
+                    .unwrap_or(false)
+        }
+        None => false,
+    }
+}
+
+/// Check if an `Authorization` header value grants access.
+///
+/// Split out from [`check_auth`] so the global middleware (which only has a
+/// `ServiceRequest`) can reuse the exact same rules.
+pub fn check_auth_header(state: &Arc<crate::ServiceState>, auth_header: Option<&str>) -> bool {
+    // Auth disabled or not configured yet: allow all.
+    let settings = state.get_settings();
+    if !auth_required(&settings) {
+        return true;
+    }
+
+    auth_header
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(|token| state.verify_session(token))
+        .unwrap_or(false)
+}
+
 /// Check if request has valid auth token
 /// Returns true if authenticated (or auth is disabled), false otherwise
 pub fn check_auth(req: &HttpRequest, state: &Arc<crate::ServiceState>) -> bool {
-    // First check if auth is enabled
-    let settings = state.get_settings();
-    let auth_enabled = settings.auth.as_ref().map(|a| a.enabled).unwrap_or(true);
-    if !auth_enabled {
-        return true; // Auth disabled, allow all
-    }
-
-    if let Some(auth_header) = req.headers().get("Authorization") {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                return state.verify_session(token);
-            }
-        }
-    }
-    false
+    let auth_header = req
+        .headers()
+        .get("Authorization")
+        .and_then(|value| value.to_str().ok());
+    check_auth_header(state, auth_header)
 }
 
 /// Require auth helper - returns Some(()) if authenticated, None otherwise
@@ -149,5 +164,53 @@ pub fn require_auth(req: &HttpRequest, state: &Arc<ServiceState>) -> Option<()> 
         Some(())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::{AuthConfig, SettingsData};
+
+    #[test]
+    fn auth_is_not_required_when_section_is_missing() {
+        let settings = SettingsData::default();
+        assert!(!auth_required(&settings));
+    }
+
+    #[test]
+    fn auth_is_not_required_when_disabled() {
+        let settings = SettingsData {
+            auth: Some(AuthConfig {
+                enabled: false,
+                password: Some("hash".to_string()),
+            }),
+            ..SettingsData::default()
+        };
+        assert!(!auth_required(&settings));
+    }
+
+    #[test]
+    fn auth_is_not_required_before_password_is_set() {
+        let settings = SettingsData {
+            auth: Some(AuthConfig {
+                enabled: true,
+                password: None,
+            }),
+            ..SettingsData::default()
+        };
+        assert!(!auth_required(&settings));
+    }
+
+    #[test]
+    fn auth_is_required_when_enabled_and_password_set() {
+        let settings = SettingsData {
+            auth: Some(AuthConfig {
+                enabled: true,
+                password: Some("hash".to_string()),
+            }),
+            ..SettingsData::default()
+        };
+        assert!(auth_required(&settings));
     }
 }

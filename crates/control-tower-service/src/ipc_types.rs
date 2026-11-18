@@ -59,6 +59,8 @@ pub enum IpcCommand {
     SelectProxy { name: String },
     /// Test a proxy's latency using Mihomo's delay API (no GLOBAL switching)
     TestProxy { name: String, timeout_ms: Option<u64> },
+    /// Enable or disable TUN mode (requires stateful handler)
+    ApplyTun { tun_enabled: bool },
 }
 
 /// IPC response types
@@ -192,6 +194,10 @@ pub fn handle_command(cmd: IpcCommand) -> IpcResponse {
         IpcCommand::TestProxy { .. } => {
             tracing::info!("TestProxy command");
             IpcResponse::error("TestProxy requires stateful handler")
+        }
+        IpcCommand::ApplyTun { .. } => {
+            tracing::info!("ApplyTun command");
+            IpcResponse::error("ApplyTun requires stateful handler")
         }
     }
 }

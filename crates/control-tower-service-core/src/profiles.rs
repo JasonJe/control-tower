@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
 
 /// Options for profile subscription download.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +153,84 @@ fn default_interval() -> u32 { 86400 }
 fn default_true() -> bool { true }
 fn is_true(value: &bool) -> bool { *value }
 
+/// Serialize profiles.yaml read-modify-write cycles inside this process.
+///
+/// Handlers create their own `ProfilesYaml` copies, so without a shared lock a
+/// later writer would silently drop an earlier writer's change (for example a
+/// cron update racing a rename in the Web UI).
+fn profiles_lock() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Take an exclusive advisory lock shared with other processes (the CLI).
+///
+/// The lock lives on a sibling `.lock` file: `profiles.yaml` itself is replaced
+/// by an atomic rename, so a process waiting on the old inode would never see
+/// the new one.
+#[cfg(unix)]
+fn lock_across_processes(path: &Path) -> std::io::Result<Option<std::fs::File>> {
+    use std::os::unix::io::AsRawFd;
+
+    let lock_path = path.with_extension("lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)?;
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(Some(file))
+}
+
+#[cfg(not(unix))]
+fn lock_across_processes(_path: &Path) -> std::io::Result<Option<std::fs::File>> {
+    Ok(None)
+}
+
+/// Apply `f` to the current profiles.yaml and write the result atomically.
+///
+/// The file is read *inside* the lock, so concurrent callers apply their change
+/// to the latest content instead of overwriting each other. Dropping the
+/// returned handle releases both the in-process mutex and the file lock.
+pub fn update_profiles<T>(
+    path: &Path,
+    f: impl FnOnce(&mut ProfilesYaml) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let _guard = profiles_lock();
+
+    // The advisory lock lives next to profiles.yaml, so the directory must
+    // exist before it can be opened.
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Dropping `_file_guard` releases the advisory lock.
+    let _file_guard = lock_across_processes(path)?;
+
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.into()),
+    };
+
+    let mut yaml: ProfilesYaml = if content.trim().is_empty() {
+        ProfilesYaml {
+            current: None,
+            items: Vec::new(),
+        }
+    } else {
+        serde_yaml_ng::from_str(&content)?
+    };
+
+    let result = f(&mut yaml)?;
+    let serialized = serde_yaml_ng::to_string(&yaml)?;
+    crate::write_private_atomic(path, &serialized)?;
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +259,64 @@ mod tests {
         assert_eq!(options.user_agent_or("default"), "default");
         assert_eq!(options.header_pairs().count(), 0);
         assert_eq!(options.timeout_or(30), 30);
+    }
+
+    fn test_item(uid: &str) -> ProfileItem {
+        ProfileItem {
+            uid: uid.to_string(),
+            name: None,
+            file: None,
+            url: None,
+            cron: None,
+            updated_at: None,
+            options: None,
+            type_: None,
+            script: None,
+            merge: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn update_profiles_does_not_lose_concurrent_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.yaml");
+
+        let mut handles = Vec::new();
+        for worker in 0..8 {
+            let path = path.clone();
+            handles.push(std::thread::spawn(move || {
+                for i in 0..5 {
+                    let uid = format!("{}-{}", worker, i);
+                    update_profiles(&path, |yaml| {
+                        yaml.items.push(test_item(&uid));
+                        Ok(())
+                    })
+                    .unwrap();
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let yaml: ProfilesYaml = serde_yaml_ng::from_str(&content).unwrap();
+        assert_eq!(yaml.items.len(), 40, "concurrent updates must not be lost");
+    }
+
+    #[test]
+    fn update_profiles_creates_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.yaml");
+
+        update_profiles(&path, |yaml| {
+            yaml.current = Some("a".to_string());
+            yaml.items.push(test_item("a"));
+            Ok(())
+        })
+        .unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("current: a"));
     }
 }

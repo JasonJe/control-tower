@@ -18,4 +18,4 @@ pub use config::{ServiceConfig, ControlTowerPaths, exe_dir};
 pub use installer::MihomoInstaller;
 pub use active_config::ActiveConfigStore;
 pub use fsutil::write_private_atomic;
-pub use profiles::{ProfileItem, ProfilesYaml, ProfileDownloadOptions};
+pub use profiles::{ProfileItem, ProfilesYaml, ProfileDownloadOptions, update_profiles};

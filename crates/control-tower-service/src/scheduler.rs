@@ -437,85 +437,19 @@ pub fn check_and_update_all_profiles() -> Vec<(String, bool)> {
 fn update_profile_updated_at(profile_id: &str) {
     let profiles_path = crate::settings::resolve_paths().profiles_path;
 
-    if !profiles_path.exists() {
-        tracing::warn!("profiles.yaml not found, cannot update updated_at");
-        return;
-    }
-
-    let content = match std::fs::read_to_string(&profiles_path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!("Failed to read profiles.yaml for updated_at: {}", e);
-            return;
-        }
-    };
-
-    // Preserve original current value before parsing
-    let original_current = if let Ok(orig) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&content) {
-        orig.get("current").and_then(|v| v.as_str().map(String::from))
-    } else { None };
-
-    #[derive(serde::Deserialize, serde::Serialize)]
-    struct ProfilesYaml {
-        #[serde(skip_serializing_if = "Option::is_none", default)]
-        current: Option<String>,
-        items: Vec<ProfileItem>,
-    }
-
-    #[derive(serde::Deserialize, serde::Serialize)]
-    struct ProfileItem {
-        uid: String,
-        #[serde(default)]
-        name: Option<String>,
-        #[serde(default)]
-        file: Option<String>,
-        #[serde(default)]
-        url: Option<String>,
-        #[serde(default)]
-        cron: Option<String>,
-        #[serde(default)]
-        updated_at: Option<i64>,
-        #[serde(rename = "type", default)]
-        type_: Option<String>,
-        #[serde(default)]
-        options: Option<control_tower_service_core::ProfileDownloadOptions>,
-        #[serde(default)]
-        script: Option<String>,
-        #[serde(default)]
-        merge: Option<Vec<String>>,
-    }
-
-    let mut yaml: ProfilesYaml = match serde_yaml_ng::from_str(&content) {
-        Ok(y) => y,
-        Err(e) => {
-            tracing::warn!("Failed to parse profiles.yaml for updated_at: {}", e);
-            return;
-        }
-    };
-
-    let now = chrono::Utc::now().timestamp();
-    for item in &mut yaml.items {
-        if item.uid == profile_id {
+    // `update_profiles` re-reads the manifest under the shared lock, so a
+    // concurrent rename/cron edit is not overwritten by a stale snapshot.
+    let result = control_tower_service_core::update_profiles(&profiles_path, |yaml| {
+        let now = chrono::Utc::now().timestamp();
+        if let Some(item) = yaml.items.iter_mut().find(|item| item.uid == profile_id) {
             item.updated_at = Some(now);
             tracing::debug!("Updated updated_at to {} for profile {}", now, profile_id);
         }
-    }
+        Ok(())
+    });
 
-    // Restore original current value if it exists
-    if let Some(curr) = original_current {
-        yaml.current = Some(curr);
-    }
-
-    let new_content = match serde_yaml_ng::to_string(&yaml) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!("Failed to serialize profiles.yaml after updated_at update: {}", e);
-            return;
-        }
-    };
-
-    if let Err(e) = control_tower_service_core::write_private_atomic(&profiles_path, &new_content) {
-        tracing::warn!("Failed to write profiles.yaml after updated_at update: {}", e);
+    if let Err(e) = result {
+        tracing::warn!("Failed to update updated_at in profiles.yaml: {}", e);
     }
 }
 

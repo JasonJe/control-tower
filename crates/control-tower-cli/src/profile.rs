@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use control_tower_service_core::ProfileDownloadOptions;
 
-use crate::config::{get_config_dir, load_profiles, save_profiles};
+use crate::config::{get_config_dir, load_profiles};
 use crate::service::reload_cron;
 use crate::ProfileAction;
 
@@ -71,26 +71,23 @@ async fn add_profile(url: &str, name: Option<&str>, headers: &[String]) -> Resul
     control_tower_service_core::write_private_atomic(&profile_file, &content)?;
 
     // Create profile
-    let profile = Profile {
-        id: id.clone(),
-        name: profile_name,
+    let item = control_tower_service_core::ProfileItem {
+        uid: id.clone(),
+        name: Some(profile_name),
         url: Some(url.to_string()),
         file: Some(profile_file.to_string_lossy().to_string()),
-        active: false,
-        updated_at: Some(chrono::Utc::now().timestamp()),
         cron: None,
+        updated_at: Some(chrono::Utc::now().timestamp()),
         options,
-        profile_type: Some("remote".to_string()),
+        type_: Some("remote".to_string()),
         script: None,
         merge: Vec::new(),
     };
 
-    // Load existing profiles
-    let mut profiles = load_profiles().unwrap_or_default();
-
-    // Add new profile
-    profiles.push(profile);
-    save_profiles(&profiles)?;
+    crate::config::update_profiles_file(|yaml| {
+        yaml.items.push(item);
+        Ok(())
+    })?;
 
     println!("Added profile: {} ({})", id, name.unwrap_or("Unnamed"));
     Ok(())
@@ -134,17 +131,21 @@ async fn list_profiles() -> Result<()> {
 async fn remove_profile(id: &str) -> Result<()> {
     tracing::info!("Removing profile: {}", id);
 
-    let mut profiles = load_profiles()?;
+    // Remove the entry under the profiles.yaml lock and return its file path.
+    let profile_file = crate::config::update_profiles_file(|yaml| {
+        let item = yaml
+            .items
+            .iter()
+            .find(|p| p.uid == id)
+            .ok_or_else(|| anyhow::anyhow!("Profile not found: {}", id))?;
+        let file = item.file.clone();
 
-    // Find the profile to delete and get its file path
-    let profile_to_delete = profiles.iter()
-        .find(|p| p.id == id)
-        .ok_or_else(|| anyhow::anyhow!("Profile not found: {}", id))?;
-
-    let profile_file = profile_to_delete.file.clone();
-
-    // Remove from profiles list
-    profiles.retain(|p| p.id != id);
+        yaml.items.retain(|p| p.uid != id);
+        if yaml.current.as_deref() == Some(id) {
+            yaml.current = None;
+        }
+        Ok(file)
+    })?;
 
     // Delete the profile file if exists
     if let Some(ref file) = profile_file {
@@ -154,8 +155,6 @@ async fn remove_profile(id: &str) -> Result<()> {
             println!("Deleted profile file: {:?}", path);
         }
     }
-
-    save_profiles(&profiles)?;
 
     println!("Removed profile: {}", id);
 
@@ -176,7 +175,7 @@ async fn remove_profile(id: &str) -> Result<()> {
 }
 
 async fn update_profile(id: Option<&str>, headers: &[String]) -> Result<()> {
-    let mut profiles = load_profiles()?;
+    let profiles = load_profiles()?;
 
     let target_id = if let Some(id) = id {
         id.to_string()
@@ -221,26 +220,31 @@ async fn update_profile(id: Option<&str>, headers: &[String]) -> Result<()> {
     // Persist options so later updates (and cron jobs) keep using the headers.
     // Only write the field when it was already present or the user supplied
     // headers, otherwise every update would add a noisy `options: {}` block.
-    if profiles[profile_idx].options.is_some() || !headers.is_empty() {
-        profiles[profile_idx].options = Some(options);
-    }
+    let persist_options = profiles[profile_idx].options.is_some() || !headers.is_empty();
+    let options_for_write = options;
 
-    // Update timestamp
-    profiles[profile_idx].updated_at = Some(chrono::Utc::now().timestamp());
-    save_profiles(&profiles)?;
+    // Update timestamp and options in the manifest under the shared lock.
+    crate::config::update_profiles_file(|yaml| {
+        if let Some(item) = yaml.items.iter_mut().find(|item| item.uid == target_id) {
+            if persist_options {
+                item.options = Some(options_for_write);
+            }
+            item.updated_at = Some(chrono::Utc::now().timestamp());
+        }
+        Ok(())
+    })?;
 
     println!("Updated profile: {}", target_id);
     Ok(())
 }
 
 async fn activate_profile(id: &str) -> Result<()> {
-    let mut profiles = load_profiles()?;
+    let profiles = load_profiles()?;
 
-    // Find the profile index
-    let profile_idx = profiles.iter().position(|p| p.id == id)
+    let profile = profiles
+        .iter()
+        .find(|p| p.id == id)
         .ok_or_else(|| anyhow::anyhow!("Profile not found: {}", id))?;
-
-    let profile = &profiles[profile_idx];
     let profile_name = profile.name.clone();
 
     // Copy the profile's config file to config.yaml via centralized store
@@ -259,13 +263,14 @@ async fn activate_profile(id: &str) -> Result<()> {
         anyhow::bail!("Profile has no config file");
     }
 
-    // Deactivate all profiles first and activate the selected one
-    for p in profiles.iter_mut() {
-        p.active = false;
-    }
-    profiles[profile_idx].active = true;
-
-    save_profiles(&profiles)?;
+    // Mark the selected profile as current.
+    crate::config::update_profiles_file(|yaml| {
+        if !yaml.items.iter().any(|p| p.uid == id) {
+            anyhow::bail!("Profile not found: {}", id);
+        }
+        yaml.current = Some(id.to_string());
+        Ok(())
+    })?;
 
     println!("Activated profile: {} ({})", id, profile_name);
 
@@ -283,44 +288,58 @@ async fn activate_profile(id: &str) -> Result<()> {
 }
 
 async fn set_cron(id: &str, schedule: Option<&str>) -> Result<()> {
-    let mut profiles = load_profiles()?;
-
-    // Find the profile
-    let profile = profiles.iter_mut().find(|p| p.id == id)
-        .ok_or_else(|| anyhow::anyhow!("Profile not found: {}", id))?;
-
-    match schedule {
-        None => {
-            // Show current cron setting
-            if let Some(ref cron) = profile.cron {
+    // Display mode: show the current value without touching the file.
+    let Some(schedule) = schedule else {
+        let profiles = load_profiles()?;
+        let profile = profiles
+            .iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| anyhow::anyhow!("Profile not found: {}", id))?;
+        match profile.cron {
+            Some(ref cron) => {
                 println!("Cron schedule for profile {}: {}", id, cron);
                 println!("  Human readable: {}", cron_to_human(cron));
-            } else {
-                println!("No cron schedule set for profile: {}", id);
             }
+            None => println!("No cron schedule set for profile: {}", id),
         }
-        Some(s) if s.to_lowercase() == "off" => {
-            profile.cron = None;
-            println!("Disabled automatic updates for profile: {}", id);
-            save_profiles(&profiles)?;
-            let _ = reload_cron().await;
+        return Ok(());
+    };
+
+    // Validate before writing so a typo does not modify profiles.yaml.
+    let new_cron: Option<String> = if schedule.eq_ignore_ascii_case("off") {
+        None
+    } else {
+        let minutes: u32 = schedule.parse().map_err(|_| {
+            anyhow::anyhow!("Invalid minutes value: {}. Must be a number.", schedule)
+        })?;
+        if !(1..=10080).contains(&minutes) {
+            anyhow::bail!(
+                "Invalid minutes value: {}. Must be between 1 and 10080 (1 week).",
+                minutes
+            );
         }
-        Some(s) => {
-            // Validate: must be a number representing minutes
-            let minutes: u32 = s.parse()
-                .map_err(|_| anyhow::anyhow!("Invalid minutes value: {}. Must be a number.", s))?;
+        Some(schedule.to_string())
+    };
 
-            if minutes < 1 || minutes > 10080 { // Max 1 week
-                anyhow::bail!("Invalid minutes value: {}. Must be between 1 and 10080 (1 week).", minutes);
-            }
+    crate::config::update_profiles_file(|yaml| {
+        let item = yaml
+            .items
+            .iter_mut()
+            .find(|p| p.uid == id)
+            .ok_or_else(|| anyhow::anyhow!("Profile not found: {}", id))?;
+        item.cron = new_cron.clone();
+        Ok(())
+    })?;
 
-            profile.cron = Some(s.to_string());
+    match new_cron {
+        Some(ref cron) => {
+            let minutes: u32 = cron.parse().unwrap_or(0);
             println!("Set cron schedule for profile {}: every {} minutes", id, minutes);
-            save_profiles(&profiles)?;
-            let _ = reload_cron().await;
         }
+        None => println!("Disabled automatic updates for profile: {}", id),
     }
 
+    let _ = reload_cron().await;
     Ok(())
 }
 

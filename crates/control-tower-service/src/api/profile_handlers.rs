@@ -6,26 +6,67 @@ use std::sync::Arc;
 use tokio::task;
 
 use crate::ServiceState;
-use control_tower_service_core::{ProfilesYaml, ProfileDownloadOptions};
+use control_tower_service_core::{ProfilesYaml, ProfileDownloadOptions, ProfileItem};
 
 use super::{ApiResponse, AddProfileRequest, RefreshRequest};
-
-/// Persist profiles.yaml atomically and owner-only.
-///
-/// The file stores subscription URLs and custom `options.headers`, which often
-/// contain access tokens; it must not be world-readable, and a partial write
-/// must never be observed by the scheduler or the CLI.
-fn save_profiles_yaml(path: &std::path::Path, yaml: &ProfilesYaml) -> Result<(), String> {
-    let content = serde_yaml_ng::to_string(yaml)
-        .map_err(|e| format!("serialize error: {}", e))?;
-    control_tower_service_core::write_private_atomic(path, &content)
-        .map_err(|e| format!("write error: {}", e))
-}
 
 /// Persist a profile file atomically and owner-only (it contains proxies and
 /// their credentials).
 fn save_profile_file(path: &std::path::Path, content: &str) -> std::io::Result<()> {
     control_tower_service_core::write_private_atomic(path, content)
+}
+
+/// Field updates computed from a `PATCH /api/profiles/{id}` request.
+///
+/// They are applied to a *freshly read* manifest entry inside
+/// `update_profiles`, so two concurrent edits (e.g. rename + cron update) do
+/// not overwrite each other with a stale snapshot.
+#[derive(Clone)]
+struct ProfileEdits {
+    /// Normalized `file` value (uid[..8].yaml for long uids).
+    file: Option<String>,
+    /// `Some` when the field was present in the request; inner `None` clears it.
+    name: Option<Option<String>>,
+    cron: Option<Option<String>>,
+    options: Option<Option<ProfileDownloadOptions>>,
+    /// Set only when the subscription URL actually changed.
+    url: Option<String>,
+    mark_updated: bool,
+}
+
+fn apply_profile_edits(item: &mut ProfileItem, edits: &ProfileEdits) {
+    if let Some(file) = &edits.file {
+        if item.file.as_ref() != Some(file) {
+            item.file = Some(file.clone());
+        }
+    }
+    if let Some(name) = &edits.name {
+        item.name = name.clone();
+    }
+    if let Some(cron) = &edits.cron {
+        item.cron = cron.clone();
+    }
+    if let Some(options) = &edits.options {
+        match options {
+            Some(options) => {
+                let mut options = options.clone();
+                // `GET /api/profiles` deliberately omits header values, so a
+                // missing `headers` field means "keep the stored headers".
+                // Sending `"headers": {}` explicitly clears them.
+                if options.headers.is_none() {
+                    options.headers = item.options.as_ref().and_then(|o| o.headers.clone());
+                }
+                item.options = Some(options);
+            }
+            None => item.options = None,
+        }
+    }
+    if let Some(url) = &edits.url {
+        item.url = Some(url.clone());
+    }
+    if edits.mark_updated {
+        item.updated_at = Some(chrono::Utc::now().timestamp());
+    }
 }
 
 /// Resolve the on-disk path for a profile file.
@@ -336,20 +377,8 @@ pub async fn add_profile(
         }
     });
 
-    // Update profiles.yaml
-    let profiles_content = if profiles_path.exists() {
-        std::fs::read_to_string(profiles_path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
-    use control_tower_service_core::{ProfileItem, ProfilesYaml};
-
-    let mut yaml = serde_yaml_ng::from_str::<ProfilesYaml>(&profiles_content).unwrap_or(ProfilesYaml {
-        current: None,
-        items: Vec::new(),
-    });
-
+    // Update profiles.yaml. The read-modify-write happens inside
+    // `update_profiles`, so a concurrent cron/manifest update is not lost.
     let new_item = ProfileItem {
         uid: uid.clone(),
         name: Some(name),
@@ -363,9 +392,10 @@ pub async fn add_profile(
         merge: body.merge.clone().unwrap_or_default(),
     };
 
-    yaml.items.push(new_item);
-
-    if let Err(e) = save_profiles_yaml(profiles_path, &yaml) {
+    if let Err(e) = control_tower_service_core::update_profiles(profiles_path, |yaml| {
+        yaml.items.push(new_item);
+        Ok(())
+    }) {
         return HttpResponse::InternalServerError()
             .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
     }
@@ -496,21 +526,16 @@ pub async fn activate_profile(
             .json(ApiResponse::<()>::error("Profile does not contain valid proxy configuration (missing: proxies, port, mixed-port, proxy-providers, or proxy-groups)".to_string()));
     }
 
-    // Re-parse with Serialize for writing back
-    use control_tower_service_core::ProfilesYaml as ProfilesYamlWrite;
-    let mut yaml_write: ProfilesYamlWrite = match serde_yaml_ng::from_str(&content) {
-        Ok(y) => y,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(ApiResponse::<()>::error(format!("Failed to parse profiles.yaml: {}", e)))
+    // Mark the profile as current. Re-read under the profiles.yaml lock so a
+    // concurrent edit is not overwritten by this stale snapshot.
+    let result = control_tower_service_core::update_profiles(profiles_path, |yaml| {
+        if !yaml.items.iter().any(|item| item.uid == uid) {
+            anyhow::bail!("Profile {} not found in profiles.yaml", uid);
         }
-    };
-
-    // Update current marker
-    yaml_write.current = Some(uid.clone());
-
-    // Write back profiles.yaml
-    if let Err(e) = save_profiles_yaml(profiles_path, &yaml_write) {
+        yaml.current = Some(uid.clone());
+        Ok(())
+    });
+    if let Err(e) = result {
         return HttpResponse::InternalServerError()
             .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
     }
@@ -610,7 +635,6 @@ pub async fn update_profile(
     let (cron, cron_provided) = get_string_field(obj, "cron");
 
     // Parse options field if provided
-    let options_provided = obj.contains_key("options");
     let new_options = match obj.get("options") {
         None => None,
         Some(v) if v.is_null() => Some(None),
@@ -626,16 +650,14 @@ pub async fn update_profile(
     };
 
     // Validate URL if explicitly provided (even as empty string → clear not allowed for URL)
-    if url_provided {
-        if let Some(ref u) = url {
-            if u.trim().is_empty() {
-                return HttpResponse::BadRequest()
-                    .json(ApiResponse::<()>::error("URL cannot be empty".to_string()));
-            }
-        }
+    if url_provided && url.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        return HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error("URL cannot be empty".to_string()));
     }
 
-    // Read profiles.yaml
+    // Read profiles.yaml (read-only snapshot: used to resolve the profile file
+    // and to decide whether the URL changed. The actual mutation re-reads the
+    // manifest under the profiles.yaml lock below.)
     let content = match std::fs::read_to_string(profiles_path) {
         Ok(c) => c,
         Err(e) => {
@@ -644,7 +666,7 @@ pub async fn update_profile(
         }
     };
 
-    let mut yaml = match serde_yaml_ng::from_str::<ProfilesYaml>(&content) {
+    let yaml = match serde_yaml_ng::from_str::<ProfilesYaml>(&content) {
         Ok(y) => y,
         Err(e) => {
             return HttpResponse::BadRequest()
@@ -653,8 +675,7 @@ pub async fn update_profile(
     };
 
     // Find the profile item
-    let item = yaml.items.iter_mut().find(|i| i.uid == uid);
-    let item = match item {
+    let item = match yaml.items.iter().find(|i| i.uid == uid) {
         Some(i) => i,
         None => {
             return HttpResponse::NotFound()
@@ -664,67 +685,70 @@ pub async fn update_profile(
 
     let is_active = yaml.current.as_ref() == Some(&uid);
     let old_url = item.url.clone();
+    let url_changed = url_provided && url.as_ref() != old_url.as_ref();
 
     // Normalize file field to uid[..8].yaml so all code paths find the same file.
     // Historical bug: item.file may contain full uid instead of uid[..8].
-    if uid.len() > 8 {
-        let correct_file = format!("{}.yaml", &uid[..8]);
-        if item.file.as_ref() != Some(&correct_file) {
-            item.file = Some(correct_file);
-        }
-    }
+    let normalized_file = if uid.len() > 8 {
+        Some(format!("{}.yaml", &uid[..8]))
+    } else {
+        None
+    };
 
-    // Apply cron: cron_provided means the key was present (even if null/empty → clear)
-    if cron_provided {
-        let cron_trimmed = cron.as_ref().map(|s| s.trim()).unwrap_or("");
-        if cron_trimmed.is_empty() {
-            item.cron = None; // null or "" → clear
+    // Validate and normalize cron: cron_provided means the key was present
+    // (even if null/empty → clear).
+    let cron_edit = if cron_provided {
+        let trimmed = cron.as_ref().map(|s| s.trim()).unwrap_or("");
+        if trimmed.is_empty() {
+            Some(None)
         } else {
-            match cron_trimmed.parse::<u32>() {
-                Ok(n) if n >= 1 => { item.cron = Some(cron_trimmed.to_string()); }
+            match trimmed.parse::<u32>() {
+                Ok(n) if n >= 1 => Some(Some(trimmed.to_string())),
                 _ => {
-                    return HttpResponse::BadRequest()
-                        .json(ApiResponse::<()>::error("Cron must be a positive integer (minutes)".to_string()));
+                    return HttpResponse::BadRequest().json(ApiResponse::<()>::error(
+                        "Cron must be a positive integer (minutes)".to_string(),
+                    ))
                 }
             }
         }
-    }
+    } else {
+        None
+    };
 
-    // Apply name: null or "" → clear, otherwise update
-    if name_provided {
-        item.name = name.filter(|s| !s.trim().is_empty());
-    }
+    let edits = ProfileEdits {
+        file: normalized_file.clone(),
+        // null or "" → clear, otherwise update
+        name: if name_provided {
+            Some(name.filter(|s| !s.trim().is_empty()))
+        } else {
+            None
+        },
+        cron: cron_edit,
+        // null → clear, otherwise update (headers fallback happens when applied)
+        options: new_options,
+        url: if url_changed { url.clone() } else { None },
+        mark_updated: url_changed,
+    };
 
-    // Apply options: null → clear, otherwise update
-    if options_provided {
-        match new_options {
-            Some(Some(mut options)) => {
-                // `GET /api/profiles` deliberately omits header values, so a
-                // missing `headers` field means "keep the stored headers".
-                // Sending `"headers": {}` explicitly clears them.
-                if options.headers.is_none() {
-                    options.headers = item.options.as_ref().and_then(|o| o.headers.clone());
-                }
-                item.options = Some(options);
+    let profile_file = resolve_profile_file(
+        &profiles_dir,
+        &uid,
+        normalized_file.as_deref().or(item.file.as_deref()),
+    );
+
+    // Options to use for the download: the requested ones when the PATCH also
+    // updates `options`, otherwise the stored ones.
+    let download_options = match &edits.options {
+        Some(Some(options)) => {
+            let mut options = options.clone();
+            if options.headers.is_none() {
+                options.headers = item.options.as_ref().and_then(|o| o.headers.clone());
             }
-            Some(None) => item.options = None,
-            None => {}
+            Some(options)
         }
-    }
-
-    // Apply URL: null or "" → clear, otherwise update (but re-download only if changed)
-    let url_changed = url_provided && url.as_ref() != old_url.as_ref();
-    if url_provided {
-        if url.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
-            return HttpResponse::BadRequest()
-                .json(ApiResponse::<()>::error("URL cannot be empty".to_string()));
-        }
-    }
-
-    let profile_file = resolve_profile_file(&profiles_dir, &uid, item.file.as_deref());
-
-    // Capture options for download (before ownership moves)
-    let download_options = item.options.clone();
+        Some(None) => None,
+        None => item.options.clone(),
+    };
 
     // If URL changed, download new content in a blocking task.
     if url_changed {
@@ -732,15 +756,8 @@ pub async fn update_profile(
         let profile_file_clone = profile_file.clone();
         let profiles_path_clone = profiles_path.clone();
         let options_clone = download_options.clone();
-
-        // Apply url/updated_at to the in-memory manifest and hand the whole
-        // manifest to the blocking task. Re-reading profiles.yaml inside the
-        // task would discard the name/cron/options edits applied above.
-        if let Some(item) = yaml.items.iter_mut().find(|i| i.uid == uid) {
-            item.url = Some(download_url.clone());
-            item.updated_at = Some(chrono::Utc::now().timestamp());
-        }
-        let yaml_to_write = yaml;
+        let edits_clone = edits.clone();
+        let uid_clone = uid.clone();
 
         let timeout_secs = options_clone.as_ref().map(|o| o.timeout_or(30)).unwrap_or(30);
         let with_proxy = options_clone
@@ -807,9 +824,17 @@ pub async fn update_profile(
             // Write new content to profile file
             control_tower_service_core::write_private_atomic(&profile_file_clone, &new_content)?;
 
-            // Persist the full manifest (name/cron/options/url/updated_at).
-            save_profiles_yaml(&profiles_path_clone, &yaml_to_write)
-                .map_err(|e| anyhow::anyhow!("Failed to update profiles.yaml: {}", e))?;
+            // Apply the edits to the freshly read manifest (name/cron/options/
+            // url/updated_at) so a concurrent change is not overwritten.
+            control_tower_service_core::update_profiles(&profiles_path_clone, |yaml| {
+                let item = yaml
+                    .items
+                    .iter_mut()
+                    .find(|item| item.uid == uid_clone)
+                    .ok_or_else(|| anyhow::anyhow!("Profile {} not found", uid_clone))?;
+                apply_profile_edits(item, &edits_clone);
+                Ok(())
+            })?;
 
             Ok::<(), anyhow::Error>(())
         })
@@ -876,8 +901,16 @@ pub async fn update_profile(
             }
         }
     } else {
-        // No URL change — just write back profiles.yaml with name/cron updates
-        if let Err(e) = save_profiles_yaml(profiles_path, &yaml) {
+        // No URL change — just apply name/cron/options updates
+        if let Err(e) = control_tower_service_core::update_profiles(profiles_path, |yaml| {
+            let item = yaml
+                .items
+                .iter_mut()
+                .find(|item| item.uid == uid)
+                .ok_or_else(|| anyhow::anyhow!("Profile {} not found", uid))?;
+            apply_profile_edits(item, &edits);
+            Ok(())
+        }) {
             return HttpResponse::InternalServerError()
                 .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
         }
@@ -1031,20 +1064,14 @@ pub async fn refresh_profile(
         // Update profile file
         control_tower_service_core::write_private_atomic(&profile_file_clone, &new_content)?;
 
-        // Update updated_at in profiles.yaml
-        let content = std::fs::read_to_string(&profiles_path_clone)?;
-        let mut yaml = serde_yaml_ng::from_str::<ProfilesYaml>(&content)?;
-
-        let now = chrono::Utc::now().timestamp();
-        for item in &mut yaml.items {
-            if item.uid == uid_clone {
+        // Update updated_at in profiles.yaml (re-read under the manifest lock).
+        control_tower_service_core::update_profiles(&profiles_path_clone, |yaml| {
+            let now = chrono::Utc::now().timestamp();
+            if let Some(item) = yaml.items.iter_mut().find(|item| item.uid == uid_clone) {
                 item.updated_at = Some(now);
-                break;
             }
-        }
-
-        save_profiles_yaml(&profiles_path_clone, &yaml)
-            .map_err(|e| anyhow::anyhow!("Failed to update profiles.yaml: {}", e))?;
+            Ok(())
+        })?;
 
         // If this is the current profile, update active config.yaml so Mihomo reload picks up new proxies
         if is_current {
@@ -1123,47 +1150,36 @@ pub async fn delete_profile(
         return HttpResponse::NotFound().json(ApiResponse::<()>::error("profiles.yaml not found"));
     }
 
-    // Read profiles.yaml
-    let content = match std::fs::read_to_string(profiles_path) {
-        Ok(c) => c,
+    // Remove the entry and clear the current marker atomically under the
+    // profiles.yaml lock, so a concurrent manifest update is not lost.
+    let result = control_tower_service_core::update_profiles(profiles_path, |yaml| {
+        let Some(item) = yaml.items.iter().find(|item| item.uid == uid) else {
+            return Ok(None);
+        };
+        let file = item.file.clone();
+        yaml.items.retain(|item| item.uid != uid);
+        if yaml.current.as_deref() == Some(uid.as_str()) {
+            yaml.current = None;
+        }
+        Ok(Some(file))
+    });
+
+    let file_name = match result {
+        Ok(Some(file)) => file,
+        Ok(None) => {
+            return HttpResponse::NotFound().json(ApiResponse::<()>::error(format!(
+                "Profile {} not found",
+                uid
+            )))
+        }
         Err(e) => {
             return HttpResponse::InternalServerError()
-                .json(ApiResponse::<()>::error(format!("Failed to read profiles.yaml: {}", e)))
-        }
-    };
-
-    let mut yaml = match serde_yaml_ng::from_str::<ProfilesYaml>(&content) {
-        Ok(y) => y,
-        Err(e) => {
-            return HttpResponse::BadRequest()
-                .json(ApiResponse::<()>::error(format!("Invalid profiles.yaml: {}", e)))
-        }
-    };
-
-    // Find the profile item to get its file path
-    let profile_item = match yaml.items.iter().find(|item| item.uid == uid) {
-        Some(item) => item,
-        None => {
-            return HttpResponse::NotFound().json(ApiResponse::<()>::error(format!("Profile {} not found", uid)));
+                .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)))
         }
     };
 
     // Determine actual file path using helper
-    let profile_file = resolve_profile_file(&profiles_dir, &uid, profile_item.file.as_deref());
-
-    // Remove from items
-    yaml.items.retain(|item| item.uid != uid);
-
-    // Clear current if it was this profile
-    if yaml.current.as_ref() == Some(&uid) {
-        yaml.current = None;
-    }
-
-    // Write back profiles.yaml
-    if let Err(e) = save_profiles_yaml(profiles_path, &yaml) {
-        return HttpResponse::InternalServerError()
-            .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
-    }
+    let profile_file = resolve_profile_file(&profiles_dir, &uid, file_name.as_deref());
 
     // Delete the profile file
     if profile_file.exists() {

@@ -11,14 +11,15 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml_ng = { workspace = true }
 dirs = { workspace = true }
-uuid = { workspace = true, features = ["v4"] }
-parking_lot = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
-compact_str = { workspace = true }
 reqwest = { workspace = true, features = ["blocking"] }
-zip = "2"
 flate2 = "1"
 tracing = { workspace = true }
+libc = { workspace = true }
+
+# Windows-only: extracting the Mihomo release archive. The service itself only
+# supports Linux, but the crate can still be built on Windows for tests.
+[target.'cfg(windows)'.dependencies]
+zip = "2"
 
 [dev-dependencies]
 tokio-test = "0.4"

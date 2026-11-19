@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
 
-use control_tower_service_core::{ProfileItem, ProfilesYaml};
+use control_tower_service_core::ProfilesYaml;
 
 use crate::profile::Profile;
 
@@ -47,37 +47,20 @@ pub fn load_profiles() -> Result<Vec<Profile>> {
     Ok(profiles)
 }
 
-pub fn save_profiles(profiles: &[Profile]) -> Result<()> {
+/// Apply a change to profiles.yaml under the shared lock.
+///
+/// The CLI and the service can both write this file. `update_profiles`
+/// re-reads it inside the lock, so a change made by the service (for example a
+/// cron refresh) is not silently overwritten by a stale CLI snapshot.
+pub fn update_profiles_file<T>(
+    f: impl FnOnce(&mut ProfilesYaml) -> Result<T>,
+) -> Result<T> {
     let config_dir = get_config_dir()?;
     fs::create_dir_all(&config_dir)?;
     control_tower_service_core::fsutil::restrict_dir_permissions(&config_dir);
 
-    let current = profiles.iter().find(|p| p.active).map(|p| p.id.clone());
-
-    let items: Vec<ProfileItem> = profiles
-        .iter()
-        .map(|p| ProfileItem {
-            uid: p.id.clone(),
-            name: Some(p.name.clone()),
-            file: p.file.clone(),
-            url: p.url.clone(),
-            cron: p.cron.clone(),
-            updated_at: p.updated_at,
-            options: p.options.clone(),
-            type_: p.profile_type.clone().or_else(|| Some("remote".to_string())),
-            script: p.script.clone(),
-            merge: p.merge.clone(),
-        })
-        .collect();
-
-    let yaml = ProfilesYaml { current, items };
-    let content = serde_yaml_ng::to_string(&yaml)?;
-
-    let profiles_path = config_dir.join("profiles.yaml");
-    // profiles.yaml stores subscription headers (often access tokens), so it
-    // must be owner-only and written atomically: a crash must not leave a
-    // half-written manifest behind.
-    control_tower_service_core::write_private_atomic(&profiles_path, &content)?;
-
-    Ok(())
+    Ok(control_tower_service_core::update_profiles(
+        &config_dir.join("profiles.yaml"),
+        f,
+    )?)
 }

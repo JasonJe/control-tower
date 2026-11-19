@@ -21,13 +21,11 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "chrono"] }
 tracing-appender = { workspace = true }
 parking_lot = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
-compact_str = { workspace = true }
 dirs = { workspace = true }
 clap = { workspace = true }
 reqwest = { workspace = true }
 actix-web = { workspace = true, features = ["rustls-0_23"] }
 actix-rt = { workspace = true }
-actix-cors = "0.7"
 uuid = { workspace = true }
 signal-hook = "0.3"
 percent-encoding = "2"
@@ -39,10 +37,9 @@ rustls-pemfile = "2.2"
 rcgen = { version = "0.13", features = ["x509-parser"] }
 
 # Password hashing / key derivation
-bcrypt = "0.16"
-argon2 = "0.5"
+# The verifier is a PBKDF2 key derived by the client (PBKDF2/SHA-256); the
+# server only hashes it with SHA-256 and never sees the plaintext password.
 sha2 = "0.10"
-pbkdf2 = "0.12"
 rand = "0.8"
 
 [dev-dependencies]

@@ -461,15 +461,21 @@ pub async fn activate_profile(
         }
     };
 
-    // Check for required fields: proxies, mixed-port, or proxy-providers
+    // Check for required fields: proxies, a listener port, or proxy providers
     let has_proxies = yaml.get("proxies").is_some();
+    let has_http_port = yaml.get("port").is_some();
     let has_mixed_port = yaml.get("mixed-port").is_some();
     let has_proxy_providers = yaml.get("proxy-providers").is_some();
     let has_proxy_groups = yaml.get("proxy-groups").is_some();
 
-    if !has_proxies && !has_mixed_port && !has_proxy_providers && !has_proxy_groups {
+    if !has_proxies
+        && !has_http_port
+        && !has_mixed_port
+        && !has_proxy_providers
+        && !has_proxy_groups
+    {
         return HttpResponse::BadRequest()
-            .json(ApiResponse::<()>::error("Profile does not contain valid proxy configuration (missing: proxies, mixed-port, proxy-providers, or proxy-groups)".to_string()));
+            .json(ApiResponse::<()>::error("Profile does not contain valid proxy configuration (missing: proxies, port, mixed-port, proxy-providers, or proxy-groups)".to_string()));
     }
 
     // Re-parse with Serialize for writing back
@@ -496,9 +502,10 @@ pub async fn activate_profile(
     let custom_rules: Vec<String> = settings.custom_rules.unwrap_or_default();
 
     // Build port overrides from settings.yaml (highest priority)
-    // If mixed_port is not set, default to http_port for convenience
+    // HTTP and mixed proxies are independent ports: mixed_port is only used
+    // when it is explicitly configured, never derived from http_port.
     let port_overrides = control_tower_service_core::active_config::PortOverrides {
-        mixed_port: settings.mixed_port.or(settings.http_port),
+        mixed_port: settings.mixed_port,
         socks_port: settings.socks_port,
         http_port: settings.http_port,
         external_controller: settings.api_host.zip(settings.api_port),
@@ -811,9 +818,10 @@ pub async fn update_profile(
             let custom_rules: Vec<String> = settings.custom_rules.unwrap_or_default();
 
             // Build port overrides from settings.yaml (highest priority)
-            // If mixed_port is not set, default to http_port for convenience
+            // HTTP and mixed proxies are independent ports: mixed_port is only used
+            // when it is explicitly configured, never derived from http_port.
             let port_overrides = control_tower_service_core::active_config::PortOverrides {
-                mixed_port: settings.mixed_port.or(settings.http_port),
+                mixed_port: settings.mixed_port,
                 socks_port: settings.socks_port,
                 http_port: settings.http_port,
                 external_controller: settings.api_host.zip(settings.api_port),
@@ -923,9 +931,10 @@ pub async fn refresh_profile(
     // Get settings for port overrides and custom rules
     let settings = state.get_settings();
     let custom_rules: Vec<String> = settings.custom_rules.unwrap_or_default();
-    // If mixed_port is not set, default to http_port for convenience
+    // HTTP and mixed proxies are independent ports: mixed_port is only used
+    // when it is explicitly configured, never derived from http_port.
     let port_overrides = control_tower_service_core::active_config::PortOverrides {
-        mixed_port: settings.mixed_port.or(settings.http_port),
+        mixed_port: settings.mixed_port,
         socks_port: settings.socks_port,
         http_port: settings.http_port,
         external_controller: settings.api_host.zip(settings.api_port),

@@ -125,6 +125,11 @@ rule-providers:
     enabled: true
 ```
 
+> 端口说明：
+> - `http_port` 对应 Mihomo 的 `port`（独立的 HTTP 代理端口），`socks_port` 对应 `socks-port`；两者互不影响，`http_port` 不会再被写成 `mixed-port`。
+> - 如需启用 mixed 端口，请在 settings.yaml 中显式添加 `mixed_port: <port>`。若它与 `http_port`/`socks_port` 冲突，生成的 config.yaml 会移除 `mixed-port` 并记录告警（HTTP/SOCKS 端口优先）。
+> - 在 Web UI 修改端口后会立即重写 config.yaml 并重启 Mihomo；HTTP 端口与 SOCKS 端口必须不同，且不能与 Mihomo API 端口或 Control Tower 服务端口冲突。
+
 > 鉴权说明：
 > - 只有 `auth.enabled: true` 且 `password` 非空时才会强制鉴权；缺少 `auth` 段或密码为空时 API 保持开放（删除 `auth` 段等价于关闭鉴权，请谨慎操作）。
 > - 开启鉴权后，除 `/api/auth/*`（登录/状态/首次设置密码）外，所有 `/api/*` 接口都需要凭据：浏览器使用登录后下发的 httpOnly cookie（`ct_session`，SameSite=Strict，HTTPS 下带 Secure），并额外携带 `X-Requested-With: control-tower` 头用于防 CSRF；脚本/CLI 使用 `Authorization: Bearer <token>`。

@@ -86,6 +86,11 @@ pub async fn apply_port_settings(
     let http_port = body.http_port;
     let socks_port = body.socks_port;
 
+    // Report invalid combinations as a client error instead of a 500.
+    if let Err(e) = state.validate_proxy_ports(http_port, socks_port) {
+        return HttpResponse::BadRequest().json(ApiResponse::<()>::error(e));
+    }
+
     let state = state.clone();
     match task::spawn_blocking(move || state.apply_port_settings(http_port, socks_port)).await {
         Ok(Ok(())) => {

@@ -587,6 +587,7 @@ pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::P
     if !new_content.contains("proxies:")
        && !new_content.contains("proxy-providers:")
        && !new_content.contains("mixed-port:")
+       && !new_content.contains("port:")
     {
         return Err("Subscription content does not look like a Clash config".to_string());
     }

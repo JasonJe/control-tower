@@ -13,8 +13,11 @@ use crate::ControlTowerPaths;
 /// These override the ports from the profile when generating config.yaml.
 #[derive(Debug, Default, Clone)]
 pub struct PortOverrides {
+    /// Mihomo `mixed-port` (HTTP + SOCKS on one port).
     pub mixed_port: Option<u16>,
+    /// Mihomo `socks-port`.
     pub socks_port: Option<u16>,
+    /// Mihomo `port` — the HTTP proxy port. Independent from `mixed-port`.
     pub http_port: Option<u16>,
     pub external_controller: Option<(String, u16)>, // (host, port)
 }
@@ -93,8 +96,11 @@ impl ActiveConfigStore {
             if let Some(p) = port_overrides.socks_port {
                 map.insert("socks-port".into(), serde_yaml_ng::Value::Number(p.into()));
             }
+            // `http_port` is an independent HTTP proxy port (Mihomo's `port`
+            // key). It must not be written as `mixed-port`: the Web UI exposes
+            // these as separate settings.
             if let Some(p) = port_overrides.http_port {
-                map.insert("http-port".into(), serde_yaml_ng::Value::Number(p.into()));
+                map.insert("port".into(), serde_yaml_ng::Value::Number(p.into()));
             }
             if let Some((host, port)) = port_overrides.external_controller.as_ref() {
                 map.insert(
@@ -117,13 +123,13 @@ impl ActiveConfigStore {
                 }
                 let is_port_key = matches!(
                     key.as_str(),
-                    Some("mixed-port" | "socks-port" | "http-port" | "external-controller")
+                    Some("mixed-port" | "socks-port" | "port" | "external-controller")
                 );
                 if is_port_key {
                     let overridden = match key.as_str() {
                         Some("mixed-port") => port_overrides.mixed_port.is_some(),
                         Some("socks-port") => port_overrides.socks_port.is_some(),
-                        Some("http-port") => port_overrides.http_port.is_some(),
+                        Some("port") => port_overrides.http_port.is_some(),
                         _ => port_overrides.external_controller.is_some(),
                     };
                     if overridden || map.contains_key(&key) {
@@ -134,6 +140,11 @@ impl ActiveConfigStore {
             }
         }
 
+        // Drop a profile's `mixed-port` when it would collide with the explicit
+        // HTTP/SOCKS ports: Mihomo binds each listener separately, so a clash
+        // makes one of them fail to start.
+        Self::remove_conflicting_ports(&mut yaml);
+
         // Prepend custom rules before profile rules (higher priority)
         if let Ok(rules) = Self::get_or_create_rules_array(&mut yaml) {
             for rule in custom_rules.iter().rev() {
@@ -143,6 +154,29 @@ impl ActiveConfigStore {
 
         self.write_atomically(&serde_yaml_ng::to_string(&yaml)?)?;
         Ok(profile_rules_count)
+    }
+
+    /// Remove a `mixed-port` that duplicates `port` or `socks-port`.
+    ///
+    /// The HTTP/SOCKS ports are explicitly configured by the user, while
+    /// `mixed-port` usually comes from the profile. Keeping the collision would
+    /// make one of the listeners fail to bind.
+    fn remove_conflicting_ports(yaml: &mut serde_yaml_ng::Value) {
+        let port = yaml.get("port").and_then(|v| v.as_u64());
+        let socks = yaml.get("socks-port").and_then(|v| v.as_u64());
+        let Some(mixed) = yaml.get("mixed-port").and_then(|v| v.as_u64()) else {
+            return;
+        };
+
+        if Some(mixed) == port || Some(mixed) == socks {
+            if let Some(map) = yaml.as_mapping_mut() {
+                map.remove(&serde_yaml_ng::Value::String("mixed-port".to_string()));
+            }
+            tracing::warn!(
+                "Removed mixed-port {} from active config: it collides with the configured port/socks-port",
+                mixed
+            );
+        }
     }
 
     /// Extract fields the user may have manually customized that should survive
@@ -167,7 +201,7 @@ impl ActiveConfigStore {
             "log-level",
             "dns",
             "socks-port",
-            "http-port",
+            "port",
             "external-controller",
             "tun",
             // NOTE: "rule-providers" is NOT preserved here — it is loaded separately
@@ -485,6 +519,89 @@ mod tests {
         assert!(!content.contains("old: content"));
         // Ensure no .tmp file left behind
         assert!(!paths.active_config_path.with_extension("yaml.tmp").exists());
+    }
+
+    #[test]
+    fn test_replace_from_profile_writes_http_port_as_port() {
+        let (_temp, paths) = make_temp_paths();
+        let profile_path = paths.config_dir.join("profiles").join("p2.yaml");
+        std::fs::create_dir_all(profile_path.parent().unwrap()).unwrap();
+        std::fs::write(&profile_path, "mixed-port: 7890\nproxies: []\n").unwrap();
+
+        let store = ActiveConfigStore::new(paths.clone());
+        store
+            .replace_from_profile(
+                &profile_path,
+                &[],
+                PortOverrides {
+                    mixed_port: Some(7890),
+                    http_port: Some(7891),
+                    socks_port: Some(7892),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        let content = std::fs::read_to_string(&paths.active_config_path).unwrap();
+        // The HTTP proxy port must use Mihomo's `port` key, never `http-port`.
+        assert!(content.contains("port: 7891"), "config: {content}");
+        assert!(content.contains("socks-port: 7892"), "config: {content}");
+        assert!(content.contains("mixed-port: 7890"), "config: {content}");
+        assert!(!content.contains("http-port"), "config: {content}");
+    }
+
+    #[test]
+    fn test_replace_from_profile_preserves_user_http_port() {
+        let (_temp, paths) = make_temp_paths();
+        let profile_path = paths.config_dir.join("profiles").join("p3.yaml");
+        std::fs::create_dir_all(profile_path.parent().unwrap()).unwrap();
+        std::fs::write(&profile_path, "proxies: []\n").unwrap();
+        std::fs::write(
+            &paths.active_config_path,
+            "mode: global\nport: 7000\nsocks-port: 7001\nhttp-port: 7002\n",
+        )
+        .unwrap();
+
+        let store = ActiveConfigStore::new(paths.clone());
+        store
+            .replace_from_profile(&profile_path, &[], Default::default())
+            .unwrap();
+
+        let content = std::fs::read_to_string(&paths.active_config_path).unwrap();
+        assert!(content.contains("port: 7000"), "config: {content}");
+        assert!(content.contains("socks-port: 7001"), "config: {content}");
+        // The legacy non-standard key must not be carried over.
+        assert!(!content.contains("http-port"), "config: {content}");
+    }
+
+    #[test]
+    fn test_replace_from_profile_drops_conflicting_mixed_port() {
+        let (_temp, paths) = make_temp_paths();
+        let profile_path = paths.config_dir.join("profiles").join("p4.yaml");
+        std::fs::create_dir_all(profile_path.parent().unwrap()).unwrap();
+        std::fs::write(&profile_path, "mixed-port: 7890\nproxies: []\n").unwrap();
+
+        let store = ActiveConfigStore::new(paths.clone());
+        store
+            .replace_from_profile(
+                &profile_path,
+                &[],
+                PortOverrides {
+                    mixed_port: None,
+                    http_port: Some(7890),
+                    socks_port: Some(7891),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        let content = std::fs::read_to_string(&paths.active_config_path).unwrap();
+        assert!(content.contains("port: 7890"), "config: {content}");
+        assert!(content.contains("socks-port: 7891"), "config: {content}");
+        assert!(
+            !content.contains("mixed-port"),
+            "conflicting mixed-port should be dropped: {content}"
+        );
     }
 
     #[test]

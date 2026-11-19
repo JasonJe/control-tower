@@ -116,7 +116,7 @@ impl ServiceState {
         Ok(())
     }
 
-    /// Update port settings in config.yaml (mixed-port, socks-port, external-controller)
+    /// Update port settings in config.yaml (`port`, `socks-port`, external-controller)
     fn update_config_ports(&self, http_port: u16, socks_port: u16) -> Result<(), String> {
         let config_path = crate::settings::resolve_paths().active_config_path;
         if !config_path.exists() {
@@ -129,9 +129,29 @@ impl ServiceState {
         let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)
             .map_err(|e| format!("Failed to parse config.yaml: {}", e))?;
 
+        // Exclude a profile's mixed-port when it collides with the ports chosen
+        // here; both listeners would otherwise try to bind the same address.
+        let existing_mixed = yaml.get("mixed-port").and_then(|v| v.as_u64());
+
         if let Some(map) = yaml.as_mapping_mut() {
-            map.insert("mixed-port".into(), http_port.into());
+            // `http_port` is Mihomo's `port` (HTTP proxy), not `mixed-port`.
+            map.insert("port".into(), http_port.into());
             map.insert("socks-port".into(), socks_port.into());
+
+            if existing_mixed == Some(u64::from(http_port))
+                || existing_mixed == Some(u64::from(socks_port))
+            {
+                map.remove(&serde_yaml_ng::Value::String("mixed-port".to_string()));
+                tracing::warn!(
+                    "Removed mixed-port {:?}: it collides with http_port/socks_port",
+                    existing_mixed
+                );
+            }
+
+            // Older builds wrote the non-standard `http-port` key, which Mihomo
+            // ignores. Clean it up so the file no longer misleads anyone.
+            map.remove(&serde_yaml_ng::Value::String("http-port".to_string()));
+
             let api_host = self.api_host.read().clone();
             let api_port = *self.api_port.read();
             let external_controller = format!("{}:{}", api_host, api_port);
@@ -151,6 +171,7 @@ impl ServiceState {
 
     /// Apply port settings: save to settings.yaml, update config.yaml, restart Mihomo
     pub fn apply_port_settings(&self, http_port: u16, socks_port: u16) -> Result<(), String> {
+        self.validate_proxy_ports(http_port, socks_port)?;
         self.update_config_ports(http_port, socks_port)?;
 
         // Only touch the fields this endpoint owns. `save_settings` merges by
@@ -161,9 +182,6 @@ impl ServiceState {
         let mut settings = crate::SettingsData::patch();
         settings.http_port = Some(http_port);
         settings.socks_port = Some(socks_port);
-        // Profile generation prefers `mixed_port` over `http_port`, so a stale
-        // value there would ignore the port the user just set.
-        settings.mixed_port = Some(http_port);
         self.save_settings(&settings)?;
 
         let config_path = self.last_config_path.read().clone();
@@ -174,6 +192,39 @@ impl ServiceState {
         }
 
         tracing::info!("Port settings applied");
+        Ok(())
+    }
+
+    /// Reject port combinations that cannot work.
+    ///
+    /// The HTTP (`port`) and SOCKS (`socks-port`) listeners are independent, so
+    /// they must differ from each other and from the ports already used by the
+    /// Mihomo API and by Control Tower itself.
+    pub fn validate_proxy_ports(&self, http_port: u16, socks_port: u16) -> Result<(), String> {
+        if http_port == 0 || socks_port == 0 {
+            return Err("Port numbers must be between 1 and 65535".to_string());
+        }
+        if http_port == socks_port {
+            return Err("HTTP port and SOCKS port must be different".to_string());
+        }
+
+        let api_port = *self.api_port.read();
+        if http_port == api_port || socks_port == api_port {
+            return Err(format!(
+                "Proxy ports must differ from the Mihomo API port ({api_port})"
+            ));
+        }
+
+        let service_port = self
+            .get_settings()
+            .service_port
+            .unwrap_or(crate::settings::consts::DEFAULT_SERVICE_PORT);
+        if http_port == service_port || socks_port == service_port {
+            return Err(format!(
+                "Proxy ports must differ from the Control Tower service port ({service_port})"
+            ));
+        }
+
         Ok(())
     }
 

@@ -260,6 +260,16 @@ impl ServiceState {
             merged.closed_connections = new_settings.closed_connections.clone();
         }
 
+        // A persisted mixed-port that equals one of the independent HTTP/SOCKS
+        // listeners can never bind. Drop it here so a profile switch does not
+        // resurrect a colliding listener (config generation applies the same
+        // rule, but keeping settings.yaml consistent avoids surprises).
+        if let Some(mixed) = merged.mixed_port {
+            if Some(mixed) == merged.http_port || Some(mixed) == merged.socks_port {
+                merged.mixed_port = None;
+            }
+        }
+
         let yaml_str = serde_yaml_ng::to_string(&merged)
             .map_err(|e| format!("Failed to serialize settings: {}", e))?;
 

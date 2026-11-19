@@ -90,9 +90,11 @@ pub async fn logout(
 ///
 /// Flow:
 /// 1. Client calls GET /api/auth/nonce to get a random nonce
-/// 2. Client computes: key = argon2(password, nonce), hash = sha256(key + nonce)
+/// 2. Client computes key = PBKDF2(password, "control-tower-auth-key-v1"),
+///    then hash = sha256(key + nonce)
 /// 3. Client calls POST /api/auth/login with { hash, nonce }
-/// 4. Server retrieves stored key (argon2 of password), computes expected_hash = sha256(stored_key + nonce)
+/// 4. Server retrieves the stored key (the same PBKDF2 output, set up once via
+///    `setup-password`) and computes expected_hash = sha256(stored_key + nonce)
 /// 5. Server compares hash == expected_hash
 ///
 /// This way the actual password is never transmitted.
@@ -118,7 +120,7 @@ pub async fn login(
     }
 
     // Verify using challenge-response
-    // Client sends: hash = sha256(key + nonce) where key = argon2(password, nonce)
+    // Client sends: hash = sha256(key + nonce) where key = PBKDF2(password, salt)
     // We compute expected_hash = sha256(stored_key + nonce) and compare
     let client_hash = body.hash.as_str();
     let nonce = body.nonce.as_str();

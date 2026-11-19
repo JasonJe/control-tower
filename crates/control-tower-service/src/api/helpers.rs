@@ -55,15 +55,20 @@ pub fn update_profile_rules_count(count: usize) -> anyhow::Result<()> {
         String::new()
     };
 
-    let mut settings: SettingsData = serde_yaml_ng::from_str(&content)
-        .unwrap_or_else(|_| SettingsData::default());
+    // Do not fall back to defaults on a parse error: that would replace a
+    // malformed settings.yaml (including its auth verifier) with a near-empty
+    // file and silently disable authentication.
+    let mut settings: SettingsData = if content.trim().is_empty() {
+        SettingsData::default()
+    } else {
+        serde_yaml_ng::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("Refusing to overwrite malformed settings.yaml: {}", e))?
+    };
 
     settings.profile_rules_count = Some(count);
 
     let yaml_str = serde_yaml_ng::to_string(&settings)?;
-    let temp = settings_path.with_extension("yaml.tmp");
-    std::fs::write(&temp, &yaml_str)?;
-    std::fs::rename(&temp, &settings_path)?;
+    crate::service::settings_ops::write_private_file(&settings_path, &yaml_str)?;
     crate::service::settings_ops::invalidate_settings_cache();
     Ok(())
 }

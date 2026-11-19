@@ -3,11 +3,26 @@
 //! All writes to the active Mihomo config file must go through this store
 //! so that the file is never partially written and concurrent writers do not
 //! overwrite each other's changes.
+//!
+//! The in-process guarantee is provided by a global lock around every
+//! read-modify-write cycle. Writes coming from a different process (for
+//! example `ctctl` while the service is running) are only protected against
+//! truncation by the atomic rename, not against lost updates.
 
 use anyhow::Result;
 use std::path::PathBuf;
 
 use crate::ControlTowerPaths;
+
+/// Serialize read-modify-write cycles against config.yaml within this process.
+///
+/// `ActiveConfigStore` is created per request, so a per-instance lock would be
+/// useless: two handlers could read the same file, mutate private copies, and
+/// the later writer would silently drop the earlier change.
+fn config_write_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Port overrides read from settings.yaml.
 /// These override the ports from the profile when generating config.yaml.
@@ -66,6 +81,7 @@ impl ActiveConfigStore {
         custom_rules: &[String],
         port_overrides: PortOverrides,
     ) -> Result<usize> {
+        let _guard = config_write_lock();
         let new_content = std::fs::read_to_string(profile_path)?;
 
         // Read existing config to extract user customizations (if any)
@@ -156,12 +172,19 @@ impl ActiveConfigStore {
         Ok(profile_rules_count)
     }
 
-    /// Remove a `mixed-port` that duplicates `port` or `socks-port`.
+    /// Remove legacy/non-standard port keys and a `mixed-port` that duplicates
+    /// `port` or `socks-port`.
     ///
     /// The HTTP/SOCKS ports are explicitly configured by the user, while
     /// `mixed-port` usually comes from the profile. Keeping the collision would
-    /// make one of the listeners fail to bind.
+    /// make one of the listeners fail to bind. Profiles exported by older
+    /// builds may also contain the non-standard `http-port` key, which Mihomo
+    /// ignores.
     fn remove_conflicting_ports(yaml: &mut serde_yaml_ng::Value) {
+        if let Some(map) = yaml.as_mapping_mut() {
+            map.remove(&serde_yaml_ng::Value::String("http-port".to_string()));
+        }
+
         let port = yaml.get("port").and_then(|v| v.as_u64());
         let socks = yaml.get("socks-port").and_then(|v| v.as_u64());
         let Some(mixed) = yaml.get("mixed-port").and_then(|v| v.as_u64()) else {
@@ -220,6 +243,7 @@ impl ActiveConfigStore {
 
     /// Set the `mode` field in the active config, preserving all other fields.
     pub fn set_mode(&self, mode: &str) -> Result<()> {
+        let _guard = config_write_lock();
         let content = std::fs::read_to_string(&self.paths.active_config_path)?;
         let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)?;
         if let Some(map) = yaml.as_mapping_mut() {
@@ -230,6 +254,7 @@ impl ActiveConfigStore {
 
     /// Append a single rule to the rules array, creating the array if absent.
     pub fn append_rule(&self, rule: &str) -> Result<()> {
+        let _guard = config_write_lock();
         let content = if self.paths.active_config_path.exists() {
             std::fs::read_to_string(&self.paths.active_config_path)?
         } else {
@@ -247,6 +272,7 @@ impl ActiveConfigStore {
 
     /// Prepend a single rule to the rules array (insert at top, highest priority).
     pub fn prepend_rule(&self, rule: &str) -> Result<()> {
+        let _guard = config_write_lock();
         let content = std::fs::read_to_string(&self.paths.active_config_path)?;
         let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)?;
 
@@ -258,6 +284,7 @@ impl ActiveConfigStore {
 
     /// Remove a rule from the rules array by its string content.
     pub fn remove_rule_by_content(&self, rule_content: &str) -> Result<()> {
+        let _guard = config_write_lock();
         let content = std::fs::read_to_string(&self.paths.active_config_path)?;
         let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)?;
 
@@ -278,6 +305,7 @@ impl ActiveConfigStore {
 
     /// Remove a rule by 1-based index, returning the removed rule string.
     pub fn remove_rule(&self, index: usize) -> Result<String> {
+        let _guard = config_write_lock();
         let content = std::fs::read_to_string(&self.paths.active_config_path)?;
         let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)?;
 
@@ -307,6 +335,7 @@ impl ActiveConfigStore {
 
     /// Clear all rules from the active config atomically.
     pub fn clear_rules(&self) -> Result<()> {
+        let _guard = config_write_lock();
         let content = if self.paths.active_config_path.exists() {
             std::fs::read_to_string(&self.paths.active_config_path)?
         } else {
@@ -326,6 +355,7 @@ impl ActiveConfigStore {
 
     /// Import multiple rules, appending them to the existing rules array.
     pub fn import_rules(&self, new_rules: Vec<String>) -> Result<()> {
+        let _guard = config_write_lock();
         if new_rules.is_empty() {
             return Ok(());
         }
@@ -350,6 +380,7 @@ impl ActiveConfigStore {
         profile_rules_count: usize,
         custom_rules: &[String],
     ) -> Result<()> {
+        let _guard = config_write_lock();
         let content = if self.paths.active_config_path.exists() {
             std::fs::read_to_string(&self.paths.active_config_path)?
         } else {
@@ -396,10 +427,7 @@ impl ActiveConfigStore {
 
     /// Atomically write `content` to `active_config_path` using a .tmp rename.
     fn write_atomically(&self, content: &str) -> Result<()> {
-        let target = &self.paths.active_config_path;
-        let temp = target.with_extension("yaml.tmp");
-        std::fs::write(&temp, content)?;
-        std::fs::rename(&temp, target)?;
+        crate::write_private_atomic(&self.paths.active_config_path, content)?;
         Ok(())
     }
 
@@ -421,7 +449,7 @@ impl ActiveConfigStore {
     /// Set the entire `rule-providers` section in the active config.yaml.
     /// Writes as a map keyed by provider name (Mihomo format), replacing any existing section.
     pub fn set_rule_providers(&self, providers: &[crate::profiles::RuleProviderConfig]) -> Result<()> {
-        
+        let _guard = config_write_lock();
         let content = if self.paths.active_config_path.exists() {
             std::fs::read_to_string(&self.paths.active_config_path)?
         } else {
@@ -452,6 +480,7 @@ impl ActiveConfigStore {
 
     /// Remove a specific rule provider by name from the active config.yaml.
     pub fn remove_rule_provider(&self, name: &str) -> Result<()> {
+        let _guard = config_write_lock();
         let content = std::fs::read_to_string(&self.paths.active_config_path)?;
         let mut yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content)?;
         if let Some(map) = yaml.as_mapping_mut() {
@@ -526,7 +555,11 @@ mod tests {
         let (_temp, paths) = make_temp_paths();
         let profile_path = paths.config_dir.join("profiles").join("p2.yaml");
         std::fs::create_dir_all(profile_path.parent().unwrap()).unwrap();
-        std::fs::write(&profile_path, "mixed-port: 7890\nproxies: []\n").unwrap();
+        std::fs::write(
+            &profile_path,
+            "mixed-port: 7890\nhttp-port: 9999\nproxies: []\n",
+        )
+        .unwrap();
 
         let store = ActiveConfigStore::new(paths.clone());
         store

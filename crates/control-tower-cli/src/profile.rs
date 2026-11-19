@@ -68,7 +68,7 @@ async fn add_profile(url: &str, name: Option<&str>, headers: &[String]) -> Resul
     std::fs::create_dir_all(&profiles_dir)?;
 
     let profile_file = profiles_dir.join(format!("{}.yaml", id));
-    std::fs::write(&profile_file, &content)?;
+    control_tower_service_core::write_private_atomic(&profile_file, &content)?;
 
     // Create profile
     let profile = Profile {
@@ -215,7 +215,7 @@ async fn update_profile(id: Option<&str>, headers: &[String]) -> Result<()> {
 
     // Update file
     if let Some(ref file) = profiles[profile_idx].file {
-        std::fs::write(file, &content)?;
+        control_tower_service_core::write_private_atomic(std::path::Path::new(file), &content)?;
     }
 
     // Persist options so later updates (and cron jobs) keep using the headers.

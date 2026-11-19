@@ -4,7 +4,7 @@
 
 mod lifecycle;
 pub(crate) mod settings_ops;
-mod config_ops;
+pub(crate) mod config_ops;
 mod clash_api;
 pub mod logging;
 mod latency_test;

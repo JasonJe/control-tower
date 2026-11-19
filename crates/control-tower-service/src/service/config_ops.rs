@@ -5,6 +5,50 @@ use reqwest::blocking::Client as BlockingClient;
 
 use crate::ServiceState;
 
+/// Atomically replace config.yaml and keep it owner-only.
+///
+/// config.yaml can contain proxy credentials. Writing through a `.tmp` file
+/// also prevents a crash from leaving Mihomo with a truncated config.
+fn write_config_atomically(path: &std::path::Path, content: &str) -> Result<(), String> {
+    control_tower_service_core::write_private_atomic(path, content)
+        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+}
+
+/// Validate a complete port set before persisting it.
+///
+/// Kept as a free function so the settings endpoints can validate the values
+/// they are about to save (including a new API/service port) without waiting
+/// for `apply-ports` to restart Mihomo.
+pub(crate) fn validate_port_set(
+    http_port: u16,
+    socks_port: u16,
+    api_port: u16,
+    service_port: u16,
+) -> Result<(), String> {
+    if http_port == 0 || socks_port == 0 || api_port == 0 || service_port == 0 {
+        return Err("Port numbers must be between 1 and 65535".to_string());
+    }
+    if http_port == socks_port {
+        return Err("HTTP port and SOCKS port must be different".to_string());
+    }
+    if http_port == api_port || socks_port == api_port {
+        return Err(format!(
+            "Proxy ports must differ from the Mihomo API port ({api_port})"
+        ));
+    }
+    if http_port == service_port || socks_port == service_port {
+        return Err(format!(
+            "Proxy ports must differ from the Control Tower service port ({service_port})"
+        ));
+    }
+    if api_port == service_port {
+        return Err(format!(
+            "Mihomo API port and Control Tower service port must be different ({api_port})"
+        ));
+    }
+    Ok(())
+}
+
 /// Hot-patch Mihomo via PATCH /configs for immediate effect (runtime-only, no file write).
 fn hot_patch_configs(api_url: &str, log_level: Option<&str>, allow_lan: Option<bool>,
                      ipv6: Option<bool>, tcp_concurrent: Option<bool>) {
@@ -109,8 +153,7 @@ impl ServiceState {
         let new_content = serde_yaml_ng::to_string(&yaml)
             .map_err(|e| format!("Failed to serialize config.yaml: {}", e))?;
 
-        std::fs::write(&config_path, new_content)
-            .map_err(|e| format!("Failed to write config.yaml: {}", e))?;
+        write_config_atomically(&config_path, &new_content)?;
 
         tracing::info!("Mode updated in config.yaml: {}", mode);
         Ok(())
@@ -161,8 +204,7 @@ impl ServiceState {
         let new_content = serde_yaml_ng::to_string(&yaml)
             .map_err(|e| format!("Failed to serialize config.yaml: {}", e))?;
 
-        std::fs::write(&config_path, new_content)
-            .map_err(|e| format!("Failed to write config.yaml: {}", e))?;
+        write_config_atomically(&config_path, &new_content)?;
 
         let api_port = *self.api_port.read();
         tracing::info!("Ports updated in config.yaml: http={}, socks={}, api={}", http_port, socks_port, api_port);
@@ -172,7 +214,18 @@ impl ServiceState {
     /// Apply port settings: save to settings.yaml, update config.yaml, restart Mihomo
     pub fn apply_port_settings(&self, http_port: u16, socks_port: u16) -> Result<(), String> {
         self.validate_proxy_ports(http_port, socks_port)?;
-        self.update_config_ports(http_port, socks_port)?;
+
+        // Ports can be configured before any profile is activated. In that case
+        // there is no config.yaml yet; still persist the settings and apply
+        // them the next time config.yaml is generated.
+        let config_exists = crate::settings::resolve_paths().active_config_path.exists();
+        if config_exists {
+            self.update_config_ports(http_port, socks_port)?;
+        } else {
+            tracing::info!(
+                "config.yaml not found; saving port settings for the next profile activation"
+            );
+        }
 
         // Only touch the fields this endpoint owns. `save_settings` merges by
         // `Some`-ness, so anything left `None` keeps the user's existing value.
@@ -201,31 +254,11 @@ impl ServiceState {
     /// they must differ from each other and from the ports already used by the
     /// Mihomo API and by Control Tower itself.
     pub fn validate_proxy_ports(&self, http_port: u16, socks_port: u16) -> Result<(), String> {
-        if http_port == 0 || socks_port == 0 {
-            return Err("Port numbers must be between 1 and 65535".to_string());
-        }
-        if http_port == socks_port {
-            return Err("HTTP port and SOCKS port must be different".to_string());
-        }
-
-        let api_port = *self.api_port.read();
-        if http_port == api_port || socks_port == api_port {
-            return Err(format!(
-                "Proxy ports must differ from the Mihomo API port ({api_port})"
-            ));
-        }
-
         let service_port = self
             .get_settings()
             .service_port
             .unwrap_or(crate::settings::consts::DEFAULT_SERVICE_PORT);
-        if http_port == service_port || socks_port == service_port {
-            return Err(format!(
-                "Proxy ports must differ from the Control Tower service port ({service_port})"
-            ));
-        }
-
-        Ok(())
+        validate_port_set(http_port, socks_port, *self.api_port.read(), service_port)
     }
 
     /// Update tun section in config.yaml (does NOT touch dns section)
@@ -261,8 +294,7 @@ impl ServiceState {
         let new_content = serde_yaml_ng::to_string(&yaml)
             .map_err(|e| format!("Failed to serialize config.yaml: {}", e))?;
 
-        std::fs::write(&config_path, new_content)
-            .map_err(|e| format!("Failed to write config.yaml: {}", e))?;
+        write_config_atomically(&config_path, &new_content)?;
 
         Ok(())
     }
@@ -349,15 +381,21 @@ impl ServiceState {
         let new_content = serde_yaml_ng::to_string(&yaml)
             .map_err(|e| format!("Failed to serialize config.yaml: {}", e))?;
 
-        std::fs::write(&config_path, new_content)
-            .map_err(|e| format!("Failed to write config.yaml: {}", e))?;
+        write_config_atomically(&config_path, &new_content)?;
 
         Ok(())
     }
 
     /// Apply TUN settings: update config.yaml tun section and settings.yaml tun_enabled
     pub fn apply_tun_settings(&self, tun_enabled: bool) -> Result<(), String> {
-        self.update_config_tun(tun_enabled)?;
+        // Same as apply-ports: allow configuring TUN before a profile exists.
+        if crate::settings::resolve_paths().active_config_path.exists() {
+            self.update_config_tun(tun_enabled)?;
+        } else {
+            tracing::info!(
+                "config.yaml not found; saving tun_enabled for the next profile activation"
+            );
+        }
 
         // Same partial-update rule as `apply_port_settings`: do not rewrite
         // unrelated settings (api_host, service_port, auto_test, ...).

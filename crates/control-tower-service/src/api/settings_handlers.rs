@@ -4,6 +4,11 @@ use actix_web::{web, HttpResponse};
 use std::sync::Arc;
 use tokio::task;
 
+use crate::service::config_ops::validate_port_set;
+use crate::settings::consts::{
+    DEFAULT_MIHOMO_API_PORT, DEFAULT_MIHOMO_HTTP_PORT, DEFAULT_MIHOMO_SOCKS_PORT,
+    DEFAULT_SERVICE_PORT,
+};
 use crate::settings::SettingsData;
 
 use crate::ServiceState;
@@ -36,6 +41,35 @@ pub async fn put_settings(
     // These are maintained by the rules/profile subsystems and must not be
     // cleared when the user saves settings from the UI.
     let current = state.get_settings();
+
+    // Validate the effective port set before persisting it. Otherwise a PUT
+    // with invalid ports succeeds, then apply-ports rejects it and leaves
+    // settings.yaml in a state that will generate a broken config later.
+    if body.http_port.is_some()
+        || body.socks_port.is_some()
+        || body.api_port.is_some()
+        || body.service_port.is_some()
+    {
+        let http_port = body
+            .http_port
+            .or(current.http_port)
+            .unwrap_or(DEFAULT_MIHOMO_HTTP_PORT);
+        let socks_port = body
+            .socks_port
+            .or(current.socks_port)
+            .unwrap_or(DEFAULT_MIHOMO_SOCKS_PORT);
+        let api_port = body
+            .api_port
+            .or(current.api_port)
+            .unwrap_or(DEFAULT_MIHOMO_API_PORT);
+        let service_port = body
+            .service_port
+            .or(current.service_port)
+            .unwrap_or(DEFAULT_SERVICE_PORT);
+        if let Err(e) = validate_port_set(http_port, socks_port, api_port, service_port) {
+            return HttpResponse::BadRequest().json(ApiResponse::<()>::error(e));
+        }
+    }
 
     let settings = SettingsData {
         api_host: body.api_host.clone(),

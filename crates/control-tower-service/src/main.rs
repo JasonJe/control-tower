@@ -1220,6 +1220,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Ensure settings.yaml exists (create with defaults if missing)
     ServiceState::ensure_settings_file();
 
+    // Fail closed: a malformed settings.yaml must not degrade to defaults
+    // (which would silently disable authentication).
+    if let Err(e) = ServiceState::validate_settings_file() {
+        eprintln!("ERROR: {}", e);
+        std::process::exit(1);
+    }
+
     // Load settings from settings.yaml (also syncs auto_test.enabled)
     state.load_settings();
 

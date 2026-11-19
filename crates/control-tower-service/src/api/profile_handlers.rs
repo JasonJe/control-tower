@@ -10,6 +10,24 @@ use control_tower_service_core::{ProfilesYaml, ProfileDownloadOptions};
 
 use super::{ApiResponse, AddProfileRequest, RefreshRequest};
 
+/// Persist profiles.yaml atomically and owner-only.
+///
+/// The file stores subscription URLs and custom `options.headers`, which often
+/// contain access tokens; it must not be world-readable, and a partial write
+/// must never be observed by the scheduler or the CLI.
+fn save_profiles_yaml(path: &std::path::Path, yaml: &ProfilesYaml) -> Result<(), String> {
+    let content = serde_yaml_ng::to_string(yaml)
+        .map_err(|e| format!("serialize error: {}", e))?;
+    control_tower_service_core::write_private_atomic(path, &content)
+        .map_err(|e| format!("write error: {}", e))
+}
+
+/// Persist a profile file atomically and owner-only (it contains proxies and
+/// their credentials).
+fn save_profile_file(path: &std::path::Path, content: &str) -> std::io::Result<()> {
+    control_tower_service_core::write_private_atomic(path, content)
+}
+
 /// Resolve the on-disk path for a profile file.
 ///
 /// Tries in order:
@@ -193,7 +211,7 @@ pub async fn add_profile(
                 }
             } else {
                 // Create empty file
-                if let Err(e) = std::fs::write(&profile_file, "mode: rule\nproxies: []\n") {
+                if let Err(e) = save_profile_file(&profile_file, "mode: rule\nproxies: []\n") {
                     return HttpResponse::InternalServerError()
                         .json(ApiResponse::<()>::error(format!("Failed to create profile file: {}", e)));
                 }
@@ -202,7 +220,7 @@ pub async fn add_profile(
         "script" => {
             // Script profile: store script content, execute at activation
             let script_content = body.script.as_deref().unwrap_or("");
-            if let Err(e) = std::fs::write(&profile_file, script_content) {
+            if let Err(e) = save_profile_file(&profile_file, script_content) {
                 return HttpResponse::InternalServerError()
                     .json(ApiResponse::<()>::error(format!("Failed to write script: {}", e)));
             }
@@ -210,7 +228,7 @@ pub async fn add_profile(
         "merge" => {
             // Merge profile: just store references, merge at activation
             // Create a placeholder file
-            if let Err(e) = std::fs::write(&profile_file, "# Merge profile - content generated at activation\nmode: rule\n") {
+            if let Err(e) = save_profile_file(&profile_file, "# Merge profile - content generated at activation\nmode: rule\n") {
                 return HttpResponse::InternalServerError()
                     .json(ApiResponse::<()>::error(format!("Failed to create merge profile: {}", e)));
             }
@@ -299,7 +317,7 @@ pub async fn add_profile(
             }
 
             // Save the profile file
-            if let Err(e) = std::fs::write(&profile_file, &content) {
+            if let Err(e) = save_profile_file(&profile_file, &content) {
                 return HttpResponse::InternalServerError()
                     .json(ApiResponse::<()>::error(format!("Failed to save profile: {}", e)));
             }
@@ -347,7 +365,7 @@ pub async fn add_profile(
 
     yaml.items.push(new_item);
 
-    if let Err(e) = std::fs::write(profiles_path, serde_yaml_ng::to_string(&yaml).unwrap_or_default()) {
+    if let Err(e) = save_profiles_yaml(profiles_path, &yaml) {
         return HttpResponse::InternalServerError()
             .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
     }
@@ -409,7 +427,7 @@ pub async fn activate_profile(
             match execute_script(script_content, &actual_file) {
                 Ok(content) => {
                     // Write generated content to profile file for later use
-                    if let Err(e) = std::fs::write(&actual_file, &content) {
+                    if let Err(e) = save_profile_file(&actual_file, &content) {
                         tracing::warn!("Failed to write script output to profile file: {}", e);
                     }
                     content
@@ -429,7 +447,7 @@ pub async fn activate_profile(
             match merge_profiles(&profile_item.merge, &profiles_dir, &yaml) {
                 Ok(content) => {
                     // Write merged content to profile file for later use
-                    if let Err(e) = std::fs::write(&actual_file, &content) {
+                    if let Err(e) = save_profile_file(&actual_file, &content) {
                         tracing::warn!("Failed to write merged content to profile file: {}", e);
                     }
                     content
@@ -492,7 +510,7 @@ pub async fn activate_profile(
     yaml_write.current = Some(uid.clone());
 
     // Write back profiles.yaml
-    if let Err(e) = std::fs::write(profiles_path, serde_yaml_ng::to_string(&yaml_write).unwrap_or_default()) {
+    if let Err(e) = save_profiles_yaml(profiles_path, &yaml_write) {
         return HttpResponse::InternalServerError()
             .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
     }
@@ -787,11 +805,11 @@ pub async fn update_profile(
             }
 
             // Write new content to profile file
-            std::fs::write(&profile_file_clone, &new_content)?;
+            control_tower_service_core::write_private_atomic(&profile_file_clone, &new_content)?;
 
             // Persist the full manifest (name/cron/options/url/updated_at).
-            let new_content_str = serde_yaml_ng::to_string(&yaml_to_write)?;
-            std::fs::write(&profiles_path_clone, new_content_str)?;
+            save_profiles_yaml(&profiles_path_clone, &yaml_to_write)
+                .map_err(|e| anyhow::anyhow!("Failed to update profiles.yaml: {}", e))?;
 
             Ok::<(), anyhow::Error>(())
         })
@@ -859,7 +877,7 @@ pub async fn update_profile(
         }
     } else {
         // No URL change — just write back profiles.yaml with name/cron updates
-        if let Err(e) = std::fs::write(profiles_path, serde_yaml_ng::to_string(&yaml).unwrap_or_default()) {
+        if let Err(e) = save_profiles_yaml(profiles_path, &yaml) {
             return HttpResponse::InternalServerError()
                 .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
         }
@@ -1011,7 +1029,7 @@ pub async fn refresh_profile(
             .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
 
         // Update profile file
-        std::fs::write(&profile_file_clone, &new_content)?;
+        control_tower_service_core::write_private_atomic(&profile_file_clone, &new_content)?;
 
         // Update updated_at in profiles.yaml
         let content = std::fs::read_to_string(&profiles_path_clone)?;
@@ -1025,8 +1043,8 @@ pub async fn refresh_profile(
             }
         }
 
-        let new_yaml_content = serde_yaml_ng::to_string(&yaml)?;
-        std::fs::write(&profiles_path_clone, new_yaml_content)?;
+        save_profiles_yaml(&profiles_path_clone, &yaml)
+            .map_err(|e| anyhow::anyhow!("Failed to update profiles.yaml: {}", e))?;
 
         // If this is the current profile, update active config.yaml so Mihomo reload picks up new proxies
         if is_current {
@@ -1142,7 +1160,7 @@ pub async fn delete_profile(
     }
 
     // Write back profiles.yaml
-    if let Err(e) = std::fs::write(profiles_path, serde_yaml_ng::to_string(&yaml).unwrap_or_default()) {
+    if let Err(e) = save_profiles_yaml(profiles_path, &yaml) {
         return HttpResponse::InternalServerError()
             .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
     }

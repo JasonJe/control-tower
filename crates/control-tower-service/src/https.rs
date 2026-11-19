@@ -47,9 +47,10 @@ pub fn generate_self_signed_cert(cert_path: &Path, key_path: &Path) -> Result<()
     let cert_pem = cert.pem();
     fs::write(cert_path, &cert_pem).map_err(|e| format!("Failed to write cert: {}", e))?;
 
-    // Write private key
+    // Write private key (owner-only: it must never be world-readable)
     let key_pem = key_pair.serialize_pem();
-    fs::write(key_path, &key_pem).map_err(|e| format!("Failed to write key: {}", e))?;
+    control_tower_service_core::write_private_atomic(key_path, &key_pem)
+        .map_err(|e| format!("Failed to write key: {}", e))?;
 
     tracing::info!("HTTPS certificates generated successfully");
     Ok(())

@@ -66,7 +66,7 @@ pub async fn start_http_server(
 async fn index() -> HttpResponse {
     HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
-        .body(html::INDEX_HTML)
+        .body(html::index_html())
 }
 
 async fn crypto_js() -> HttpResponse {

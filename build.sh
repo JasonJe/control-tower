@@ -287,11 +287,12 @@ Restart=on-failure
 RestartSec=5
 User=${USER}
 Environment="RUST_LOG=info"
+# The IPC socket lives in /tmp; PrivateTmp would hide it from ctctl.
 NoNewPrivileges=true
 AmbientCapabilities=CAP_NET_ADMIN
 ProtectSystem=strict
 ProtectHome=false
-PrivateTmp=true
+UMask=0077
 ReadWritePaths=/opt/ctsvc
 StandardOutput=journal
 StandardError=journal

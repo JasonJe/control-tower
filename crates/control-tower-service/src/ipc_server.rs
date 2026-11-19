@@ -51,6 +51,20 @@ impl IpcServer {
         listener.set_nonblocking(true)
             .map_err(|e| format!("Failed to set non-blocking: {}", e))?;
 
+        // The service usually runs as root. A socket created under the default
+        // umask would let any local user issue IPC commands (TUN, proxy
+        // selection, ...), so restrict it to the service user.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(e) = std::fs::set_permissions(
+                &self.socket_path,
+                std::fs::Permissions::from_mode(0o600),
+            ) {
+                tracing::warn!("Failed to restrict IPC socket permissions: {}", e);
+            }
+        }
+
         self.listener = Some(listener);
         Ok(())
     }

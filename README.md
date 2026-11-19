@@ -47,11 +47,13 @@ sudo systemctl status ctsvc   # 状态
 
 ### 访问 Web UI
 
-浏览器打开 **https://127.0.0.1:8080**（首次需设置密码）
+浏览器打开 **http://127.0.0.1:8080**（启用 HTTPS 后为 `https://127.0.0.1:8080`；首次需设置密码）
 
 ---
 
 ## CLI 参考
+
+> `ctctl` 需要以服务运行用户（通过 installer 安装时通常是 `root`）执行，才能访问权限为 `0600` 的 IPC socket 和配置目录；普通用户可使用 Web UI 或只读接口。
 
 ```bash
 # 订阅管理
@@ -134,6 +136,7 @@ rule-providers:
 > - 只有 `auth.enabled: true` 且 `password` 非空时才会强制鉴权；缺少 `auth` 段或密码为空时 API 保持开放（删除 `auth` 段等价于关闭鉴权，请谨慎操作）。
 > - 开启鉴权后，除 `/api/auth/*`（登录/状态/首次设置密码）外，所有 `/api/*` 接口都需要凭据：浏览器使用登录后下发的 httpOnly cookie（`ct_session`，SameSite=Strict，HTTPS 下带 Secure），并额外携带 `X-Requested-With: control-tower` 头用于防 CSRF；脚本/CLI 使用 `Authorization: Bearer <token>`。
 > - 密码只能通过 Web UI 首次设置（`POST /api/auth/setup-password`），请求体是 PBKDF2 派生 key 而不是明文密码；首次设置只允许从本机（loopback）发起，已有密码时该接口会拒绝覆盖，重置请直接编辑 `settings.yaml`。
+> - `settings.yaml` 中的 `auth.password` 是可直接用于登录的校验凭据，服务会以 `0600` 权限写入；请勿放宽该文件权限或把内容提交到版本库。
 > - `GET /api/settings` 不会返回 `auth.password`；`GET /api/profiles` 不会返回 profile 的自定义请求头（可能含订阅 token）。
 > - Web UI 只依赖 httpOnly cookie（登录响应里的 `token` 供脚本/CLI 使用，页面不会保存），不写入 `localStorage`；Sign Out 会吊销服务端 session 并让浏览器删除 cookie。
 

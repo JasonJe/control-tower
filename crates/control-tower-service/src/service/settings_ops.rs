@@ -49,6 +49,20 @@ fn settings_stamp(path: &std::path::Path) -> SettingsStamp {
     }
 }
 
+/// Write a settings-like file atomically and restrict it to the owner.
+///
+/// settings.yaml holds the password verifier (`auth.password`). A
+/// world-readable copy lets any local user forge a login without knowing the
+/// password, so the file must not inherit the process umask.
+pub(crate) fn write_private_file(path: &std::path::Path, content: &str) -> std::io::Result<()> {
+    control_tower_service_core::write_private_atomic(path, content)
+}
+
+/// Best-effort chmod 0600 (no-op on non-Unix builds used for tests).
+fn restrict_permissions(path: &std::path::Path) {
+    control_tower_service_core::fsutil::restrict_permissions(path);
+}
+
 impl ServiceState {
     /// Load api_host and api_port from settings.yaml, also sync AutoTestState
     pub fn load_settings(&self) {
@@ -106,6 +120,10 @@ impl ServiceState {
         let settings_path = crate::settings::resolve_settings_path();
 
         if settings_path.exists() {
+            // Tighten permissions on files created by older builds, which used
+            // the default umask and could leave the auth verifier readable by
+            // every local user.
+            restrict_permissions(&settings_path);
             return;
         }
 
@@ -141,11 +159,35 @@ impl ServiceState {
                 format!("api_host: 127.0.0.1\napi_port: {DEFAULT_MIHOMO_API_PORT}\nhttp_port: {DEFAULT_MIHOMO_HTTP_PORT}\nsocks_port: {DEFAULT_MIHOMO_SOCKS_PORT}\nservice_port: {DEFAULT_SERVICE_PORT}\ntun_enabled: false\nlog_level: info\nmode: rule\n")
             });
 
-        if let Err(e) = std::fs::write(&settings_path, yaml) {
+        if let Err(e) = write_private_file(&settings_path, &yaml) {
             tracing::error!("Failed to create default settings.yaml: {}", e);
         } else {
             tracing::info!("Created default settings.yaml");
         }
+    }
+
+    /// Refuse to start when settings.yaml exists but cannot be parsed.
+    ///
+    /// `get_settings` keeps the last known good value at runtime, but on the
+    /// very first request there is no previous value: falling back to defaults
+    /// would silently disable authentication. Failing startup makes the
+    /// operator fix the file instead.
+    pub fn validate_settings_file() -> Result<(), String> {
+        let settings_path = crate::settings::resolve_settings_path();
+        if !settings_path.exists() {
+            return Ok(());
+        }
+
+        let content = std::fs::read_to_string(&settings_path).map_err(|e| {
+            format!(
+                "Failed to read {}: {}",
+                settings_path.display(),
+                e
+            )
+        })?;
+        serde_yaml_ng::from_str::<crate::SettingsData>(&content)
+            .map(|_| ())
+            .map_err(|e| format!("Invalid settings.yaml ({}): {}", settings_path.display(), e))
     }
 
     /// Get all settings from settings.yaml
@@ -275,12 +317,10 @@ impl ServiceState {
 
         // Write atomically: readers (`get_settings`, including the auth
         // middleware) must never observe a truncated file, which would parse as
-        // defaults and temporarily disable authentication.
-        let tmp_path = settings_path.with_extension("yaml.tmp");
-        std::fs::write(&tmp_path, yaml_str)
+        // defaults and temporarily disable authentication. The helper also
+        // keeps the file owner-only (it stores the password verifier).
+        write_private_file(&settings_path, &yaml_str)
             .map_err(|e| format!("Failed to write settings.yaml: {}", e))?;
-        std::fs::rename(&tmp_path, &settings_path)
-            .map_err(|e| format!("Failed to replace settings.yaml: {}", e))?;
 
         // Seed the cache with exactly what was written so an immediate
         // `get_settings` does not race the filesystem timestamp.
@@ -339,7 +379,7 @@ impl ServiceState {
         let yaml_str = serde_yaml_ng::to_string(&connections)
             .map_err(|e| format!("Failed to serialize history: {}", e))?;
 
-        std::fs::write(&history_path, yaml_str)
+        write_private_file(&history_path, &yaml_str)
             .map_err(|e| format!("Failed to write connection_history.yaml: {}", e))?;
 
         tracing::debug!("Recorded closed connection to history");

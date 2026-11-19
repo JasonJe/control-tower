@@ -132,6 +132,9 @@ impl ServiceConfig {
     /// Ensure config directories exist
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.config_dir)?;
+        // The config directory holds settings.yaml (password verifier) and
+        // profiles.yaml (subscription tokens): keep it owner-only.
+        crate::fsutil::restrict_dir_permissions(&self.config_dir);
         std::fs::create_dir_all(&self.log_dir)?;
         std::fs::create_dir_all(self.socket_path.parent().unwrap_or(&PathBuf::from("/tmp")))?;
         Ok(())

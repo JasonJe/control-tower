@@ -212,7 +212,7 @@ pub fn set_selected_proxy(name: String) {
         // Try to save to file
         if let Some(path) = find_settings_path() {
             if let Ok(content) = serde_yaml_ng::to_string(&*settings) {
-                let _ = fs::write(path, content);
+                let _ = control_tower_service_core::write_private_atomic(&path, &content);
             }
         }
     }
@@ -230,7 +230,7 @@ pub fn set_mode(mode: String) {
         // Try to save to file
         if let Some(path) = find_settings_path() {
             if let Ok(content) = serde_yaml_ng::to_string(&*settings) {
-                let _ = fs::write(path, content);
+                let _ = control_tower_service_core::write_private_atomic(&path, &content);
             }
         }
     }
@@ -294,7 +294,7 @@ pub fn create_default_settings() -> Result<PathBuf> {
             if !path.exists() {
                 let settings = Settings::default();
                 let content = serde_yaml_ng::to_string(&settings)?;
-                fs::write(path, content)?;
+                control_tower_service_core::write_private_atomic(path, &content)?;
             }
             return Ok(path.clone());
         }
@@ -306,7 +306,7 @@ pub fn create_default_settings() -> Result<PathBuf> {
         if !settings_path.exists() {
             let settings = Settings::default();
             let content = serde_yaml_ng::to_string(&settings)?;
-            fs::write(&settings_path, content)?;
+            control_tower_service_core::write_private_atomic(&settings_path, &content)?;
         }
         return Ok(settings_path);
     }

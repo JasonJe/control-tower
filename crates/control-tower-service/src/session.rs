@@ -8,6 +8,9 @@ pub const SESSION_TTL_SECS: u64 = 86_400;
 /// Maximum number of concurrent sessions (multiple tabs/devices are fine, but
 /// logins must not be able to grow the token map without bound).
 const MAX_SESSIONS: usize = 16;
+/// Cap the public nonce map as well; `/api/auth/nonce` is unauthenticated, so
+/// without a limit a client could grow it until the TTL sweep catches up.
+const MAX_NONCES: usize = 1024;
 
 impl ServiceState {
     /// Generate a new session token and store it
@@ -53,7 +56,7 @@ impl ServiceState {
             if now.saturating_sub(session.created_at) < SESSION_TTL_SECS {
                 return true;
             } else {
-                tracing::debug!("Session expired: {}", token);
+                tracing::debug!("Session expired");
                 sessions.remove(token);
             }
         }
@@ -77,6 +80,15 @@ impl ServiceState {
         let now = chrono::Utc::now().timestamp() as u64;
         let mut nonces = self.auth_nonces.write();
         nonces.retain(|_, issued_at| now.saturating_sub(*issued_at) < NONCE_TTL_SECS);
+        if nonces.len() >= MAX_NONCES {
+            if let Some(oldest) = nonces
+                .iter()
+                .min_by_key(|(_, issued_at)| **issued_at)
+                .map(|(nonce, _)| nonce.clone())
+            {
+                nonces.remove(&oldest);
+            }
+        }
         nonces.insert(nonce, now);
     }
 

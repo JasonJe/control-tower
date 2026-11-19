@@ -472,10 +472,8 @@ fn write_custom_rules_to_settings(settings_path: &std::path::Path, custom_rules:
 
     let yaml_str = serde_yaml_ng::to_string(&settings)?;
 
-    // Atomic write
-    let temp = settings_path.with_extension("yaml.tmp");
-    std::fs::write(&temp, &yaml_str)?;
-    std::fs::rename(&temp, settings_path)?;
+    // Atomic write, owner-only (settings.yaml holds the auth verifier).
+    crate::service::settings_ops::write_private_file(settings_path, &yaml_str)?;
 
     // Drop the cached parse: the new file can share size and mtime tick with
     // the previous one, which would otherwise keep serving stale rules.

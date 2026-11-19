@@ -8,6 +8,7 @@ pub mod state;
 pub mod config;
 pub mod installer;
 pub mod active_config;
+pub mod fsutil;
 pub mod profiles;
 
 pub use state::{ServiceState, ServiceStatus};
@@ -16,4 +17,5 @@ pub use mihomo::MihomoManager;
 pub use config::{ServiceConfig, ControlTowerPaths, exe_dir};
 pub use installer::MihomoInstaller;
 pub use active_config::ActiveConfigStore;
+pub use fsutil::write_private_atomic;
 pub use profiles::{ProfileItem, ProfilesYaml, ProfileDownloadOptions};

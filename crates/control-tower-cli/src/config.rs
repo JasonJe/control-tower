@@ -50,6 +50,7 @@ pub fn load_profiles() -> Result<Vec<Profile>> {
 pub fn save_profiles(profiles: &[Profile]) -> Result<()> {
     let config_dir = get_config_dir()?;
     fs::create_dir_all(&config_dir)?;
+    control_tower_service_core::fsutil::restrict_dir_permissions(&config_dir);
 
     let current = profiles.iter().find(|p| p.active).map(|p| p.id.clone());
 
@@ -73,7 +74,10 @@ pub fn save_profiles(profiles: &[Profile]) -> Result<()> {
     let content = serde_yaml_ng::to_string(&yaml)?;
 
     let profiles_path = config_dir.join("profiles.yaml");
-    fs::write(profiles_path, content)?;
+    // profiles.yaml stores subscription headers (often access tokens), so it
+    // must be owner-only and written atomically: a crash must not leave a
+    // half-written manifest behind.
+    control_tower_service_core::write_private_atomic(&profiles_path, &content)?;
 
     Ok(())
 }

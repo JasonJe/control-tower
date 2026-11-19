@@ -514,7 +514,7 @@ fn update_profile_updated_at(profile_id: &str) {
         }
     };
 
-    if let Err(e) = std::fs::write(&profiles_path, new_content) {
+    if let Err(e) = control_tower_service_core::write_private_atomic(&profiles_path, &new_content) {
         tracing::warn!("Failed to write profiles.yaml after updated_at update: {}", e);
     }
 }
@@ -592,7 +592,7 @@ pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::P
         return Err("Subscription content does not look like a Clash config".to_string());
     }
 
-    std::fs::write(profile_file, &new_content)
+    control_tower_service_core::write_private_atomic(profile_file, &new_content)
         .map_err(|e| format!("Failed to write profile file: {}", e))?;
 
     Ok(())

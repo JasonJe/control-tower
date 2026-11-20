@@ -12,6 +12,8 @@ jobs:
   linux:
     name: Test & build (Linux)
     runs-on: ubuntu-latest
+    # A hung test must fail the job instead of occupying a runner for hours.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -21,11 +23,16 @@ jobs:
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
 
-      # Runs the tests that only make sense on Linux: flock-based profiles.yaml
-      # locking, 0600/0700 permission checks and the IPC socket code are all
-      # `#[cfg(unix)]`, so the Windows dev machine cannot cover them.
+      # `--lib --bins` runs the unit tests, including the Linux-only ones:
+      # flock-based profiles.yaml locking, 0600/0700 permission checks and the
+      # IPC server code are all `#[cfg(unix)]`, so the Windows dev machine
+      # cannot cover them.
+      #
+      # `tests/e2e_test.rs` is deliberately excluded: it spawns the real
+      # `ctsvc` binary and needs a machine where the service can bind sockets.
+      # Run it manually on Linux with `cargo test -p control-tower-service --test e2e_test`.
       - name: Tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --lib --bins
 
       - name: Build (release)
         run: cargo build --release --workspace

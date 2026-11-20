@@ -4,10 +4,24 @@
 //! a client and the control-tower-service.
 
 use std::path::PathBuf;
-use std::process::{Command, Child};
+use std::process::{Child, Command, Stdio};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
+
+/// Kills the service process even when a test panics.
+///
+/// Without this, a failing assertion skips the cleanup and leaves `ctsvc`
+/// running with the test harness' stdout inherited: `cargo test` then waits for
+/// that pipe forever, which shows up as a job that hangs instead of failing.
+struct ServiceGuard(Child);
+
+impl Drop for ServiceGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 /// IPC Client for testing
 struct IpcClient {
@@ -40,25 +54,24 @@ impl IpcClient {
 }
 
 /// Start the service in foreground mode
-fn start_service(socket_path: &PathBuf) -> Child {
+fn start_service(socket_path: &PathBuf) -> ServiceGuard {
     let _ = std::fs::remove_file(socket_path); // Clean up old socket
 
     let child = Command::new(env!("CARGO_BIN_EXE_ctsvc"))
         .arg("--foreground")
         .arg("--socket")
         .arg(socket_path.to_str().unwrap())
+        // Detach the service output: if it inherited the test harness' pipes,
+        // a leaked child would keep `cargo test` waiting for EOF.
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .expect("Failed to start service");
 
     // Wait for service to start
     std::thread::sleep(Duration::from_millis(500));
 
-    child
-}
-
-fn stop_service(mut child: Child) {
-    let _ = child.kill();
-    let _ = child.wait();
+    ServiceGuard(child)
 }
 
 /// Test that service starts and accepts connections
@@ -76,7 +89,7 @@ fn test_service_startup() {
     let result = UnixStream::connect(&socket_path);
     assert!(result.is_ok(), "Should be able to connect to service socket");
 
-    stop_service(child);
+    drop(child);
     let _ = std::fs::remove_file(&socket_path);
 }
 
@@ -97,7 +110,7 @@ fn test_ipc_status_command() {
     assert!(resp_text.contains("\"code\":0") || resp_text.contains("\"code\": -1"),
         "Response should contain code field: {}", resp_text);
 
-    stop_service(child);
+    drop(child);
     let _ = std::fs::remove_file(&socket_path);
 }
 
@@ -118,7 +131,7 @@ fn test_ipc_logs_command() {
     let resp_text = response.unwrap();
     assert!(resp_text.contains("code"), "Response should contain code field: {}", resp_text);
 
-    stop_service(child);
+    drop(child);
     let _ = std::fs::remove_file(&socket_path);
 }
 
@@ -141,7 +154,7 @@ fn test_ipc_start_command_nonexistent_config() {
     // Error is expected since config doesn't exist
     assert!(resp_text.contains("code"), "Response should contain code field: {}", resp_text);
 
-    stop_service(child);
+    drop(child);
     let _ = std::fs::remove_file(&socket_path);
 }
 
@@ -161,7 +174,7 @@ fn test_ipc_get_proxies_command() {
     let resp_text = response.unwrap();
     assert!(resp_text.contains("code"), "Response should contain code field");
 
-    stop_service(child);
+    drop(child);
     let _ = std::fs::remove_file(&socket_path);
 }
 
@@ -181,7 +194,7 @@ fn test_ipc_get_connections_command() {
     let resp_text = response.unwrap();
     assert!(resp_text.contains("code"), "Response should contain code field");
 
-    stop_service(child);
+    drop(child);
     let _ = std::fs::remove_file(&socket_path);
 }
 
@@ -208,7 +221,7 @@ fn test_ipc_stop_command() {
     let status_response = client.send_command(r#"{"cmd":"Status"}"#);
     assert!(status_response.is_ok(), "Status command should still work after stop");
 
-    stop_service(child);
+    drop(child);
     let _ = std::fs::remove_file(&socket_path);
 }
 
@@ -233,6 +246,6 @@ fn test_ipc_multiple_commands_sequence() {
     let resp3 = client.send_command(r#"{"cmd":"Status"}"#);
     assert!(resp3.is_ok());
 
-    stop_service(child);
+    drop(child);
     let _ = std::fs::remove_file(&socket_path);
 }

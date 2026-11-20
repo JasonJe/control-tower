@@ -196,6 +196,10 @@ mode: rule
 SETTINGS
     fi
 
+    # settings.yaml can hold the auth verifier; ship it owner-only, matching
+    # what the service enforces at startup.
+    chmod 600 "$dist/settings.yaml"
+
     # Download Mihomo and geoip database
     download_mihomo "$dist"
 

@@ -1,0 +1,90 @@
+name: Release
+
+# Publishing a version is just a tag push:
+#   git tag -a v0.2.3 -m "Control Tower 0.2.3" && git push origin v0.2.3
+#
+# The package is produced by the same script users run locally (`./build.sh
+# dist`), so a release artifact can always be reproduced. Before publishing,
+# the binaries *inside the tarball* are smoke-tested, not the ones in
+# `target/release`, so a packaging mistake cannot ship a broken archive.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check tag matches Cargo version
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          cargo_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/control-tower-service/Cargo.toml | head -n1)
+          if [ "$tag_version" != "$cargo_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo version $cargo_version"
+            exit 1
+          fi
+          echo "building version $cargo_version"
+
+      # Builds ctsvc/ctctl, bundles the pinned Mihomo 1.19.0 core and the
+      # geoip/geosite databases, writes settings.yaml plus the systemd
+      # install/uninstall scripts, and tars everything into
+      # target/dist/control-tower.tar.gz.
+      - name: Build distribution
+        run: ./build.sh dist
+
+      - name: Verify package
+        run: |
+          set -euo pipefail
+          dist=target/dist/control-tower
+          test -x "$dist/ctsvc"
+          test -x "$dist/ctctl"
+          test -x "$dist/install-service.sh"
+          if [ ! -x "$dist/mihomo/mihomo" ]; then
+            echo "::error::mihomo core is missing from the package"
+            exit 1
+          fi
+          test -f "$dist/mihomo/geoip.metadb"
+          tar -tzf target/dist/control-tower.tar.gz
+
+          pkg=$(mktemp -d)
+          tar -xzf target/dist/control-tower.tar.gz -C "$pkg"
+          "$pkg/control-tower/ctsvc" --version
+          "$pkg/control-tower/ctctl" --version
+
+          # Drive the packaged binaries over IPC, exactly like the smoke
+          # workflow does for the cargo build.
+          BIN_DIR="$pkg/control-tower" bash scripts/smoke-test.sh
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd target/dist
+          sha256sum control-tower.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # Re-run of an existing release: replace the assets in place.
+            gh release upload "$GITHUB_REF_NAME" control-tower.tar.gz SHA256SUMS --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "Control Tower ${GITHUB_REF_NAME#v}" \
+              --generate-notes \
+              control-tower.tar.gz SHA256SUMS
+          fi

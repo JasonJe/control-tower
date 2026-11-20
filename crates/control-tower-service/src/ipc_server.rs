@@ -162,6 +162,12 @@ pub(crate) fn connect_and_send(socket_path: &Path, command: IpcCommand) -> Resul
     let mut stream = UnixStream::connect(socket_path)
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
+    // Never block forever if the server stops answering: tests (and future
+    // callers) should fail with a clear message instead of hanging.
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .map_err(|e| format!("Failed to set read timeout: {}", e))?;
+
     // Send command
     let cmd_bytes = serde_json::to_vec(&command)
         .map_err(|e| format!("Failed to serialize command: {}", e))?;
@@ -176,7 +182,12 @@ pub(crate) fn connect_and_send(socket_path: &Path, command: IpcCommand) -> Resul
         match stream.read(&mut temp) {
             Ok(0) => break, // EOF
             Ok(n) => buffer.extend_from_slice(&temp[..n]),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                return Err("Timed out waiting for IPC response".to_string())
+            }
             Err(e) => return Err(format!("Read error: {}", e)),
         }
         // Response is newline delimited
@@ -199,6 +210,31 @@ pub(crate) fn connect_and_send(socket_path: &Path, command: IpcCommand) -> Resul
 #[cfg(test)]
 mod server_tests {
     use super::*;
+
+    /// Poll `handle_one` until it processes a command.
+    ///
+    /// The listener is deliberately non-blocking (the real main loop polls it
+    /// together with cron jobs), so a single call can return `Ok(None)` before
+    /// the client thread has connected. Ignoring that result left the client
+    /// blocked in `read()` forever, which hung the whole test binary.
+    fn handle_one_blocking(server: &mut IpcServer) -> IpcCommand {
+        use std::time::{Duration, Instant};
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match server.handle_one() {
+                Ok(Some(cmd)) => return cmd,
+                Ok(None) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "timed out waiting for an IPC request"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => panic!("handle_one failed: {}", e),
+            }
+        }
+    }
 
     #[test]
     fn test_server_creation() {
@@ -266,7 +302,7 @@ mod server_tests {
         });
 
         // Server handles one request
-        let _ = server.handle_one();
+        let _ = handle_one_blocking(&mut server);
 
         // Wait for client
         handle.join().expect("Client thread should complete");
@@ -300,7 +336,7 @@ mod server_tests {
             assert_eq!(resp.unwrap().code, -1);
         });
 
-        let _ = server.handle_one();
+        let _ = handle_one_blocking(&mut server);
         handle.join().expect("Client thread should complete");
 
         server.stop();
@@ -325,7 +361,7 @@ mod server_tests {
             assert_eq!(resp.unwrap().code, 0);
         });
 
-        let _ = server.handle_one();
+        let _ = handle_one_blocking(&mut server);
         handle.join().expect("Client thread should complete");
 
         server.stop();
@@ -355,7 +391,7 @@ mod server_tests {
             assert!(resp.data.is_some());
         });
 
-        let _ = server.handle_one();
+        let _ = handle_one_blocking(&mut server);
         handle.join().expect("Client thread should complete");
 
         server.stop();
@@ -386,7 +422,7 @@ mod server_tests {
 
         // Handle multiple requests
         for _ in 0..3 {
-            let _ = server.handle_one();
+            let _ = handle_one_blocking(&mut server);
         }
 
         handle.join().expect("Client thread should complete");

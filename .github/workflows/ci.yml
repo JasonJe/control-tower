@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Test & build (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      # Runs the tests that only make sense on Linux: flock-based profiles.yaml
+      # locking, 0600/0700 permission checks and the IPC socket code are all
+      # `#[cfg(unix)]`, so the Windows dev machine cannot cover them.
+      - name: Tests
+        run: cargo test --workspace --all-targets
+
+      - name: Build (release)
+        run: cargo build --release --workspace

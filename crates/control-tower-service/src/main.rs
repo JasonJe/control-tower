@@ -72,6 +72,10 @@ pub struct ServiceState {
     sessions: RwLock<std::collections::HashMap<String, Session>>,
     /// Single-use challenge nonces for login (nonce -> issued_at unix seconds)
     auth_nonces: RwLock<std::collections::HashMap<String, u64>>,
+    /// Failed login timestamps per client IP (unix seconds). Keyed by the
+    /// transport-level peer address, never by `X-Forwarded-For`, so a client
+    /// cannot dodge the throttle by spoofing a header.
+    login_failures: RwLock<std::collections::HashMap<String, Vec<u64>>>,
 }
 
 impl Default for ServiceState {

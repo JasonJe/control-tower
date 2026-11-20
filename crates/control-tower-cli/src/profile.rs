@@ -443,11 +443,11 @@ async fn download_subscription(
         anyhow::bail!("Download failed: {}", response.status());
     }
 
-    let text = response.text()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
-
-    Ok(text)
+    Ok(control_tower_service_core::download::text_limited(
+        response,
+        control_tower_service_core::download::MAX_SUBSCRIPTION_BYTES,
+    )
+    .await?)
 }
 
 #[cfg(test)]

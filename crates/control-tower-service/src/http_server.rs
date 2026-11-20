@@ -9,6 +9,29 @@ use crate::auth_middleware::AuthMiddleware;
 use crate::html;
 use crate::ServiceState;
 
+/// Security headers added to every response.
+///
+/// The UI is a single self-contained page with an inline script, so the CSP
+/// must allow inline script/style; every other origin is denied. Combined with
+/// `frame-ancestors`/`X-Frame-Options` this prevents clickjacking of the
+/// cookie-authenticated UI, and `nosniff` stops content-type confusion.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
+     script-src 'self' 'unsafe-inline'; \
+     style-src 'self' 'unsafe-inline'; \
+     img-src 'self' data:; \
+     connect-src 'self'; \
+     frame-ancestors 'none'; \
+     base-uri 'none'; \
+     form-action 'self'";
+
+fn security_headers() -> middleware::DefaultHeaders {
+    middleware::DefaultHeaders::new()
+        .add(("X-Content-Type-Options", "nosniff"))
+        .add(("X-Frame-Options", "DENY"))
+        .add(("Referrer-Policy", "no-referrer"))
+        .add(("Content-Security-Policy", CONTENT_SECURITY_POLICY))
+}
+
 /// Start the HTTP API server on the given port.
 pub async fn start_http_server(
     port: u16,
@@ -37,6 +60,7 @@ pub async fn start_http_server(
                 .app_data(state_data.clone())
                 .wrap(AuthMiddleware)
                 .wrap(middleware::Logger::default())
+                .wrap(security_headers())
                 .route("/", web::get().to(index))
                 .route("/vendor/crypto-js.min.js", web::get().to(crypto_js))
                 .service(api::configure_routes())
@@ -53,6 +77,7 @@ pub async fn start_http_server(
                 .app_data(state_data.clone())
                 .wrap(AuthMiddleware)
                 .wrap(middleware::Logger::default())
+                .wrap(security_headers())
                 .route("/", web::get().to(index))
                 .route("/vendor/crypto-js.min.js", web::get().to(crypto_js))
                 .service(api::configure_routes())

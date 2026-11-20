@@ -105,6 +105,21 @@ pub async fn login(
 ) -> HttpResponse {
     let settings = state.get_settings();
 
+    // Throttle password guessing by transport address. Proxy headers are
+    // client controlled, so `peer_addr` is the only trustworthy source.
+    let client_ip = req
+        .peer_addr()
+        .map(|addr| addr.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    if let Some(retry_after) = state.login_retry_after(&client_ip) {
+        tracing::warn!("Login throttled for {} ({}s)", client_ip, retry_after);
+        return HttpResponse::TooManyRequests()
+            .insert_header(("Retry-After", retry_after.to_string()))
+            .json(ApiResponse::<()>::error(
+                "Too many failed login attempts, try again later",
+            ));
+    }
+
     let auth_config = match settings.auth.as_ref() {
         Some(a) => a,
         None => return HttpResponse::Ok().json(ApiResponse::<()>::error("Auth not configured")),
@@ -143,6 +158,7 @@ pub async fn login(
 
     if client_hash == expected_hash {
         tracing::info!("User logged in successfully");
+        state.clear_login_failures(&client_ip);
         let token = state.create_session();
         // The Web UI keeps the token in an httpOnly cookie so page scripts
         // (including a hypothetical XSS) cannot read it. CLI/API clients keep
@@ -158,6 +174,18 @@ pub async fn login(
         res
     } else {
         tracing::warn!("Failed login attempt - invalid password hash");
+        if let Some(retry_after) = state.record_login_failure(&client_ip) {
+            tracing::warn!(
+                "Too many failed logins from {}; retry after {}s",
+                client_ip,
+                retry_after
+            );
+            return HttpResponse::TooManyRequests()
+                .insert_header(("Retry-After", retry_after.to_string()))
+                .json(ApiResponse::<()>::error(
+                    "Too many failed login attempts, try again later",
+                ));
+        }
         HttpResponse::Ok().json(ApiResponse::<()>::error("Invalid password"))
     }
 }

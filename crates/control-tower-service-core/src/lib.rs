@@ -8,6 +8,7 @@ pub mod state;
 pub mod config;
 pub mod installer;
 pub mod active_config;
+pub mod download;
 pub mod fsutil;
 pub mod profiles;
 

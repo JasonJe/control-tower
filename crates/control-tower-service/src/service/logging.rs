@@ -38,6 +38,8 @@ impl ServiceState {
             sessions: RwLock::new(HashMap::new()),
             // Single-use challenge nonces for login
             auth_nonces: RwLock::new(HashMap::new()),
+            // Failed login attempts per client IP (rate limiting)
+            login_failures: RwLock::new(HashMap::new()),
         }
     }
 

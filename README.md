@@ -165,3 +165,22 @@ rule-providers:
 - **ctsvc** — 无头 HTTP 服务，提供 API 与 Web UI
 - **ctctl** — 用户 CLI，通过 Unix Socket 与 ctsvc 通信
 - **Mihomo** — 由 ctsvc 管理的子进程，提供代理能力
+
+---
+
+## 更新记录
+
+### 0.2.2
+
+- **profiles.yaml 并发安全**：所有读写改为 `update_profiles`（进程内 `Mutex` + 跨进程 `flock` + 锁内重读 + 原子写回），服务与 `ctctl` 同时修改不会再互相覆盖。
+- **订阅下载体积上限**：服务端与 CLI 下载订阅时限制为 10 MiB，超限或非 UTF-8 内容直接报错，避免异常订阅耗尽内存。
+- **登录失败限速**：同一来源 IP 在 60 秒内失败 5 次后返回 `429` 并带 `Retry-After`，成功登录后清零；限速只认 `peer_addr`，不信任 `X-Forwarded-For`。
+- **Web UI 安全响应头**：新增 CSP、`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`。
+- **依赖清理**：移除 `actix-files`、`actix-cors`、`clash_verge_service_ipc`、`compact_str`、`argon2`、`bcrypt`、`pbkdf2` 等未使用依赖；`zip` 仅 Windows 目标启用。
+
+### 0.2.1
+
+- `http_port` 改为映射 Mihomo 的 `port`（独立 HTTP 代理端口），不再复用 `mixed-port`；与 `mixed-port` 冲突时移除后者并记录告警。
+- 鉴权覆盖所有 `/api/*`（全局中间件），Web UI 改用 httpOnly 会话 cookie + CSRF 头，脚本/CLI 继续使用 Bearer token。
+- `settings.yaml`、`config.yaml`、profiles 与 IPC socket 以 `0600` 原子写入，配置目录 `0700`。
+- 修复 `ctctl profile add/update -H` 丢失自定义请求头、未开启鉴权时误报 `401`、内置 CryptoJS 等问题。

@@ -6,7 +6,9 @@ use std::sync::Arc;
 use tokio::task;
 
 use crate::ServiceState;
-use control_tower_service_core::{ProfilesYaml, ProfileDownloadOptions, ProfileItem};
+use control_tower_service_core::{
+    download::MAX_SUBSCRIPTION_BYTES, ProfileDownloadOptions, ProfileItem, ProfilesYaml,
+};
 
 use super::{ApiResponse, AddProfileRequest, RefreshRequest};
 
@@ -343,10 +345,15 @@ pub async fn add_profile(
                     .json(ApiResponse::<()>::error(format!("Download failed: {}", response.status())));
             }
 
-            let content = match response.text().await {
+            let content = match control_tower_service_core::download::text_limited(
+                response,
+                MAX_SUBSCRIPTION_BYTES,
+            )
+            .await
+            {
                 Ok(c) => c,
                 Err(e) => {
-                    return HttpResponse::InternalServerError()
+                    return HttpResponse::BadRequest()
                         .json(ApiResponse::<()>::error(format!("Failed to read download: {}", e)))
                 }
             };
@@ -812,9 +819,10 @@ pub async fn update_profile(
                 anyhow::bail!("Download failed: {}", response.status());
             }
 
-            let new_content = response
-                .text()
-                .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
+            let new_content = control_tower_service_core::download::text_limited_blocking(
+                response,
+                MAX_SUBSCRIPTION_BYTES,
+            )?;
 
             // Validate it's YAML (not HTML error page)
             if new_content.trim().starts_with('<') {
@@ -1057,9 +1065,10 @@ pub async fn refresh_profile(
             anyhow::bail!("Download failed: {}", response.status());
         }
 
-        let new_content = response
-            .text()
-            .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
+        let new_content = control_tower_service_core::download::text_limited_blocking(
+            response,
+            MAX_SUBSCRIPTION_BYTES,
+        )?;
 
         // Update profile file
         control_tower_service_core::write_private_atomic(&profile_file_clone, &new_content)?;

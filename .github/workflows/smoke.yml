@@ -1,0 +1,50 @@
+name: Smoke (run release binaries)
+
+# Separate from `ci.yml` on purpose: that workflow compiles and runs the unit
+# tests, this one builds the real executables and then *runs* them the way a
+# user would. If `ctsvc` cannot start, bind its socket or exit cleanly, this
+# workflow fails even though every unit test passes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Run ctsvc/ctctl (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release --workspace
+
+      # Starts `target/release/ctsvc --foreground` (IPC only, no HTTP port and
+      # no Mihomo needed), exercises Status/Logs/ReloadCron/Shutdown over the
+      # Unix socket, checks the 0600 socket, verifies a duplicate instance is
+      # refused, then drives the same daemon with `target/release/ctctl` and
+      # shuts it down with SIGTERM.
+      - name: Run the built binaries
+        run: bash scripts/smoke-test.sh
+        env:
+          SMOKE_LOG_DIR: target/smoke-logs
+
+      - name: Upload service logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs
+          path: target/smoke-logs
+          if-no-files-found: ignore

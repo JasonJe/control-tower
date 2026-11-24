@@ -209,7 +209,14 @@ async fn update_profile(id: Option<&str>, headers: &[String]) -> Result<()> {
         options.headers = Some(parse_headers(headers)?);
     }
 
-    // Download new content
+    // Download new content. Surface the effective User-Agent so a subscription
+    // source that filters by UA can be debugged with `ctctl profile update`.
+    println!(
+        "Updating {} from {} (User-Agent: {})",
+        target_id,
+        url,
+        options.effective_user_agent("clash-verge/v2.4.7")
+    );
     let content = download_subscription(&url, Some(&options)).await?;
 
     // Update file
@@ -416,20 +423,13 @@ async fn download_subscription(
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
+    let user_agent = options
+        .map(|o| o.effective_user_agent("clash-verge/v2.4.7"))
+        .unwrap_or("clash-verge/v2.4.7");
     let mut request = client.get(url);
-    let has_custom_user_agent = options
-        .map(|o| o.has_header("user-agent"))
-        .unwrap_or(false);
-    if !has_custom_user_agent {
-        request = request.header(
-            "User-Agent",
-            options
-                .map(|o| o.user_agent_or("clash-verge/v2.4.7"))
-                .unwrap_or("clash-verge/v2.4.7"),
-        );
-    }
+    request = request.header("User-Agent", user_agent);
     if let Some(options) = options {
-        for (name, value) in options.header_pairs() {
+        for (name, value) in options.header_pairs_without_user_agent() {
             request = request.header(name, value);
         }
     }

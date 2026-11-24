@@ -69,6 +69,35 @@ impl ProfileDownloadOptions {
             .map(|headers| headers.keys().any(|k| k.eq_ignore_ascii_case(name)))
             .unwrap_or(false)
     }
+
+    /// Effective `User-Agent` to send: the dedicated `user_agent` option wins
+    /// over a `User-Agent` entry in `headers`, which in turn wins over the
+    /// caller's default.
+    ///
+    /// Older versions gave `headers.user-agent` priority and skipped the
+    /// dedicated option entirely, so editing `options.user_agent` appeared to
+    /// have no effect when a profile also had a custom header.
+    pub fn effective_user_agent<'a>(&'a self, default: &'a str) -> &'a str {
+        if let Some(ua) = self.user_agent.as_deref() {
+            return ua;
+        }
+        self.headers
+            .as_ref()
+            .and_then(|headers| {
+                headers
+                    .iter()
+                    .find(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+                    .map(|(_, value)| value.as_str())
+            })
+            .unwrap_or(default)
+    }
+
+    /// Custom headers excluding `User-Agent`, which is sent separately via
+    /// [`Self::effective_user_agent`] so only one value is ever emitted.
+    pub fn header_pairs_without_user_agent(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.header_pairs()
+            .filter(|(name, _)| !name.eq_ignore_ascii_case("user-agent"))
+    }
 }
 
 /// One entry inside profiles.yaml.
@@ -259,6 +288,33 @@ mod tests {
         assert_eq!(options.user_agent_or("default"), "default");
         assert_eq!(options.header_pairs().count(), 0);
         assert_eq!(options.timeout_or(30), 30);
+    }
+
+    #[test]
+    fn effective_user_agent_prefers_dedicated_option() {
+        let mut headers = BTreeMap::new();
+        headers.insert("user-agent".to_string(), "old-agent".to_string());
+        headers.insert("x-token".to_string(), "secret".to_string());
+        let options = ProfileDownloadOptions {
+            user_agent: Some("new-agent".to_string()),
+            headers: Some(headers),
+            ..Default::default()
+        };
+
+        assert_eq!(options.effective_user_agent("default"), "new-agent");
+        // The stale UA header must not be sent a second time.
+        let pairs: Vec<_> = options.header_pairs_without_user_agent().collect();
+        assert_eq!(pairs, vec![("x-token", "secret")]);
+
+        let headers_only = ProfileDownloadOptions {
+            headers: Some(BTreeMap::from([(
+                "USER-AGENT".to_string(),
+                "header-agent".to_string(),
+            )])),
+            ..Default::default()
+        };
+        assert_eq!(headers_only.effective_user_agent("default"), "header-agent");
+        assert_eq!(headers_only.header_pairs_without_user_agent().count(), 0);
     }
 
     fn test_item(uid: &str) -> ProfileItem {

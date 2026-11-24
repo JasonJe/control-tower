@@ -594,7 +594,7 @@ checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
 name = "control-tower-cli"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -614,7 +614,7 @@ dependencies = [
 
 [[package]]
 name = "control-tower-service"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "actix-rt",
  "actix-web",
@@ -646,7 +646,7 @@ dependencies = [
 
 [[package]]
 name = "control-tower-service-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "dirs",

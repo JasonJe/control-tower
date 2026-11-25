@@ -206,7 +206,17 @@ async fn update_profile(id: Option<&str>, headers: &[String]) -> Result<()> {
         .clone()
         .unwrap_or_default();
     if !headers.is_empty() {
-        options.headers = Some(parse_headers(headers)?);
+        let parsed = parse_headers(headers)?;
+        // `-H "User-Agent: ..."` is an explicit override. Clear the stored
+        // dedicated option so the header we just parsed wins in
+        // `effective_user_agent`.
+        if parsed
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("user-agent"))
+        {
+            options.user_agent = None;
+        }
+        options.headers = Some(parsed);
     }
 
     // Download new content. Surface the effective User-Agent so a subscription
@@ -230,7 +240,7 @@ async fn update_profile(id: Option<&str>, headers: &[String]) -> Result<()> {
     let persist_options = profiles[profile_idx].options.is_some() || !headers.is_empty();
     let options_for_write = options;
 
-    // Update timestamp and options in the manifest under the shared lock.
+    // Mark updated time and options in the manifest under the shared lock.
     crate::config::update_profiles_file(|yaml| {
         if let Some(item) = yaml.items.iter_mut().find(|item| item.uid == target_id) {
             if persist_options {
@@ -240,6 +250,23 @@ async fn update_profile(id: Option<&str>, headers: &[String]) -> Result<()> {
         }
         Ok(())
     })?;
+
+    // A refresh of the current profile must reach the running kernel. Without
+    // this, `ctctl profile update` rewrites the profile file but `ctctl proxy
+    // list` keeps showing the previous nodes until a manual activate/restart.
+    if profiles[profile_idx].active {
+        if let Some(ref file) = profiles[profile_idx].file {
+            let store = control_tower_service_core::ActiveConfigStore::new(
+                crate::settings::shared_paths()?,
+            );
+            store.replace_from_profile(&PathBuf::from(file), &[], Default::default())?;
+            println!("Active config updated: {}", store.active_config_path().display());
+            if crate::service::is_clash_api_running() {
+                println!("Restarting service to apply the refreshed config...");
+                crate::service::restart_service().await?;
+            }
+        }
+    }
 
     println!("Updated profile: {}", target_id);
     Ok(())

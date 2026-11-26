@@ -317,20 +317,13 @@ pub async fn add_profile(
                 }
             };
 
+            let user_agent = options
+                .map(|o| o.effective_user_agent("clash-verge/v2.4.7"))
+                .unwrap_or("clash-verge/v2.4.7");
             let mut request = client.get(&url);
-            let has_custom_user_agent = options
-                .map(|o| o.has_header("user-agent"))
-                .unwrap_or(false);
-            if !has_custom_user_agent {
-                request = request.header(
-                    "User-Agent",
-                    options
-                        .map(|o| o.user_agent_or("clash-verge/v2.4.7"))
-                        .unwrap_or("clash-verge/v2.4.7"),
-                );
-            }
+            request = request.header("User-Agent", user_agent);
             if let Some(options) = options {
-                for (name, value) in options.header_pairs() {
+                for (name, value) in options.header_pairs_without_user_agent() {
                     request = request.header(name, value);
                 }
             }
@@ -873,22 +866,14 @@ pub async fn update_profile(
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
-            let mut request = client.get(&download_url);
-            let has_custom_user_agent = options_clone
+            let user_agent = options_clone
                 .as_ref()
-                .map(|o| o.has_header("user-agent"))
-                .unwrap_or(false);
-            if !has_custom_user_agent {
-                request = request.header(
-                    "User-Agent",
-                    options_clone
-                        .as_ref()
-                        .map(|o| o.user_agent_or("clash-verge/v2.4.7"))
-                        .unwrap_or("clash-verge/v2.4.7"),
-                );
-            }
+                .map(|o| o.effective_user_agent("clash-verge/v2.4.7"))
+                .unwrap_or("clash-verge/v2.4.7");
+            let mut request = client.get(&download_url);
+            request = request.header("User-Agent", user_agent);
             if let Some(options) = options_clone.as_ref() {
-                for (name, value) in options.header_pairs() {
+                for (name, value) in options.header_pairs_without_user_agent() {
                     request = request.header(name, value);
                 }
             }
@@ -1129,22 +1114,14 @@ pub async fn refresh_profile(
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
-        let mut request = client.get(&url);
-        let has_custom_user_agent = download_options
+        let user_agent = download_options
             .as_ref()
-            .map(|o| o.has_header("user-agent"))
-            .unwrap_or(false);
-        if !has_custom_user_agent {
-            request = request.header(
-                "User-Agent",
-                download_options
-                    .as_ref()
-                    .map(|o| o.user_agent_or("clash-verge/v2.4.7"))
-                    .unwrap_or("clash-verge/v2.4.7"),
-            );
-        }
+            .map(|o| o.effective_user_agent("clash-verge/v2.4.7"))
+            .unwrap_or("clash-verge/v2.4.7");
+        let mut request = client.get(&url);
+        request = request.header("User-Agent", user_agent);
         if let Some(options) = download_options.as_ref() {
-            for (name, value) in options.header_pairs() {
+            for (name, value) in options.header_pairs_without_user_agent() {
                 request = request.header(name, value);
             }
         }

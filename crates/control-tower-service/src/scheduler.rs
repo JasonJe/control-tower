@@ -472,7 +472,7 @@ pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::P
 
     let timeout_secs = options.map(|o| o.timeout_or(60)).unwrap_or(60);
     let user_agent = options
-        .map(|o| o.user_agent_or("clash-verge/v2.4.7"))
+        .map(|o| o.effective_user_agent("clash-verge/v2.4.7"))
         .unwrap_or("clash-verge/v2.4.7");
     let with_proxy = options
         .and_then(|o| o.with_proxy)
@@ -498,14 +498,9 @@ pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::P
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
     let mut request = client.get(url);
-    let has_custom_user_agent = options
-        .map(|o| o.has_header("user-agent"))
-        .unwrap_or(false);
-    if !has_custom_user_agent {
-        request = request.header("User-Agent", user_agent);
-    }
+    request = request.header("User-Agent", user_agent);
     if let Some(options) = options {
-        for (name, value) in options.header_pairs() {
+        for (name, value) in options.header_pairs_without_user_agent() {
             request = request.header(name, value);
         }
     }

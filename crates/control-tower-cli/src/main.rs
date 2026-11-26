@@ -10,7 +10,12 @@ mod mode;
 mod connections;
 mod rule;
 mod settings;
+mod settings_cli;
 mod update;
+mod logs;
+mod stats;
+mod system_proxy;
+mod rule_provider;
 use update::UpdateAction;
 
 use anyhow::Result;
@@ -132,6 +137,47 @@ enum Commands {
         #[command(subcommand)]
         action: UpdateAction,
     },
+    /// Inspect and safely edit the active config.yaml
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+    /// View service or Mihomo log files
+    Logs {
+        /// Number of lines to show (default: 100)
+        #[arg(short = 'n', long)]
+        lines: Option<usize>,
+        /// Log source: service or mihomo
+        #[arg(long, value_parser = ["service", "mihomo"])]
+        source: Option<String>,
+        /// Follow new lines (like tail -f)
+        #[arg(short, long)]
+        follow: bool,
+    },
+    /// Persistent traffic statistics
+    Stats {
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+        /// Clear all statistics before showing the result
+        #[arg(long)]
+        reset: bool,
+    },
+    /// Desktop system proxy (GNOME/KDE)
+    SystemProxy {
+        #[command(subcommand)]
+        action: SystemProxyAction,
+    },
+    /// Rule providers used by the active config
+    RuleProvider {
+        #[command(subcommand)]
+        action: RuleProviderAction,
+    },
+    /// Read or change settings.yaml keys
+    Settings {
+        #[command(subcommand)]
+        action: SettingsAction,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -202,14 +248,41 @@ enum ProfileAction {
         /// Minutes between updates, or "off" to disable
         schedule: Option<String>,
     },
+    /// Import share links (vmess://, vless://, trojan://, ss://, ...)
+    ///
+    /// Examples:
+    ///   ctctl profile import 'vmess://...' 'vless://...'
+    ///   ctctl profile import --file links.txt --name 'My nodes' --activate
+    Import {
+        /// Share links, one per argument (supports multi-line values)
+        links: Vec<String>,
+        /// Read links from a text file instead of arguments
+        #[arg(short, long, value_name = "FILE")]
+        file: Option<std::path::PathBuf>,
+        /// Name for the imported local profile
+        #[arg(long)]
+        name: Option<String>,
+        /// Activate the imported profile immediately
+        #[arg(long)]
+        activate: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
 enum ProxyAction {
-    /// List all proxy nodes
+    /// List proxy nodes
     ///
-    /// Displays all available proxy nodes organized by groups.
-    List,
+    /// Displays all available proxy nodes. Without --group, lists the GLOBAL
+    /// selector group; use --group to inspect a specific policy group.
+    ///
+    /// Examples:
+    ///   ctctl proxy list
+    ///   ctctl proxy list --group '节点选择'
+    List {
+        /// Policy group name (default: GLOBAL)
+        #[arg(long)]
+        group: Option<String>,
+    },
     /// Select a proxy node
     ///
     /// Sets the active proxy in the GLOBAL selector group.
@@ -223,6 +296,9 @@ enum ProxyAction {
     Select {
         /// Proxy name or index (e.g., "#7" or "香港 101")
         name: String,
+        /// Select inside a named policy group instead of GLOBAL
+        #[arg(long)]
+        group: Option<String>,
     },
     /// Test proxy latency
     ///
@@ -414,6 +490,20 @@ enum RuleAction {
         /// Path to export to (optional, prints to stdout if not specified)
         path: Option<String>,
     },
+    /// Test which rule matches a domain, IP or URL
+    ///
+    /// Uses the local rule engine, so it also works when the service is down.
+    ///
+    /// Examples:
+    ///   ctctl rule match google.com
+    ///   ctctl rule match 'https://example.com:8443/path' --json
+    Match {
+        /// Domain, IP, host:port or URL
+        target: String,
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -454,6 +544,111 @@ enum ConnectionsAction {
         #[arg(short, long, default_value = "1")]
         interval: u64,
     },
+    /// Show closed connections recorded by the service
+    History {
+        /// Maximum number of entries to show (default: 50)
+        #[arg(short = 'n', long, default_value = "50")]
+        limit: usize,
+        /// Clear the history after showing it
+        #[arg(long)]
+        clear: bool,
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigAction {
+    /// Print the active config.yaml
+    Show {
+        /// Output raw JSON with content, summary and modified time
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate a config file (defaults to the active config.yaml)
+    Validate {
+        /// File to validate
+        #[arg(value_name = "FILE")]
+        path: Option<std::path::PathBuf>,
+    },
+    /// Manage config backups
+    Backup {
+        #[command(subcommand)]
+        action: BackupAction,
+    },
+    /// Edit the active config in $EDITOR, then validate and apply it
+    Edit,
+}
+
+#[derive(Subcommand, Debug)]
+enum BackupAction {
+    /// List backups, newest first
+    List {
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Back up the current config now
+    Create {
+        /// Short reason stored in the backup name
+        #[arg(short, long)]
+        reason: Option<String>,
+    },
+    /// Restore a backup (with validation, reload and rollback)
+    Restore {
+        /// Backup id from `config backup list`
+        id: String,
+    },
+    /// Delete a backup
+    Delete {
+        /// Backup id from `config backup list`
+        id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SystemProxyAction {
+    /// Show the current desktop system-proxy state
+    Status,
+    /// Enable the desktop system proxy
+    On,
+    /// Disable the desktop system proxy
+    Off,
+}
+
+#[derive(Subcommand, Debug)]
+enum RuleProviderAction {
+    /// List rule providers from settings.yaml and config.yaml
+    List {
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Re-fetch a rule provider's rules
+    Refresh {
+        /// Provider name (omit with --all)
+        name: Option<String>,
+        /// Refresh all providers
+        #[arg(long)]
+        all: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SettingsAction {
+    /// Show one key, or all settings when omitted
+    Get {
+        /// Top-level key in settings.yaml
+        key: Option<String>,
+    },
+    /// Set a top-level key (YAML scalar or JSON-like value)
+    Set {
+        /// Top-level key in settings.yaml
+        key: String,
+        /// New value, e.g. 9090, true, rule
+        value: String,
+    },
 }
 
 #[tokio::main]
@@ -488,6 +683,12 @@ async fn main() -> Result<()> {
         Commands::Rule { action } => rule::handle(action).await?,
         Commands::Connections { action } => connections::handle(action).await?,
         Commands::Update { action } => update::handle(action).await?,
+        Commands::Config { action } => config::handle(action)?,
+        Commands::Logs { lines, source, follow } => logs::handle(lines, source.as_deref(), follow)?,
+        Commands::Stats { json, reset } => stats::handle(json, reset)?,
+        Commands::SystemProxy { action } => system_proxy::handle(action)?,
+        Commands::RuleProvider { action } => rule_provider::handle(action).await?,
+        Commands::Settings { action } => settings_cli::handle(action)?,
     }
 
     Ok(())

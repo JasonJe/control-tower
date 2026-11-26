@@ -16,6 +16,11 @@ fn default_socket_path() -> PathBuf {
     PathBuf::from("/tmp/ctsvc.sock")
 }
 
+/// Whether the IPC daemon socket is present.
+pub fn ipc_available() -> bool {
+    default_socket_path().exists()
+}
+
 /// Check if Clash API is running
 pub fn is_clash_api_running() -> bool {
     TcpStream::connect_timeout(
@@ -38,8 +43,19 @@ pub enum IpcCommand {
     CloseConnection { id: String },
     SetMode { mode: String },
     SelectProxy { name: String },
+    SelectProxyIn {
+        #[serde(default)]
+        group: String,
+        name: String,
+    },
     TestProxy { name: String, timeout_ms: Option<u64> },
     ApplyTun { tun_enabled: bool },
+    SaveConfig { content: String },
+    RestoreConfig { id: String },
+    Stats,
+    StatsReset,
+    SystemProxyStatus,
+    SetSystemProxy { enabled: bool },
 }
 
 /// Enable or disable TUN mode through the service IPC socket.
@@ -188,6 +204,91 @@ pub async fn select_proxy(name: &str) -> Result<()> {
 
     crate::settings::set_selected_proxy(name.to_string());
     Ok(())
+}
+
+/// Select a proxy inside a named selector group via IPC, falling back to the
+/// Mihomo API. The daemon's `select_proxy_in` handles URL encoding and keeps
+/// the per-group state in sync.
+pub async fn select_proxy_in(group: &str, name: &str) -> Result<()> {
+    if default_socket_path().exists() {
+        let resp = ipc_connect_and_send(&IpcCommand::SelectProxyIn {
+            group: group.to_string(),
+            name: name.to_string(),
+        })
+        .map_err(anyhow::Error::msg)?;
+        if resp.is_success() {
+            crate::settings::set_selected_proxy(name.to_string());
+            return Ok(());
+        }
+        tracing::warn!("IPC SelectProxyIn failed: {}", resp.message);
+    }
+
+    let url = format!(
+        "http://{}:{}/proxies/{}",
+        CLASH_API_HOST,
+        crate::settings::get_api_port(),
+        group
+    );
+    let response = reqwest::Client::new()
+        .put(&url)
+        .json(&serde_json::json!({ "name": name }))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to select proxy in group: {}", e))?;
+    if !response.status().is_success() {
+        anyhow::bail!("Failed to select proxy in group `{}`: {}", group, response.status());
+    }
+    crate::settings::set_selected_proxy(name.to_string());
+    Ok(())
+}
+
+/// Send an IPC command and return its `data` payload, with a clear error when
+/// the daemon is absent (all config/stats/system-proxy commands need it).
+fn ipc_data(command: &IpcCommand, what: &str) -> Result<Value> {
+    let resp = ipc_connect_and_send(command).map_err(anyhow::Error::msg)?;
+    if !resp.is_success() {
+        anyhow::bail!("{} failed: {}", what, resp.message);
+    }
+    Ok(resp.data.unwrap_or(Value::Null))
+}
+
+/// Save the active config through the service's validate → backup → reload →
+/// rollback path. Returns the config summary as JSON.
+pub fn save_config(content: &str) -> Result<Value> {
+    ipc_data(
+        &IpcCommand::SaveConfig { content: content.to_string() },
+        "Saving config",
+    )
+}
+
+/// Restore a config backup through the same safe path as `save_config`.
+pub fn restore_config(id: &str) -> Result<Value> {
+    ipc_data(
+        &IpcCommand::RestoreConfig { id: id.to_string() },
+        "Restoring config",
+    )
+}
+
+/// Persistent traffic statistics from the running daemon.
+pub fn get_stats() -> Result<Value> {
+    ipc_data(&IpcCommand::Stats, "Reading statistics")
+}
+
+/// Clear persistent traffic statistics.
+pub fn reset_stats() -> Result<()> {
+    ipc_data(&IpcCommand::StatsReset, "Resetting statistics")?;
+    Ok(())
+}
+
+/// Desktop system-proxy status, evaluated as the service user.
+pub fn system_proxy_status() -> Result<Value> {
+    ipc_data(&IpcCommand::SystemProxyStatus, "Reading system proxy status")
+}
+
+/// Enable or disable the desktop system proxy as the service user.
+pub fn set_system_proxy(enabled: bool) -> Result<Value> {
+    ipc_data(&IpcCommand::SetSystemProxy { enabled }, "Changing system proxy")
 }
 
 /// Test a proxy's latency via IPC using Mihomo's delay API (no GLOBAL switching)
@@ -573,7 +674,7 @@ pub async fn status() -> Result<()> {
         // No IPC daemon - check if Mihomo running directly
         if is_clash_api_running() {
             println!("Status: Running (direct mode, no service daemon)");
-            println!("API: http://127.0.0.1:9090");
+            println!("API: http://{}:{}", CLASH_API_HOST, crate::settings::get_api_port());
             if let Ok(mode) = get_mode().await {
                 println!("Mode: {}", mode);
             }
@@ -598,7 +699,7 @@ pub async fn status() -> Result<()> {
                     if let Some(uptime) = status.get("uptime_secs").and_then(|v| v.as_u64()) {
                         println!("Uptime: {} seconds", uptime);
                     }
-                    println!("API: http://127.0.0.1:9090");
+                    println!("API: http://{}:{}", CLASH_API_HOST, crate::settings::get_api_port());
                     // Also get Clash mode
                     if let Ok(mode) = get_mode().await {
                         println!("Mode: {}", mode);
@@ -614,7 +715,7 @@ pub async fn status() -> Result<()> {
             println!("Status: Error (IPC communication failed: {})", e);
             println!("Note: Mihomo API might still be accessible directly");
             if is_clash_api_running() {
-                println!("API: http://127.0.0.1:9090");
+                println!("API: http://{}:{}", CLASH_API_HOST, crate::settings::get_api_port());
             }
         }
     }

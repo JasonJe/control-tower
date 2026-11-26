@@ -1,6 +1,6 @@
 [package]
 name = "control-tower-cli"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Control Tower - Command line interface for proxy management"
 

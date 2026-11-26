@@ -115,7 +115,7 @@ pub async fn delete_backup(path: web::Path<String>) -> HttpResponse {
 }
 
 /// Write `content` to the active config and reload Mihomo, rolling back on failure.
-fn save_and_reload(
+pub fn save_and_reload(
     content: &str,
     api_url: &str,
     running: bool,

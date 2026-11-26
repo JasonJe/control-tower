@@ -62,6 +62,54 @@ pub async fn handle(action: RuleAction) -> Result<()> {
         RuleAction::Remove { index } => remove_rule(index).await?,
         RuleAction::Import { path } => import_rules(&path).await?,
         RuleAction::Export { path } => export_rules(path).await?,
+        RuleAction::Match { target, json } => match_rule(&target, json).await?,
+    }
+    Ok(())
+}
+
+/// Test a destination against the active rule list, offline.
+async fn match_rule(target: &str, json: bool) -> Result<()> {
+    let rules = parse_rules_from_config().await?;
+    if rules.is_empty() {
+        anyhow::bail!("No rules configured in config.yaml");
+    }
+    let result = control_tower_service_core::rule_match::evaluate(&rules, target, None);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
+
+    println!("Target: {} (IP: {})", result.target, if result.is_ip { "yes" } else { "no" });
+    println!("Rules evaluated: {}", result.evaluated.len());
+    println!("{}", "-".repeat(78));
+    for entry in &result.evaluated {
+        let mark = if entry.matched {
+            "MATCH"
+        } else if entry.skipped {
+            "SKIP "
+        } else {
+            "     "
+        };
+        println!(
+            "[{}] {} {:<40} -> {}",
+            entry.index + 1,
+            mark,
+            entry.rule,
+            entry.policy
+        );
+        if let Some(note) = &entry.note {
+            println!("       {}", note);
+        }
+        if entry.matched {
+            break;
+        }
+    }
+    match &result.winner {
+        Some(winner) => println!("\nWinner: {} -> {}", winner.rule, winner.policy),
+        None => println!("\nNo rule matched."),
+    }
+    if result.skipped > 0 {
+        println!("{} rule(s) skipped (need providers/geo data or unsupported offline).", result.skipped);
     }
     Ok(())
 }

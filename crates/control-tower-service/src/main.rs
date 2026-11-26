@@ -95,6 +95,23 @@ impl Default for ServiceState {
 // impl ServiceState methods are in service_state_ext.rs
 
 
+/// Save a config body through the same validate → backup → reload → rollback
+/// path used by the Web UI, and log the outcome into the ring buffer.
+fn save_config_with_state(state: &ServiceState, content: &str) -> IpcResponse {
+    let api_url = state.get_api_url();
+    let running = state.is_running();
+    match crate::api::save_and_reload(content, &api_url, running) {
+        Ok(summary) => {
+            state.append_log("Active config saved and applied");
+            IpcResponse::success_with_data(summary)
+        }
+        Err(e) => {
+            state.append_log(format!("Failed to save active config: {}", e));
+            IpcResponse::error(e)
+        }
+    }
+}
+
 /// Handle an IPC command using shared service state
 pub fn handle_command_with_state(state: &ServiceState, cmd: IpcCommand) -> IpcResponse {
     match cmd {
@@ -261,6 +278,55 @@ pub fn handle_command_with_state(state: &ServiceState, cmd: IpcCommand) -> IpcRe
                     state.append_log(format!("Failed to apply TUN settings: {}", e));
                     IpcResponse::error(e)
                 }
+            }
+        }
+        IpcCommand::SelectProxyIn { group, name } => {
+            tracing::info!("SelectProxyIn command: group={}, name={}", group, name);
+            match state.select_proxy_in(&group, &name) {
+                Ok(()) => IpcResponse::success(),
+                Err(e) => IpcResponse::error(e),
+            }
+        }
+        IpcCommand::SaveConfig { content } => {
+            tracing::info!("SaveConfig command ({} bytes)", content.len());
+            save_config_with_state(state, &content)
+        }
+        IpcCommand::RestoreConfig { id } => {
+            tracing::info!("RestoreConfig command: {}", id);
+            match crate::service::config_store::read_backup(&id) {
+                Ok(content) => save_config_with_state(state, &content),
+                Err(e) => IpcResponse::error(e),
+            }
+        }
+        IpcCommand::Stats => {
+            IpcResponse::success_with_data(crate::service::stats::view())
+        }
+        IpcCommand::StatsReset => match crate::service::stats::reset() {
+            Ok(()) => {
+                state.append_log("Traffic statistics reset");
+                IpcResponse::success()
+            }
+            Err(e) => IpcResponse::error(e),
+        },
+        IpcCommand::SystemProxyStatus => {
+            IpcResponse::success_with_data(crate::service::system_proxy::status())
+        }
+        IpcCommand::SetSystemProxy { enabled } => {
+            let settings = state.get_settings();
+            let http_port = settings
+                .http_port
+                .unwrap_or(crate::settings::consts::DEFAULT_MIHOMO_HTTP_PORT);
+            let socks_port = settings
+                .socks_port
+                .unwrap_or(crate::settings::consts::DEFAULT_MIHOMO_SOCKS_PORT);
+            match crate::service::system_proxy::set_enabled(
+                enabled,
+                None,
+                Some(http_port),
+                Some(socks_port),
+            ) {
+                Ok(status) => IpcResponse::success_with_data(status),
+                Err(e) => IpcResponse::error(e),
             }
         }
     }

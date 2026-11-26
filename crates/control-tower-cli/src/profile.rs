@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use control_tower_service_core::ProfileDownloadOptions;
+use control_tower_service_core::{ProfileDownloadOptions, ProfileItem};
 
 use crate::config::{get_config_dir, load_profiles};
 use crate::service::reload_cron;
@@ -55,6 +55,12 @@ pub async fn handle(action: ProfileAction) -> Result<()> {
         ProfileAction::Update { id, headers } => update_profile(id.as_deref(), &headers).await?,
         ProfileAction::Activate { id } => activate_profile(&id).await?,
         ProfileAction::Cron { id, schedule } => set_cron(&id, schedule.as_deref()).await?,
+        ProfileAction::Import {
+            links,
+            file,
+            name,
+            activate,
+        } => import_links(&links, file.as_deref(), name.as_deref(), activate).await?,
     }
     Ok(())
 }
@@ -192,20 +198,22 @@ fn format_bytes(bytes: u64) -> String {
 async fn remove_profile(id: &str) -> Result<()> {
     tracing::info!("Removing profile: {}", id);
 
-    // Remove the entry under the profiles.yaml lock and return its file path.
-    let profile_file = crate::config::update_profiles_file(|yaml| {
+    // Remove the entry under the profiles.yaml lock. Report whether it was
+    // the active profile: only then is the running kernel/config affected.
+    let (profile_file, was_active) = crate::config::update_profiles_file(|yaml| {
         let item = yaml
             .items
             .iter()
             .find(|p| p.uid == id)
             .ok_or_else(|| anyhow::anyhow!("Profile not found: {}", id))?;
         let file = item.file.clone();
+        let active = yaml.current.as_deref() == Some(id);
 
         yaml.items.retain(|p| p.uid != id);
-        if yaml.current.as_deref() == Some(id) {
+        if active {
             yaml.current = None;
         }
-        Ok(file)
+        Ok((file, active))
     })?;
 
     // Delete the profile file if exists
@@ -219,11 +227,15 @@ async fn remove_profile(id: &str) -> Result<()> {
 
     println!("Removed profile: {}", id);
 
-    // User主动删除profile，停止服务并清空配置
-    println!("Stopping service and clearing config...");
+    if !was_active {
+        println!("The removed profile was not active; the running proxy was left untouched.");
+        return Ok(());
+    }
+
+    // Only deleting the active profile removes the config and stops Mihomo.
+    println!("The active profile was removed: stopping service and clearing config...");
     let config_dir = get_config_dir()?;
 
-    // Delete config.yaml
     let config_path = config_dir.join("config.yaml");
     if config_path.exists() {
         std::fs::remove_file(&config_path)?;
@@ -232,6 +244,87 @@ async fn remove_profile(id: &str) -> Result<()> {
 
     crate::service::stop_service().await?;
 
+    Ok(())
+}
+
+/// Import share links (vmess/vless/trojan/ss/...) as a local profile.
+async fn import_links(
+    links: &[String],
+    file: Option<&std::path::Path>,
+    name: Option<&str>,
+    activate: bool,
+) -> Result<()> {
+    let mut input = String::new();
+    if let Some(path) = file {
+        input.push_str(&std::fs::read_to_string(path).map_err(|e| {
+            anyhow::anyhow!("Failed to read {}: {}", path.display(), e)
+        })?);
+    }
+    for link in links {
+        input.push_str(link);
+        input.push('\n');
+    }
+    if input.trim().is_empty() {
+        anyhow::bail!("No share links given. Pass links as arguments or use --file.");
+    }
+
+    let imported = control_tower_service_core::share_links::import_share_links(&input);
+    if imported.names.is_empty() {
+        let detail = if imported.errors.is_empty() {
+            "No share links found".to_string()
+        } else {
+            imported.errors.join("; ")
+        };
+        anyhow::bail!("No proxy could be imported: {}", detail);
+    }
+    for error in &imported.errors {
+        println!("Warning: {}", error);
+    }
+
+    let uid = Uuid::new_v4().to_string();
+    let file_name = format!("{}.yaml", &uid[..8]);
+    let config_dir = get_config_dir()?;
+    let profiles_dir = config_dir.join("profiles");
+    std::fs::create_dir_all(&profiles_dir)?;
+    control_tower_service_core::fsutil::restrict_dir_permissions(&profiles_dir);
+    let profile_file = profiles_dir.join(&file_name);
+    control_tower_service_core::write_private_atomic(&profile_file, &imported.yaml)?;
+
+    let profile_name = name
+        .map(|n| n.to_string())
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| format!("Imported links ({} nodes)", imported.names.len()));
+    let item = ProfileItem {
+        uid: uid.clone(),
+        name: Some(profile_name.clone()),
+        file: Some(file_name),
+        url: None,
+        cron: None,
+        updated_at: Some(chrono::Utc::now().timestamp()),
+        options: None,
+        type_: Some("local".to_string()),
+        script: None,
+        merge: Vec::new(),
+        upload: None,
+        download: None,
+        total: None,
+        expire: None,
+    };
+    crate::config::update_profiles_file(|yaml| {
+        yaml.items.push(item);
+        Ok(())
+    })?;
+
+    println!("Imported {} nodes into profile {} ({})", imported.names.len(), uid, profile_name);
+    for node in &imported.names {
+        println!("  - {}", node);
+    }
+
+    if activate {
+        activate_profile(&uid).await?;
+    } else {
+        println!("Tip: activate with `ctctl profile activate {}`", uid);
+    }
     Ok(())
 }
 

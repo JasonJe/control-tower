@@ -57,10 +57,28 @@ pub enum IpcCommand {
     SetMode { mode: String },
     /// Select a proxy in the GLOBAL selector group
     SelectProxy { name: String },
+    /// Select a proxy inside a named selector group (e.g. "节点选择")
+    SelectProxyIn {
+        #[serde(default)]
+        group: String,
+        name: String,
+    },
     /// Test a proxy's latency using Mihomo's delay API (no GLOBAL switching)
     TestProxy { name: String, timeout_ms: Option<u64> },
     /// Enable or disable TUN mode (requires stateful handler)
     ApplyTun { tun_enabled: bool },
+    /// Save the active config: validate, backup, write, reload, roll back on failure
+    SaveConfig { content: String },
+    /// Restore a config backup by id (same safe path as SaveConfig)
+    RestoreConfig { id: String },
+    /// Persistent traffic statistics
+    Stats,
+    /// Clear all persistent traffic statistics
+    StatsReset,
+    /// Desktop system-proxy status
+    SystemProxyStatus,
+    /// Enable or disable the desktop system proxy as the service user
+    SetSystemProxy { enabled: bool },
 }
 
 /// IPC response types
@@ -198,6 +216,23 @@ pub fn handle_command(cmd: IpcCommand) -> IpcResponse {
         IpcCommand::ApplyTun { .. } => {
             tracing::info!("ApplyTun command");
             IpcResponse::error("ApplyTun requires stateful handler")
+        }
+        IpcCommand::SelectProxyIn { .. } => {
+            IpcResponse::error("SelectProxyIn requires stateful handler")
+        }
+        IpcCommand::SaveConfig { .. } => {
+            IpcResponse::error("SaveConfig requires stateful handler")
+        }
+        IpcCommand::RestoreConfig { .. } => {
+            IpcResponse::error("RestoreConfig requires stateful handler")
+        }
+        IpcCommand::Stats => IpcResponse::error("Stats requires stateful handler"),
+        IpcCommand::StatsReset => IpcResponse::error("StatsReset requires stateful handler"),
+        IpcCommand::SystemProxyStatus => {
+            IpcResponse::error("SystemProxyStatus requires stateful handler")
+        }
+        IpcCommand::SetSystemProxy { .. } => {
+            IpcResponse::error("SetSystemProxy requires stateful handler")
         }
     }
 }

@@ -27,14 +27,11 @@ impl ServiceState {
 
         tracing::info!("Mihomo started successfully");
 
+        // From here on the watchdog keeps the kernel alive until stop().
+        self.set_desired_running(true);
+
         drop(manager);
-        if let Some(proxy_name) = self.load_selected_proxy() {
-            if let Err(e) = self.select_proxy(&proxy_name) {
-                tracing::warn!("Failed to auto-select proxy {}: {}", proxy_name, e);
-            } else {
-                tracing::info!("Auto-selected proxy: {}", proxy_name);
-            }
-        }
+        self.restore_proxy_selections();
 
         if let Some(mode) = self.load_mode() {
             if let Err(e) = self.set_mode(&mode) {
@@ -76,8 +73,8 @@ impl ServiceState {
         Ok(())
     }
 
-    /// Load selected proxy name from settings.yaml
-    fn load_selected_proxy(&self) -> Option<String> {
+    /// Load selected proxy name from settings.yaml (legacy single-group key)
+    pub(crate) fn load_selected_proxy(&self) -> Option<String> {
         let settings_path = crate::settings::resolve_settings_path();
         if !settings_path.exists() {
             return None;
@@ -112,6 +109,9 @@ impl ServiceState {
 
     /// Stop Mihomo
     pub fn stop(&self) -> Result<(), String> {
+        // The user explicitly asked for a stop: do not let the watchdog fight
+        // them by restarting the kernel.
+        self.set_desired_running(false);
         let mut manager = self.manager.write();
         manager.stop()
             .map_err(|e| format!("Failed to stop Mihomo: {}", e))?;

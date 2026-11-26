@@ -34,6 +34,15 @@ pub struct Profile {
     pub script: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub merge: Vec<String>,
+    /// Quota reported by the provider (`subscription-userinfo` header).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expire: Option<i64>,
 }
 
 pub async fn handle(action: ProfileAction) -> Result<()> {
@@ -56,7 +65,7 @@ async fn add_profile(url: &str, name: Option<&str>, headers: &[String]) -> Resul
     let options = build_download_options(headers)?;
 
     // Download subscription
-    let content = download_subscription(url, options.as_ref()).await?;
+    let (content, userinfo) = download_subscription(url, options.as_ref()).await?;
 
     // Generate ID
     let id = format!("profile-{}", Uuid::new_v4());
@@ -82,6 +91,10 @@ async fn add_profile(url: &str, name: Option<&str>, headers: &[String]) -> Resul
         type_: Some("remote".to_string()),
         script: None,
         merge: Vec::new(),
+        upload: userinfo.map(|u| u.upload),
+        download: userinfo.map(|u| u.download),
+        total: userinfo.map(|u| u.total),
+        expire: userinfo.map(|u| u.expire),
     };
 
     crate::config::update_profiles_file(|yaml| {
@@ -123,9 +136,57 @@ async fn list_profiles() -> Result<()> {
             updated_str,
             cron_str
         );
+
+        // Subscription quota / expiry, when the provider reported it.
+        if let Some(total) = p.total {
+            if total > 0 {
+                let used = p.upload.unwrap_or(0) + p.download.unwrap_or(0);
+                let percent = (used as f64 / total as f64 * 100.0).min(100.0);
+                println!(
+                    "    traffic: {} / {} ({:.1}%)",
+                    format_bytes(used),
+                    format_bytes(total),
+                    percent
+                );
+            }
+        }
+        if let Some(expire) = p.expire {
+            if expire > 0 {
+                let now = chrono::Utc::now().timestamp();
+                let days = (expire - now) / 86_400;
+                let date = chrono::DateTime::from_timestamp(expire, 0)
+                    .map(|dt| dt.with_timezone(&chrono::Local))
+                    .map(|dt| dt.format("%Y-%m-%d").to_string())
+                    .unwrap_or_else(|| expire.to_string());
+                if days < 0 {
+                    println!("    expires: {} (expired)", date);
+                } else if days <= 7 {
+                    println!("    expires: {} (in {} day(s))", date, days);
+                } else {
+                    println!("    expires: {}", date);
+                }
+            }
+        }
     }
 
     Ok(())
+}
+
+/// Render a byte count in human readable form (GiB/MiB/KiB).
+fn format_bytes(bytes: u64) -> String {
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    const MIB: f64 = 1024.0 * 1024.0;
+    const KIB: f64 = 1024.0;
+    let b = bytes as f64;
+    if b >= GIB {
+        format!("{:.2} GiB", b / GIB)
+    } else if b >= MIB {
+        format!("{:.1} MiB", b / MIB)
+    } else if b >= KIB {
+        format!("{:.0} KiB", b / KIB)
+    } else {
+        format!("{} B", bytes)
+    }
 }
 
 async fn remove_profile(id: &str) -> Result<()> {
@@ -210,7 +271,7 @@ async fn update_profile(id: Option<&str>, headers: &[String]) -> Result<()> {
     }
 
     // Download new content
-    let content = download_subscription(&url, Some(&options)).await?;
+    let (content, userinfo) = download_subscription(&url, Some(&options)).await?;
 
     // Update file
     if let Some(ref file) = profiles[profile_idx].file {
@@ -230,6 +291,12 @@ async fn update_profile(id: Option<&str>, headers: &[String]) -> Result<()> {
                 item.options = Some(options_for_write);
             }
             item.updated_at = Some(chrono::Utc::now().timestamp());
+            if let Some(info) = userinfo {
+                item.upload = Some(info.upload);
+                item.download = Some(info.download);
+                item.total = Some(info.total);
+                item.expire = Some(info.expire);
+            }
         }
         Ok(())
     })?;
@@ -395,7 +462,7 @@ fn build_download_options(headers: &[String]) -> Result<Option<ProfileDownloadOp
 async fn download_subscription(
     url: &str,
     options: Option<&ProfileDownloadOptions>,
-) -> Result<String> {
+) -> Result<(String, Option<control_tower_service_core::download::SubscriptionUserInfo>)> {
     let timeout = options.map(|o| o.timeout_or(30)).unwrap_or(30);
     let with_proxy = options.and_then(|o| o.with_proxy).unwrap_or(false);
     let danger_accept_invalid_certs = options
@@ -443,11 +510,16 @@ async fn download_subscription(
         anyhow::bail!("Download failed: {}", response.status());
     }
 
-    Ok(control_tower_service_core::download::text_limited(
+    // Quota info travels in a response header, so read it before the body is
+    // consumed.
+    let userinfo = control_tower_service_core::download::userinfo_from_headers(response.headers());
+
+    let content = control_tower_service_core::download::text_limited(
         response,
         control_tower_service_core::download::MAX_SUBSCRIPTION_BYTES,
     )
-    .await?)
+    .await?;
+    Ok((content, userinfo))
 }
 
 #[cfg(test)]

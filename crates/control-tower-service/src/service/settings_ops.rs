@@ -336,6 +336,14 @@ impl ServiceState {
 
     /// Record a closed connection to history in connection_history.yaml
     pub fn record_closed_connection(&self, closed: crate::settings::ClosedConnection) -> Result<(), String> {
+        // Traffic stats are independent of history retention.
+        crate::service::stats::record(
+            &closed.chains,
+            &closed.destination,
+            closed.upload,
+            closed.download,
+        );
+
         let history_path = crate::settings::resolve_paths()
             .config_dir
             .join("connection_history.yaml");

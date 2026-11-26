@@ -245,6 +245,9 @@ impl ServiceState {
         }
 
         tracing::info!("Port settings applied");
+        // Keep the desktop proxy pointing at the new ports when the switch is
+        // on; otherwise the next page load would fail silently.
+        crate::service::system_proxy::refresh_ports(http_port, socks_port);
         Ok(())
     }
 

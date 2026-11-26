@@ -13,7 +13,7 @@ use crate::settings::SettingsData;
 
 use crate::ServiceState;
 
-use super::{ApiResponse, UpdateSettingsRequest, ApplyPortsRequest, ApplyTunRequest};
+use super::{ApiResponse, UpdateSettingsRequest, ApplyPortsRequest, ApplyTunRequest, SystemProxyRequest};
 
 /// GET /api/settings - Return current settings
 pub async fn get_settings(
@@ -154,6 +154,53 @@ pub async fn apply_tun_settings(
         Ok(Err(e)) => {
             tracing::error!("Failed to apply TUN settings: {}", e);
             HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e))
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),
+    }
+}
+
+/// GET /api/system-proxy - Current desktop system-proxy state
+pub async fn get_system_proxy() -> HttpResponse {
+    match task::spawn_blocking(crate::service::system_proxy::status).await {
+        Ok(status) => HttpResponse::Ok().json(ApiResponse::success(status)),
+        Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),
+    }
+}
+
+/// POST /api/system-proxy - Enable or disable the desktop system proxy
+pub async fn set_system_proxy(
+    state: web::Data<Arc<ServiceState>>,
+    body: web::Json<SystemProxyRequest>,
+) -> HttpResponse {
+    let req = body.into_inner();
+    // The UI only sends the switch state; fall back to the configured ports so
+    // enabling does not require the browser to know them.
+    let settings = state.get_settings();
+    let http_port = req
+        .http_port
+        .or(settings.http_port)
+        .unwrap_or(DEFAULT_MIHOMO_HTTP_PORT);
+    let socks_port = req
+        .socks_port
+        .or(settings.socks_port)
+        .unwrap_or(DEFAULT_MIHOMO_SOCKS_PORT);
+    match task::spawn_blocking(move || {
+        crate::service::system_proxy::set_enabled(
+            req.enabled,
+            req.host,
+            Some(http_port),
+            Some(socks_port),
+        )
+    })
+    .await
+    {
+        Ok(Ok(status)) => {
+            tracing::info!("System proxy {} via API", if status.enabled { "enabled" } else { "disabled" });
+            HttpResponse::Ok().json(ApiResponse::success(status))
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("Failed to change system proxy: {}", e);
+            HttpResponse::BadRequest().json(ApiResponse::<()>::error(e))
         }
         Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),
     }

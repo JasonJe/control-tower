@@ -11,6 +11,8 @@ pub mod active_config;
 pub mod download;
 pub mod fsutil;
 pub mod profiles;
+pub mod share_links;
+pub mod rule_match;
 
 pub use state::{ServiceState, ServiceStatus};
 pub use mihomo::MihomoManager;

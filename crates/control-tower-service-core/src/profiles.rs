@@ -98,6 +98,18 @@ pub struct ProfileItem {
     /// List of profile UIDs to merge for merge-type profiles
     #[serde(rename = "merge", deserialize_with = "deserialize_null_as_empty_vec", default)]
     pub merge: Vec<String>,
+    /// Bytes uploaded according to the provider's `subscription-userinfo`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload: Option<u64>,
+    /// Bytes downloaded according to the provider's `subscription-userinfo`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download: Option<u64>,
+    /// Total quota in bytes (0 or absent when the provider does not report it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    /// Unix timestamp when the subscription expires.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expire: Option<i64>,
 }
 
 /// Custom deserializer that treats YAML null as an empty Vec
@@ -273,6 +285,10 @@ mod tests {
             type_: None,
             script: None,
             merge: Vec::new(),
+            upload: None,
+            download: None,
+            total: None,
+            expire: None,
         }
     }
 

@@ -601,6 +601,7 @@ dependencies = [
  "clap",
  "control-tower-service-core",
  "dirs",
+ "libc",
  "once_cell",
  "reqwest",
  "serde",
@@ -624,6 +625,7 @@ dependencies = [
  "control-tower-service-core",
  "dirs",
  "futures",
+ "libc",
  "parking_lot",
  "percent-encoding",
  "rand 0.8.6",
@@ -649,9 +651,12 @@ name = "control-tower-service-core"
 version = "0.2.2"
 dependencies = [
  "anyhow",
+ "base64",
  "dirs",
  "flate2",
  "libc",
+ "percent-encoding",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

@@ -12,9 +12,11 @@ mod connection_handlers;
 mod rules_handlers;
 mod profile_handlers;
 mod settings_handlers;
+mod config_handlers;
 mod delay_handlers;
 mod logs_handlers;
 mod rule_provider_handlers;
+mod stats_handlers;
 
 pub use dto::*;
 pub use helpers::*;
@@ -24,9 +26,11 @@ pub use connection_handlers::*;
 pub use rules_handlers::*;
 pub use profile_handlers::*;
 pub use settings_handlers::*;
+pub use config_handlers::*;
 pub use delay_handlers::*;
 pub use logs_handlers::*;
 pub use rule_provider_handlers::*;
+pub use stats_handlers::*;
 
 use actix_web::web;
 use actix_web::{HttpResponse, Scope};
@@ -78,10 +82,18 @@ pub fn configure_routes() -> Scope {
         .route("/connections/history", web::delete().to(clear_connection_history))
         // Config
         .route("/config", web::get().to(get_config))
+        .route("/config", web::put().to(put_config))
+        .route("/config/raw", web::get().to(get_config_raw))
+        .route("/config/validate", web::post().to(validate_config))
+        .route("/config/backups", web::get().to(list_backups))
+        .route("/config/backups", web::post().to(create_backup))
+        .route("/config/backups/{id}/restore", web::post().to(restore_backup))
+        .route("/config/backups/{id}", web::delete().to(delete_backup))
         // Rules
         .route("/rules", web::get().to(get_rules))
         .route("/rules", web::post().to(add_rule))
         .route("/rules", web::delete().to(clear_rules))
+        .route("/rules/match", web::post().to(match_rule))
         .route("/rules/{source}/{index}", web::delete().to(delete_rule))
         // Rule Providers
         .route("/rule-providers", web::get().to(get_rule_providers))
@@ -92,6 +104,7 @@ pub fn configure_routes() -> Scope {
         // Profiles
         .route("/profiles", web::get().to(get_profiles))
         .route("/profiles", web::post().to(add_profile))
+        .route("/profiles/import-links", web::post().to(import_links))
         .route("/profiles/{id}/activate", web::put().to(activate_profile))
         .route("/profiles/{id}", web::patch().to(update_profile))
         .route("/profiles/{id}/refresh", web::post().to(refresh_profile))
@@ -104,6 +117,12 @@ pub fn configure_routes() -> Scope {
         .route("/settings/apply-tun", web::post().to(apply_tun_settings))
         .route("/settings/dns", web::get().to(get_dns_settings))
         .route("/settings/dns", web::put().to(put_dns_settings))
+        // Desktop system proxy
+        .route("/system-proxy", web::get().to(get_system_proxy))
+        .route("/system-proxy", web::post().to(set_system_proxy))
+        // Traffic statistics
+        .route("/stats", web::get().to(get_stats))
+        .route("/stats", web::delete().to(reset_stats))
         // Logs
         .route("/logs", web::get().to(get_logs))
         // Auth

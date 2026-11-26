@@ -303,7 +303,7 @@ impl ServiceState {
         };
 
         // Execute HTTP requests outside the lock.
-        let results: Vec<(usize, String, Result<(), String>)> = due_jobs
+        let results: Vec<(usize, String, Result<Option<control_tower_service_core::download::SubscriptionUserInfo>, String>)> = due_jobs
             .into_iter()
             .map(|(idx, profile_id, url, profile_file, options)| {
                 let result = if let Some(url) = url {
@@ -321,11 +321,11 @@ impl ServiceState {
         for (idx, profile_id, result) in results {
             if let Some(job) = jobs.get_mut(idx) {
                 match result {
-                    Ok(()) => {
+                    Ok(userinfo) => {
                         tracing::info!("Profile {} updated successfully", job.profile_id);
                         job.mark_success();
-                        // Update updated_at in profiles.yaml
-                        update_profile_updated_at(&profile_id);
+                        // Update updated_at (and quota) in profiles.yaml
+                        update_profile_updated_at(&profile_id, userinfo);
                     }
                     Err(e) => {
                         tracing::error!("Failed to update profile {}: {}", job.profile_id, e);
@@ -419,8 +419,9 @@ pub fn check_and_update_all_profiles() -> Vec<(String, bool)> {
 
         let path = std::path::PathBuf::from(&profile_file);
         match update_profile_subscription(&url, &path, item.options.as_ref()) {
-            Ok(()) => {
+            Ok(userinfo) => {
                 tracing::info!("Profile {} updated successfully", item.uid);
+                update_profile_updated_at(&item.uid, userinfo);
                 results.push((item.uid, true));
             }
             Err(e) => {
@@ -433,8 +434,11 @@ pub fn check_and_update_all_profiles() -> Vec<(String, bool)> {
     results
 }
 
-/// Update the updated_at timestamp for a profile in profiles.yaml.
-fn update_profile_updated_at(profile_id: &str) {
+/// Update the updated_at timestamp (and quota, when reported) for a profile.
+fn update_profile_updated_at(
+    profile_id: &str,
+    userinfo: Option<control_tower_service_core::download::SubscriptionUserInfo>,
+) {
     let profiles_path = crate::settings::resolve_paths().profiles_path;
 
     // `update_profiles` re-reads the manifest under the shared lock, so a
@@ -443,6 +447,12 @@ fn update_profile_updated_at(profile_id: &str) {
         let now = chrono::Utc::now().timestamp();
         if let Some(item) = yaml.items.iter_mut().find(|item| item.uid == profile_id) {
             item.updated_at = Some(now);
+            if let Some(info) = userinfo {
+                item.upload = Some(info.upload);
+                item.download = Some(info.download);
+                item.total = Some(info.total);
+                item.expire = Some(info.expire);
+            }
             tracing::debug!("Updated updated_at to {} for profile {}", now, profile_id);
         }
         Ok(())
@@ -456,7 +466,7 @@ fn update_profile_updated_at(profile_id: &str) {
 /// Update a profile subscription (download new content and write to file).
 /// Used by cron job auto-update.
 /// When options.with_proxy is true, routes the download through Mihomo's HTTP proxy.
-pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::Path, options: Option<&control_tower_service_core::ProfileDownloadOptions>) -> Result<(), String> {
+pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::Path, options: Option<&control_tower_service_core::ProfileDownloadOptions>) -> Result<Option<control_tower_service_core::download::SubscriptionUserInfo>, String> {
     use reqwest::blocking::Client as BlockingClient;
     use std::time::Duration as StdDuration;
 
@@ -508,6 +518,9 @@ pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::P
         return Err(format!("Subscription fetch failed: {}", response.status()));
     }
 
+    // Read the quota header before the body consumes the response.
+    let userinfo = control_tower_service_core::download::userinfo_from_headers(response.headers());
+
     let new_content = response.text()
         .map_err(|e| format!("Failed to read subscription content: {}", e))?;
 
@@ -529,5 +542,5 @@ pub(crate) fn update_profile_subscription(url: &str, profile_file: &std::path::P
     control_tower_service_core::write_private_atomic(profile_file, &new_content)
         .map_err(|e| format!("Failed to write profile file: {}", e))?;
 
-    Ok(())
+    Ok(userinfo)
 }

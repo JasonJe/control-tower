@@ -481,6 +481,12 @@ body,html{height:100%;overflow:visible}body{font-family:'Inter',system-ui,sans-s
           </div>
         </div>
 
+        <div id="proxy-group-bar" class="search-wrap" style="display:none">
+          <label class="text-sm text-muted" style="white-space:nowrap">Proxy Group</label>
+          <select id="proxy-group-select" class="form-select" style="width:auto;min-width:220px;max-width:360px" onchange="onProxyGroupChange()"></select>
+          <span class="text-sm text-muted" id="proxy-group-now"></span>
+        </div>
+
         <div class="search-wrap">
           <input type="text" class="search-input" id="proxy-search" placeholder="Search proxies by name..." oninput="filterProxies()">
           <span class="text-sm text-muted" id="proxy-count"></span>
@@ -565,6 +571,16 @@ body,html{height:100%;overflow:visible}body{font-family:'Inter',system-ui,sans-s
               </div>
             </div>
           </form>
+
+          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+            <div class="card-title" style="margin-bottom:8px">Import Share Links</div>
+            <textarea class="form-input" id="import-links" rows="4" placeholder="vmess://...&#10;vless://...&#10;trojan://...&#10;ss://...&#10;hysteria2://..."></textarea>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+              <input type="text" class="form-input" id="import-links-name" style="max-width:260px" placeholder="Profile name (optional)">
+              <button type="button" class="btn primary" onclick="importShareLinks()">Import</button>
+              <span class="text-sm text-muted">One link per line. Supports vmess / vless / trojan / ss / hysteria2.</span>
+            </div>
+          </div>
         </div>
 
         <div class="table-wrap">
@@ -608,6 +624,15 @@ body,html{height:100%;overflow:visible}body{font-family:'Inter',system-ui,sans-s
 
         <!-- Rules Tab -->
         <div id="rules-tab">
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-header"><div class="card-title">Test Match</div></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="text" id="rule-test-target" class="search-input" placeholder="example.com, 1.1.1.1 or https://host:443/path" style="flex:1" onkeydown="if(event.key==='Enter')testRuleMatch()">
+            <input type="number" id="rule-test-port" class="search-input" placeholder="port (optional)" min="1" max="65535" style="width:130px">
+            <button class="btn primary sm" onclick="testRuleMatch()">Test</button>
+          </div>
+          <div id="rule-test-result" style="margin-top:10px;font-size:12px;color:var(--text3)"></div>
+        </div>
         <div style="margin-bottom:12px">
           <input type="text" id="rules-search" class="search-input" placeholder="Filter rules..." oninput="renderRules()">
         </div>
@@ -975,6 +1000,43 @@ body,html{height:100%;overflow:visible}body{font-family:'Inter',system-ui,sans-s
                   Requires service restart. Enable only if service has CAP_NET_ADMIN capability.
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">System Proxy</div>
+              <div class="card-actions">
+                <button class="btn primary sm" id="sysproxy-toggle" onclick="toggleSystemProxy()">Enable</button>
+              </div>
+            </div>
+            <div class="info-grid">
+              <div class="info-row"><span class="info-key">Status</span><span class="info-val" id="sysproxy-status">-</span></div>
+              <div class="info-row"><span class="info-key">Desktop</span><span class="info-val" id="sysproxy-backend">-</span></div>
+              <div class="info-row"><span class="info-key">HTTP / HTTPS</span><span class="info-val mono" id="sysproxy-http">-</span></div>
+              <div class="info-row"><span class="info-key">SOCKS5</span><span class="info-val mono" id="sysproxy-socks">-</span></div>
+            </div>
+            <div id="sysproxy-message" style="margin-top:8px;font-size:12px;color:var(--text3)"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Configuration</div>
+              <div class="card-actions">
+                <button class="btn secondary sm" onclick="reloadConfigEditor()">Reload</button>
+                <button class="btn secondary sm" onclick="validateConfigEditor()">Validate</button>
+                <button class="btn secondary sm" onclick="backupConfigNow()">Backup now</button>
+                <button class="btn primary sm" id="config-save-btn" onclick="saveConfigEditor()">Save &amp; Apply</button>
+              </div>
+            </div>
+            <div style="font-size:12px;color:var(--text3);margin-bottom:8px">
+              Direct editing of the active Mihomo <span class="mono">config.yaml</span>. Saving validates first, keeps a backup, and rolls back automatically if Mihomo rejects the config.
+            </div>
+            <textarea id="config-editor" spellcheck="false" style="width:100%;height:340px;box-sizing:border-box;font-family:var(--mono,monospace);font-size:12px;line-height:1.5;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg2,var(--bg));color:var(--text);resize:vertical" placeholder="Loading config..."></textarea>
+            <div id="config-result" style="margin-top:8px;font-size:12px;color:var(--text3);white-space:pre-wrap"></div>
+            <div style="margin-top:14px">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px">Backups</div>
+              <div id="config-backups" style="font-size:12px;color:var(--text3)">-</div>
             </div>
           </div>
 
@@ -1732,6 +1794,30 @@ async function setMode(mode) {
 }
 
 // Proxies
+let proxyGroups = [];
+let currentProxyGroup = 'GLOBAL';
+
+function renderProxyGroupBar() {
+  const bar = document.getElementById('proxy-group-bar');
+  const sel = document.getElementById('proxy-group-select');
+  if (!bar || !sel) return;
+  bar.style.display = proxyGroups.length > 1 ? 'flex' : 'none';
+  sel.innerHTML = proxyGroups
+    .map(g => `<option value="${escapeHtml(g.name)}">${escapeHtml(g.name)}</option>`)
+    .join('');
+  sel.value = currentProxyGroup;
+  const group = proxyGroups.find(g => g.name === currentProxyGroup);
+  document.getElementById('proxy-group-now').textContent =
+    group && group.now ? 'Current: ' + group.now : '';
+}
+
+function onProxyGroupChange() {
+  currentProxyGroup = document.getElementById('proxy-group-select').value || 'GLOBAL';
+  localStorage.setItem('ct.proxyGroup', currentProxyGroup);
+  proxyPage = 1;
+  loadProxies();
+}
+
 async function loadProxies() {
   const l = document.getElementById('proxy-loading'), t = document.getElementById('proxy-table'), e = document.getElementById('proxy-empty');
   l.style.display = 'flex'; t.style.display = 'none'; e.style.display = 'none';
@@ -1741,13 +1827,30 @@ async function loadProxies() {
     const data = await api('GET', '/api/proxies');
     proxies = [];
     proxyData = data; // store full response for selected proxy card
-    const pl = data.proxies || {}, globalNow = pl.GLOBAL?.now || '';
+    const pl = data.proxies || {};
+    // Only Selector groups accept manual selection; GLOBAL is always present
+    // and acts as the fallback when a subscription ships no selector group.
+    proxyGroups = Object.entries(pl)
+      .filter(([name, info]) => name === 'GLOBAL' ||
+        ((info.type || '').toLowerCase() === 'selector' && Array.isArray(info.all)))
+      .map(([name, info]) => ({ name, now: info.now || '', all: info.all || [] }))
+      .filter(g => g.name === 'GLOBAL' || g.all.length > 0);
+    const savedGroup = localStorage.getItem('ct.proxyGroup');
+    if (savedGroup && proxyGroups.some(g => g.name === savedGroup)) currentProxyGroup = savedGroup;
+    if (!proxyGroups.some(g => g.name === currentProxyGroup)) currentProxyGroup = 'GLOBAL';
+    const group = proxyGroups.find(g => g.name === currentProxyGroup) || { name: 'GLOBAL', now: '', all: [] };
+    const groupNow = group.now || '';
+    renderProxyGroupBar();
     // Restore latencies from localStorage
     const savedLatencies = loadProxyLatencies();
     let idx = 0;
-    for (const [name, info] of Object.entries(pl)) {
-      if (['GLOBAL','DIRECT','REJECT','FALLBACK'].includes(name)) continue;
-      proxies.push({ idx: idx++, name, type: info.type || 'unknown', latency: savedLatencies[name] ?? null, udp: info.udp || false, tfo: info.tfo || false, selected: name === globalNow });
+    const seen = new Set();
+    for (const name of group.all) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const info = pl[name];
+      if (!info || ['GLOBAL', 'DIRECT', 'REJECT', 'FALLBACK'].includes(name)) continue;
+      proxies.push({ idx: idx++, name, type: info.type || 'unknown', latency: savedLatencies[name] ?? null, udp: info.udp || false, tfo: info.tfo || false, selected: name === groupNow });
     }
     // Fetch auto test results and merge with localStorage latencies
     let autoResults = [];
@@ -1785,12 +1888,12 @@ async function loadProxies() {
     filteredProxies = proxies.filter(p => p.name.toLowerCase().includes(savedFilter.toLowerCase()));
     proxyPage = 1;
     // Update selected proxy card — always show card (fastest + selected sections)
-    const hasSel = !!(globalNow && pl[globalNow]);
+    const hasSel = !!(groupNow && pl[groupNow]);
     if (hasSel) {
-      const sel = pl[globalNow];
-      document.getElementById('proxy-sel-name').textContent = globalNow;
+      const sel = pl[groupNow];
+      document.getElementById('proxy-sel-name').textContent = groupNow;
       document.getElementById('proxy-sel-type').textContent = (sel.type || '').toUpperCase();
-      const lat = savedLatencies[globalNow] ?? null;
+      const lat = savedLatencies[groupNow] ?? null;
       document.getElementById('proxy-sel-latency').textContent = lat !== null ? lat + 'ms' : 'Timeout';
       document.getElementById('proxy-sel-latency').className = 'badge ' + (lat !== null ? (lat < 100 ? 'success' : lat < 300 ? 'warning' : 'danger') : '');
       document.getElementById('proxy-sel-udp').style.display = sel.udp ? 'inline-block' : 'none';
@@ -1919,9 +2022,12 @@ function goProxyPage(p) { proxyPage = p; renderProxies(); }
 
 async function selectProxy(name) {
   try {
-    await api('POST', '/api/proxies/select', { name });
+    await api('POST', '/api/proxies/select', { name, group: currentProxyGroup });
     showToast(`Selected: ${name}`);
-    // Update proxies list with new selection, preserving current page
+    // Update the active group's `now` marker so re-renders keep the checkmark.
+    const grp = proxyGroups.find(g => g.name === currentProxyGroup);
+    if (grp) grp.now = name;
+    renderProxyGroupBar();
     const pl = proxyData?.proxies || {};
     const globalNow = name; // we just selected this
     proxies.forEach(p => p.selected = p.name === globalNow);
@@ -1985,8 +2091,8 @@ async function testProxy(idx) {
     if (proxies[idx]) { proxies[idx].latency = latency; proxies[idx].latencyError = errMsg; }
     if (filteredProxies[idx]) { filteredProxies[idx].latency = latency; filteredProxies[idx].latencyError = errMsg; }
     saveProxyLatencies();
-    // Update selected card if this is the selected proxy
-    const selName = proxyData?.proxies?.GLOBAL?.now;
+    // Update selected card if this is the selected proxy in the active group
+    const selName = proxyGroups.find(g => g.name === currentProxyGroup)?.now || '';
     if (proxies[idx] && proxies[idx].name === selName) {
       const latEl = document.getElementById('proxy-sel-latency');
       if (latency !== null) {
@@ -2015,14 +2121,15 @@ async function testAllLatency() {
   btn.disabled = true;
   btn.textContent = 'Testing...';
   try {
-    // Use batch delay-all API
-    const resp = await api('POST', '/api/proxies/delay-all', { timeout: 5000 }, 60000);
+    // Use batch delay-all API for the active group
+    const resp = await api('POST', '/api/proxies/delay-all', { timeout: 5000, group: currentProxyGroup }, 60000);
     if (resp && resp.results) {
       // Build a map of name -> delay and error
       const delayMap = {};
       const errorMap = {};
       resp.results.forEach(r => {
-        delayMap[r.name] = r.latency;
+        // The API returns `delay`; accept `latency` too for compatibility.
+        delayMap[r.name] = (r.delay !== undefined) ? r.delay : r.latency;
         if (r.error) errorMap[r.name] = r.error;
       });
       // Apply delays to proxies
@@ -2079,7 +2186,7 @@ function renderProfiles() {
     const st = isActive ? '<span class="badge success">Active</span>' : '<span class="badge neutral">Inactive</span>';
     const typeBadge = p.type && p.type !== 'remote' ? `<span class="badge" style="background:var(--accent);color:white;font-size:10px;padding:2px 6px;margin-left:6px">${p.type}</span>` : '';
     return `<tr>
-      <td><span style="font-weight:500">${escapeHtml(p.name || 'Unnamed')}${typeBadge}</span></td>
+      <td><span style="font-weight:500">${escapeHtml(p.name || 'Unnamed')}${typeBadge}</span>${renderProfileQuota(p)}</td>
       <td><span class="mono text-sm" style="color:var(--text3)">${p.type || 'remote'}</span></td>
       <td><span class="mono truncate" style="max-width:280px;display:block" title="${escapeHtml(p.url || '')}">${escapeHtml(p.url || '-')}</span></td>
       <td>${st}</td>
@@ -2100,6 +2207,59 @@ function renderProfiles() {
 }
 
 function goProfilePage(p) { profilePage = p; renderProfiles(); }
+
+async function importShareLinks() {
+  const text = document.getElementById('import-links').value.trim();
+  if (!text) { showToast('Paste at least one share link', 'warning'); return; }
+  const name = document.getElementById('import-links-name').value.trim();
+  try {
+    const r = await api('POST', '/api/profiles/import-links', { links: text, name: name || undefined });
+    let msg = `Imported ${r.count} node(s)`;
+    if (r.errors && r.errors.length) msg += `, skipped ${r.errors.length} invalid line(s)`;
+    showToast(msg, r.errors && r.errors.length ? 'warning' : 'success');
+    document.getElementById('import-links').value = '';
+    document.getElementById('import-links-name').value = '';
+    loadProfiles();
+  } catch (e) {
+    showToast('Import failed: ' + e.message, 'error');
+  }
+}
+
+// Human readable byte count for subscription quota.
+function formatBytes(n) {
+  if (!n || n < 0) return '0 B';
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let i = 0, v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return (i === 0 ? v.toFixed(0) : v.toFixed(2)) + ' ' + units[i];
+}
+
+// Quota bar + expiry line under the profile name.
+function renderProfileQuota(p) {
+  const parts = [];
+  if (p.total && p.total > 0) {
+    const used = (p.upload || 0) + (p.download || 0);
+    const pct = Math.min(100, (used / p.total) * 100);
+    const color = pct >= 95 ? 'var(--danger)' : pct >= 80 ? '#f59e0b' : 'var(--success)';
+    parts.push(`<div style="margin-top:4px">
+      <div style="height:4px;background:var(--bg-secondary);border-radius:2px;overflow:hidden;max-width:180px">
+        <div style="height:100%;width:${pct.toFixed(1)}%;background:${color}"></div>
+      </div>
+      <span class="text-sm text-muted" style="font-size:11px">${formatBytes(used)} / ${formatBytes(p.total)} (${pct.toFixed(1)}%)</span>
+    </div>`);
+  }
+  if (p.expire && p.expire > 0) {
+    const ms = p.expire * 1000 - Date.now();
+    const days = Math.floor(ms / 86400000);
+    const date = new Date(p.expire * 1000).toLocaleDateString();
+    let label, color = 'var(--text3)';
+    if (days < 0) { label = 'Expired ' + date; color = 'var(--danger)'; }
+    else if (days <= 7) { label = 'Expires ' + date + ' (in ' + days + 'd)'; color = '#f59e0b'; }
+    else { label = 'Expires ' + date; }
+    parts.push(`<div class="text-sm" style="font-size:11px;color:${color};margin-top:2px">${label}</div>`);
+  }
+  return parts.join('');
+}
 
 function onProfileTypeChange() {
   const type = document.getElementById('profile-type').value;
@@ -2357,6 +2517,39 @@ function renderRules() {
 }
 
 function goRulesPage(p) { rulesPage = p; renderRules(); }
+
+async function testRuleMatch() {
+  const targetEl = document.getElementById('rule-test-target');
+  const portEl = document.getElementById('rule-test-port');
+  const out = document.getElementById('rule-test-result');
+  const target = targetEl.value.trim();
+  if (!target) { out.textContent = 'Enter a domain, IP or URL first.'; return; }
+  out.textContent = 'Matching...';
+  out.style.color = 'var(--text3)';
+  try {
+    const body = { target };
+    const port = parseInt(portEl.value, 10);
+    if (port > 0) body.port = port;
+    const r = await api('POST', '/api/rules/match', body);
+    const lines = [];
+    if (r.winner) {
+      lines.push(`Matched #${r.winner.index + 1}: ${r.winner.rule_type} → ${r.winner.policy}`);
+    } else {
+      lines.push('No rule matched (no trailing MATCH rule?)');
+    }
+    lines.push(`Destination: ${r.target}${r.is_ip ? ' (IP)' : ' (domain)'}; skipped ${r.skipped} rule(s)`);
+    (r.evaluated || []).forEach(item => {
+      const mark = item.matched ? '✓' : (item.skipped ? '…' : '·');
+      const note = item.note ? ` — ${item.note}` : '';
+      lines.push(`${mark} #${item.index + 1} ${item.rule}${note}`);
+    });
+    out.textContent = lines.join('\n');
+    out.style.color = r.winner ? 'var(--success)' : 'var(--warning, #f59e0b)';
+  } catch (e) {
+    out.textContent = 'Match failed: ' + e.message;
+    out.style.color = 'var(--danger)';
+  }
+}
 
 // ===== Rule Providers Tab =====
 let rulesTab = 'rules';
@@ -3005,6 +3198,174 @@ async function loadSettings() {
     showToast('Failed to load settings: ' + e.message, 'error');
   }
   loadDns();
+  loadSystemProxy();
+  loadConfigEditor();
+}
+
+// Configuration editor (active config.yaml)
+let configEditorLoaded = false;
+async function loadConfigEditor(force) {
+  if (configEditorLoaded && !force) { loadConfigBackups(); return; }
+  await reloadConfigEditor();
+}
+
+async function reloadConfigEditor() {
+  const ta = document.getElementById('config-editor');
+  if (!ta) return;
+  try {
+    const data = await api('GET', '/api/config/raw');
+    ta.value = (data && data.content) || '';
+    configEditorLoaded = true;
+    const result = document.getElementById('config-result');
+    result.textContent = data && data.modified ? `Loaded ${data.path} (modified ${data.modified})` : 'Loaded';
+    result.style.color = 'var(--text3)';
+  } catch (e) {
+    document.getElementById('config-result').textContent = 'Failed to load config: ' + e.message;
+    document.getElementById('config-result').style.color = 'var(--danger)';
+  }
+  loadConfigBackups();
+}
+
+async function validateConfigEditor() {
+  const ta = document.getElementById('config-editor');
+  const result = document.getElementById('config-result');
+  result.textContent = 'Validating...';
+  result.style.color = 'var(--text3)';
+  try {
+    const report = await api('POST', '/api/config/validate', { content: ta.value });
+    const lines = [];
+    if (report.ok) lines.push('Validation passed.');
+    else lines.push('Validation failed:');
+    (report.errors || []).forEach(e => lines.push('  error: ' + e));
+    (report.warnings || []).forEach(w => lines.push('  warning: ' + w));
+    const s = report.summary;
+    if (s) lines.push(`proxies: ${s.proxies}, groups: ${s.proxy_groups}, rules: ${s.rules}, rule-providers: ${s.rule_providers}, size: ${formatBytes(s.size)}`);
+    result.textContent = lines.join('\n');
+    result.style.color = report.ok ? 'var(--success)' : 'var(--danger)';
+  } catch (e) {
+    result.textContent = 'Validation request failed: ' + e.message;
+    result.style.color = 'var(--danger)';
+  }
+}
+
+async function saveConfigEditor() {
+  const ta = document.getElementById('config-editor');
+  const btn = document.getElementById('config-save-btn');
+  const result = document.getElementById('config-result');
+  if (!confirm('Save and apply this config? Mihomo will reload immediately.')) return;
+  btn.disabled = true;
+  result.textContent = 'Saving and reloading...';
+  result.style.color = 'var(--text3)';
+  try {
+    const summary = await api('PUT', '/api/config', { content: ta.value });
+    const s = summary || {};
+    result.textContent = `Saved and applied (proxies: ${s.proxies || 0}, groups: ${s.proxy_groups || 0}, rules: ${s.rules || 0}).`;
+    result.style.color = 'var(--success)';
+    showToast('Config saved and applied', 'success');
+    configEditorLoaded = true;
+    loadConfigBackups();
+    loadProxies();
+  } catch (e) {
+    result.textContent = 'Save failed: ' + e.message;
+    result.style.color = 'var(--danger)';
+    showToast('Config save failed: ' + e.message, 'error');
+  }
+  btn.disabled = false;
+}
+
+async function backupConfigNow() {
+  try {
+    await api('POST', '/api/config/backups', { reason: 'manual' });
+    showToast('Backup created', 'success');
+  } catch (e) {
+    showToast('Backup failed: ' + e.message, 'error');
+  }
+  loadConfigBackups();
+}
+
+async function loadConfigBackups() {
+  const el = document.getElementById('config-backups');
+  if (!el) return;
+  try {
+    const backups = await api('GET', '/api/config/backups');
+    if (!backups || !backups.length) { el.textContent = 'No backups yet.'; return; }
+    el.innerHTML = backups.map(b => `
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">
+        <span class="mono" style="flex:1;color:var(--text)">${escapeHtml(b.id)}</span>
+        <span>${formatBytes(b.size)}</span>
+        <button class="btn ghost sm" onclick="restoreConfigBackup('${escapeForJs(b.id)}')">Restore</button>
+        <button class="btn danger sm" onclick="deleteConfigBackup('${escapeForJs(b.id)}')">Delete</button>
+      </div>`).join('');
+  } catch (e) {
+    el.textContent = 'Failed to load backups: ' + e.message;
+  }
+}
+
+async function restoreConfigBackup(id) {
+  if (!confirm(`Restore backup ${id}? The current config is backed up first.`)) return;
+  const result = document.getElementById('config-result');
+  try {
+    await api('POST', '/api/config/backups/' + encodeURIComponent(id) + '/restore');
+    showToast('Backup restored', 'success');
+    await reloadConfigEditor();
+  } catch (e) {
+    result.textContent = 'Restore failed: ' + e.message;
+    result.style.color = 'var(--danger)';
+    showToast('Restore failed: ' + e.message, 'error');
+  }
+}
+
+async function deleteConfigBackup(id) {
+  if (!confirm(`Delete backup ${id}?`)) return;
+  try {
+    await api('DELETE', '/api/config/backups/' + encodeURIComponent(id));
+    showToast('Backup deleted', 'success');
+  } catch (e) {
+    showToast('Delete failed: ' + e.message, 'error');
+  }
+  loadConfigBackups();
+}
+
+// System proxy (GNOME / KDE desktop switch)
+let systemProxyState = null;
+async function loadSystemProxy() {
+  try {
+    const data = await api('GET', '/api/system-proxy');
+    systemProxyState = data || {};
+    const on = !!data.enabled;
+    const btn = document.getElementById('sysproxy-toggle');
+    if (!btn) return;
+    btn.textContent = on ? 'Disable' : 'Enable';
+    btn.className = on ? 'btn danger sm' : 'btn primary sm';
+    btn.disabled = !data.supported && !on;
+    const statusEl = document.getElementById('sysproxy-status');
+    statusEl.textContent = on ? 'ON' : 'OFF';
+    statusEl.style.color = on ? 'var(--success)' : 'var(--text2)';
+    document.getElementById('sysproxy-backend').textContent =
+      (data.backend ? data.backend.toUpperCase() : '-') + (data.supported ? '' : ' (unavailable)');
+    const host = data.host || '127.0.0.1';
+    document.getElementById('sysproxy-http').textContent = data.http_port ? host + ':' + data.http_port : '-';
+    document.getElementById('sysproxy-socks').textContent = data.socks_port ? host + ':' + data.socks_port : '-';
+    document.getElementById('sysproxy-message').textContent =
+      data.message || data.last_error ||
+      (on ? 'Desktop applications use the proxy above.' : 'Switches the GNOME/KDE system proxy; the previous values are restored on disable.');
+  } catch (e) {
+    const msg = document.getElementById('sysproxy-message');
+    if (msg) msg.textContent = 'System proxy unavailable: ' + e.message;
+  }
+}
+
+async function toggleSystemProxy() {
+  const enable = !(systemProxyState && systemProxyState.enabled);
+  const btn = document.getElementById('sysproxy-toggle');
+  btn.disabled = true;
+  try {
+    systemProxyState = await api('POST', '/api/system-proxy', { enabled: enable });
+    showToast(enable ? 'System proxy enabled' : 'System proxy disabled', 'success');
+  } catch (e) {
+    showToast('System proxy: ' + e.message, 'error');
+  }
+  loadSystemProxy();
 }
 
 function editPorts() {

@@ -40,6 +40,10 @@ impl ServiceState {
             auth_nonces: RwLock::new(HashMap::new()),
             // Failed login attempts per client IP (rate limiting)
             login_failures: RwLock::new(HashMap::new()),
+            // Kernel watchdog: runs Mihomo until the user stops the service
+            desired_running: std::sync::atomic::AtomicBool::new(false),
+            watchdog_failures: std::sync::atomic::AtomicU32::new(0),
+            watchdog_next_at: std::sync::atomic::AtomicU64::new(0),
         }
     }
 

@@ -3,7 +3,7 @@
 use anyhow::Result;
 use serde_json::Value;
 use std::net::TcpStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::config::get_config_dir;
@@ -631,6 +631,203 @@ pub async fn handle(action: ServiceAction) -> Result<()> {
             stop_service().await?;
             start_service().await?;
         }
+        ServiceAction::Install => install_service()?,
+    }
+    Ok(())
+}
+
+// ============ systemd installation ============
+
+const INSTALL_DIR: &str = "/opt/ctsvc";
+const SERVICE_NAME: &str = "ctsvc";
+const SERVICE_FILE: &str = "/etc/systemd/system/ctsvc.service";
+
+fn is_root() -> bool {
+    unsafe { libc::geteuid() == 0 }
+}
+
+/// Install the service as a systemd unit.
+///
+/// Prefers running the daemon as the invoking desktop user (`SUDO_USER`) so
+/// the desktop system-proxy integration writes to the right session and the
+/// config directory stays writable without privileges. `CT_USER` overrides the
+/// choice; otherwise root is used.
+pub fn install_service() -> Result<()> {
+    if !is_root() {
+        anyhow::bail!("`ctctl service install` must run as root. Try: sudo ctctl service install");
+    }
+
+    let current_exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("Failed to locate ctctl: {}", e))?;
+    let source_dir = current_exe
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Failed to locate ctctl directory"))?;
+    let service_bin = source_dir.join("ctsvc");
+    if !service_bin.exists() {
+        anyhow::bail!(
+            "ctsvc not found next to ctctl ({}). Run this from the extracted release tarball.",
+            service_bin.display()
+        );
+    }
+
+    let run_user = std::env::var("CT_USER")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::env::var("SUDO_USER")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty() && s != "root")
+        })
+        .unwrap_or_else(|| "root".to_string());
+
+    println!("Installing ctsvc to {} (service user: {})", INSTALL_DIR, run_user);
+
+    // Stop an existing unit before replacing files, ignore "not loaded".
+    let _ = std::process::Command::new("systemctl")
+        .args(["stop", SERVICE_NAME])
+        .status();
+
+    let install_dir = PathBuf::from(INSTALL_DIR);
+    std::fs::create_dir_all(&install_dir)
+        .map_err(|e| anyhow::anyhow!("Failed to create {}: {}", install_dir.display(), e))?;
+
+    // Binaries are always replaced.
+    copy_file(&service_bin, &install_dir.join("ctsvc"))?;
+    let cli_bin = source_dir.join("ctctl");
+    if cli_bin.exists() {
+        copy_file(&cli_bin, &install_dir.join("ctctl"))?;
+    }
+
+    // User data is only seeded on first install, so an upgrade never wipes
+    // credentials, profiles or the generated config.
+    for name in ["settings.yaml", "profiles.yaml"] {
+        let src = source_dir.join(name);
+        let dst = install_dir.join(name);
+        if src.exists() && !dst.exists() {
+            copy_file(&src, &dst)?;
+        }
+    }
+    let src_profiles = source_dir.join("profiles");
+    let dst_profiles = install_dir.join("profiles");
+    if src_profiles.is_dir() && !dst_profiles.exists() {
+        copy_dir_all(&src_profiles, &dst_profiles)?;
+    }
+
+    // Mihomo + geo databases always follow the package version.
+    let src_mihomo = source_dir.join("mihomo");
+    if src_mihomo.is_dir() {
+        copy_dir_all(&src_mihomo, &install_dir.join("mihomo"))?;
+    }
+
+    let settings = install_dir.join("settings.yaml");
+    if settings.exists() {
+        // The file can hold the auth verifier.
+        set_file_mode(&settings, 0o600);
+    }
+    set_file_mode(&install_dir.join("ctsvc"), 0o755);
+
+    // Hand the install directory to the service user so it can write
+    // settings/profiles/config/logs without root.
+    if run_user != "root" {
+        let owner = format!("{}:{}", run_user, run_user);
+        run_checked("chown", &["-R", owner.as_str(), INSTALL_DIR])?;
+    }
+
+    std::fs::write(SERVICE_FILE, systemd_unit(&run_user))
+        .map_err(|e| anyhow::anyhow!("Failed to write {}: {}", SERVICE_FILE, e))?;
+
+    run_checked("systemctl", &["daemon-reload"])?;
+    run_checked("systemctl", &["enable", SERVICE_NAME])?;
+    run_checked("systemctl", &["restart", SERVICE_NAME])?;
+
+    println!();
+    println!("========================================");
+    println!("  ctsvc installed successfully!");
+    println!("========================================");
+    println!();
+    println!("Service user: {}", run_user);
+    println!("Commands:");
+    println!("  Status:  sudo systemctl status {}", SERVICE_NAME);
+    println!("  Logs:    sudo journalctl -u {} -f", SERVICE_NAME);
+    println!("  Stop:    sudo systemctl stop {}", SERVICE_NAME);
+    println!();
+    println!("Web UI:  http://127.0.0.1:8080");
+    Ok(())
+}
+
+fn systemd_unit(run_user: &str) -> String {
+    format!(
+        "[Unit]\n\
+         Description=ctsvc - Control Tower Service\n\
+         After=network.target\n\
+         \n\
+         [Service]\n\
+         Type=simple\n\
+         ExecStart=\"{INSTALL_DIR}/ctsvc\"\n\
+         Restart=on-failure\n\
+         RestartSec=5\n\
+         User={run_user}\n\
+         Environment=\"RUST_LOG=info\"\n\
+         # The IPC socket lives in /tmp; PrivateTmp would hide it from ctctl.\n\
+         NoNewPrivileges=true\n\
+         AmbientCapabilities=CAP_NET_ADMIN\n\
+         ProtectSystem=strict\n\
+         ProtectHome=false\n\
+         UMask=0077\n\
+         ReadWritePaths={INSTALL_DIR}\n\
+         StandardOutput=journal\n\
+         StandardError=journal\n\
+         SyslogIdentifier=ctsvc\n\
+         \n\
+         [Install]\n\
+         WantedBy=multi-user.target\n"
+    )
+}
+
+fn copy_file(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::copy(src, dst)
+        .map_err(|e| anyhow::anyhow!("Failed to copy {} to {}: {}", src.display(), dst.display(), e))?;
+    Ok(())
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| anyhow::anyhow!("Failed to create {}: {}", dst.display(), e))?;
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", src.display(), e))?
+    {
+        let entry = entry.map_err(|e| anyhow::anyhow!("Failed to read {}: {}", src.display(), e))?;
+        let target = dst.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .map_err(|e| anyhow::anyhow!("Failed to stat {}: {}", entry.path().display(), e))?;
+        if file_type.is_dir() {
+            copy_dir_all(&entry.path(), &target)?;
+        } else {
+            copy_file(&entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_file_mode(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+}
+
+#[cfg(not(unix))]
+fn set_file_mode(_path: &Path, _mode: u32) {}
+
+fn run_checked(program: &str, args: &[&str]) -> Result<()> {
+    let status = std::process::Command::new(program)
+        .args(args)
+        .status()
+        .map_err(|e| anyhow::anyhow!("Failed to run {}: {}", program, e))?;
+    if !status.success() {
+        anyhow::bail!("{} {:?} failed ({})", program, args, status);
     }
     Ok(())
 }

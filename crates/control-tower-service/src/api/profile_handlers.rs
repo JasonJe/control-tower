@@ -10,7 +10,7 @@ use control_tower_service_core::{
     download::MAX_SUBSCRIPTION_BYTES, ProfileDownloadOptions, ProfileItem, ProfilesYaml,
 };
 
-use super::{ApiResponse, AddProfileRequest, RefreshRequest};
+use super::{ApiResponse, AddProfileRequest, RefreshRequest, ImportLinksRequest};
 
 /// Persist a profile file atomically and owner-only (it contains proxies and
 /// their credentials).
@@ -240,6 +240,9 @@ pub async fn add_profile(
     let file_name = format!("{}.yaml", &uid[..8]);
     let profile_file = profiles_dir.join(&file_name);
 
+    // Quota/expiry reported by the provider while downloading.
+    let mut subscription_userinfo = None;
+
     match profile_type {
         "local" => {
             // Local profile: just create empty file, user provides content later
@@ -345,6 +348,9 @@ pub async fn add_profile(
                     .json(ApiResponse::<()>::error(format!("Download failed: {}", response.status())));
             }
 
+            subscription_userinfo =
+                control_tower_service_core::download::userinfo_from_headers(response.headers());
+
             let content = match control_tower_service_core::download::text_limited(
                 response,
                 MAX_SUBSCRIPTION_BYTES,
@@ -397,6 +403,10 @@ pub async fn add_profile(
         type_: Some(profile_type.to_string()),
         script: body.script.clone(),
         merge: body.merge.clone().unwrap_or_default(),
+        upload: subscription_userinfo.map(|u| u.upload),
+        download: subscription_userinfo.map(|u| u.download),
+        total: subscription_userinfo.map(|u| u.total),
+        expire: subscription_userinfo.map(|u| u.expire),
     };
 
     if let Err(e) = control_tower_service_core::update_profiles(profiles_path, |yaml| {
@@ -412,6 +422,78 @@ pub async fn add_profile(
         "name": body.name,
         "type": profile_type,
         "file": file_name
+    })))
+}
+
+/// POST /api/profiles/import-links - Build a local profile from share links
+pub async fn import_links(body: web::Json<ImportLinksRequest>) -> HttpResponse {
+    if body.links.trim().is_empty() {
+        return HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error("No share links provided".to_string()));
+    }
+
+    let paths = super::get_control_tower_paths();
+    let profiles_path = &paths.profiles_path;
+    let profiles_dir = paths.config_dir.join("profiles");
+    if let Err(e) = std::fs::create_dir_all(&profiles_dir) {
+        return HttpResponse::InternalServerError()
+            .json(ApiResponse::<()>::error(format!("Failed to create profiles dir: {}", e)));
+    }
+
+    let imported = control_tower_service_core::share_links::import_share_links(&body.links);
+    if imported.names.is_empty() {
+        let detail = if imported.errors.is_empty() {
+            "No share links found".to_string()
+        } else {
+            imported.errors.join("; ")
+        };
+        return HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error(format!("No proxy could be imported: {}", detail)));
+    }
+
+    let uid = uuid::Uuid::new_v4().to_string();
+    let file_name = format!("{}.yaml", &uid[..8]);
+    let profile_file = profiles_dir.join(&file_name);
+    if let Err(e) = save_profile_file(&profile_file, &imported.yaml) {
+        return HttpResponse::InternalServerError()
+            .json(ApiResponse::<()>::error(format!("Failed to save profile: {}", e)));
+    }
+
+    let name = body.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| {
+        format!("Imported links ({} nodes)", imported.names.len())
+    });
+
+    let new_item = ProfileItem {
+        uid: uid.clone(),
+        name: Some(name.clone()),
+        file: Some(file_name.clone()),
+        url: None,
+        cron: None,
+        updated_at: Some(chrono::Utc::now().timestamp()),
+        options: None,
+        type_: Some("local".to_string()),
+        script: None,
+        merge: Vec::new(),
+        upload: None,
+        download: None,
+        total: None,
+        expire: None,
+    };
+
+    if let Err(e) = control_tower_service_core::update_profiles(profiles_path, |yaml| {
+        yaml.items.push(new_item);
+        Ok(())
+    }) {
+        return HttpResponse::InternalServerError()
+            .json(ApiResponse::<()>::error(format!("Failed to update profiles.yaml: {}", e)));
+    }
+
+    HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
+        "uid": uid,
+        "name": name,
+        "count": imported.names.len(),
+        "names": imported.names,
+        "errors": imported.errors,
     })))
 }
 
@@ -819,6 +901,10 @@ pub async fn update_profile(
                 anyhow::bail!("Download failed: {}", response.status());
             }
 
+            // Quota header must be read before the body is consumed.
+            let userinfo =
+                control_tower_service_core::download::userinfo_from_headers(response.headers());
+
             let new_content = control_tower_service_core::download::text_limited_blocking(
                 response,
                 MAX_SUBSCRIPTION_BYTES,
@@ -841,6 +927,12 @@ pub async fn update_profile(
                     .find(|item| item.uid == uid_clone)
                     .ok_or_else(|| anyhow::anyhow!("Profile {} not found", uid_clone))?;
                 apply_profile_edits(item, &edits_clone);
+                if let Some(info) = userinfo {
+                    item.upload = Some(info.upload);
+                    item.download = Some(info.download);
+                    item.total = Some(info.total);
+                    item.expire = Some(info.expire);
+                }
                 Ok(())
             })?;
 
@@ -1065,6 +1157,9 @@ pub async fn refresh_profile(
             anyhow::bail!("Download failed: {}", response.status());
         }
 
+        // The quota header is only available before the body is consumed.
+        let userinfo = control_tower_service_core::download::userinfo_from_headers(response.headers());
+
         let new_content = control_tower_service_core::download::text_limited_blocking(
             response,
             MAX_SUBSCRIPTION_BYTES,
@@ -1078,6 +1173,12 @@ pub async fn refresh_profile(
             let now = chrono::Utc::now().timestamp();
             if let Some(item) = yaml.items.iter_mut().find(|item| item.uid == uid_clone) {
                 item.updated_at = Some(now);
+                if let Some(info) = userinfo {
+                    item.upload = Some(info.upload);
+                    item.download = Some(info.download);
+                    item.total = Some(info.total);
+                    item.expire = Some(info.expire);
+                }
             }
             Ok(())
         })?;

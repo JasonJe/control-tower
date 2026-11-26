@@ -37,6 +37,9 @@ impl<T: Serialize> ApiResponse<T> {
 #[derive(Debug, Deserialize)]
 pub struct SelectProxyRequest {
     pub name: String,
+    /// Selector group to change (defaults to GLOBAL).
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +72,29 @@ fn default_timeout() -> u64 {
 pub struct ProxyDelayAllRequest {
     pub timeout: Option<u64>,
     pub mode: Option<String>,
+    /// Optional proxy group to test (defaults to GLOBAL).
+    pub group: Option<String>,
+}
+
+// ============ System proxy DTOs ============
+
+#[derive(Debug, Deserialize)]
+pub struct SystemProxyRequest {
+    pub enabled: bool,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub http_port: Option<u16>,
+    #[serde(default)]
+    pub socks_port: Option<u16>,
+}
+
+/// Request for importing `vmess://` / `vless://` / ... share links.
+#[derive(Debug, Deserialize)]
+pub struct ImportLinksRequest {
+    pub links: String,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 // ============ Rules DTOs ============

@@ -76,6 +76,13 @@ pub struct ServiceState {
     /// transport-level peer address, never by `X-Forwarded-For`, so a client
     /// cannot dodge the throttle by spoofing a header.
     login_failures: RwLock<std::collections::HashMap<String, Vec<u64>>>,
+    /// Whether the user wants Mihomo running. The watchdog only restarts the
+    /// kernel when this is `true`, so an explicit `service stop` is respected.
+    desired_running: std::sync::atomic::AtomicBool,
+    /// Consecutive watchdog restart failures, used for exponential backoff.
+    watchdog_failures: std::sync::atomic::AtomicU32,
+    /// Earliest unix second for the next watchdog restart attempt.
+    watchdog_next_at: std::sync::atomic::AtomicU64,
 }
 
 impl Default for ServiceState {
@@ -1008,6 +1015,11 @@ fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Re
     let mut last_cron_check = std::time::Instant::now();
     const CRON_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
+    // Kernel watchdog: restart Mihomo when it crashes. Checked more often than
+    // cron jobs so a dead proxy is noticed within seconds.
+    let mut last_watchdog_check = std::time::Instant::now();
+    const WATCHDOG_INTERVAL: Duration = Duration::from_secs(5);
+
     // Track last provider refresh separately — respects provider's configured interval
     let mut last_provider_refresh = std::time::Instant::now();
 
@@ -1021,9 +1033,19 @@ fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Re
             tracing::warn!("IPC request failed: {}", e);
         }
 
+        // Keep Mihomo alive when it exits unexpectedly.
+        if last_watchdog_check.elapsed() >= WATCHDOG_INTERVAL {
+            state.watchdog_tick();
+            last_watchdog_check = std::time::Instant::now();
+        }
+
         // Check if it's time to check cron jobs
         if last_cron_check.elapsed() >= CRON_CHECK_INTERVAL {
             state.check_and_run_crons();
+
+            // Retry a pending system-proxy apply (the desktop session may only
+            // appear after the service starts, e.g. at boot before login).
+            crate::service::system_proxy::ensure_applied();
 
             // Check if auto latency test is due
             {
@@ -1100,6 +1122,10 @@ fn run_server(mut server: ipc_server::IpcServer, state: Arc<ServiceState>) -> Re
     }
 
     tracing::info!("Shutting down IPC server...");
+    // Do not leave the desktop pointing at a proxy port that is about to die.
+    crate::service::system_proxy::restore_on_shutdown();
+    // Persist any traffic stats accumulated since the last flush.
+    crate::service::stats::flush();
     server.stop();
     Ok(())
 }
@@ -1233,6 +1259,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load settings from settings.yaml (also syncs auto_test.enabled)
     state.load_settings();
+
+    // Re-apply the desktop system proxy if the user left the switch on.
+    crate::service::system_proxy::ensure_applied();
 
     // Auto-start Mihomo if config.yaml exists and no --no-auto-start flag
     let config_path = paths.active_config_path.clone();

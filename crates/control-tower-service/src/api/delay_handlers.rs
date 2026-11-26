@@ -273,15 +273,23 @@ pub async fn proxy_delay_all(
         }
     };
 
-    // Get GLOBAL.all list (skip first 3: DIRECT, REJECT, FALLBACK)
-    let global_all: Vec<String> = proxies
-        .get("GLOBAL")
+    let group_name = body
+        .group
+        .clone()
+        .unwrap_or_else(|| "GLOBAL".to_string());
+    // Test the members of the selected selector group, not the flat GLOBAL
+    // list: a subscription usually routes through its own group and its
+    // members are exactly what the user sees in the UI.
+    let group_all: Vec<String> = proxies
+        .get(&group_name)
         .and_then(|g| g.get("all"))
         .and_then(|a| a.as_array())
         .map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(String::from))
-                .skip(3) // Skip DIRECT, REJECT, FALLBACK
+                // GLOBAL prepends DIRECT/REJECT/FALLBACK, which are not
+                // proxies worth measuring.
+                .skip(if group_name == "GLOBAL" { 3 } else { 0 })
                 .collect()
         })
         .unwrap_or_default();
@@ -340,7 +348,7 @@ pub async fn proxy_delay_all(
         }
     };
 
-    let futures: Vec<_> = global_all.into_iter().map(test_and_collect).collect();
+    let futures: Vec<_> = group_all.into_iter().map(test_and_collect).collect();
     let results: Vec<serde_json::Value> = join_all(futures).await;
 
     // Compute fastest (lowest delay) from results

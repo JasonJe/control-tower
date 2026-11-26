@@ -35,8 +35,9 @@ pub async fn select_proxy(
         return HttpResponse::Unauthorized().json(ApiResponse::<()>::error("Unauthorized"));
     }
     let name = body.name.clone();
+    let group = body.group.clone().unwrap_or_else(|| "GLOBAL".to_string());
     let state = state.clone();
-    match task::spawn_blocking(move || state.select_proxy(&name)).await {
+    match task::spawn_blocking(move || state.select_proxy_in(&group, &name)).await {
         Ok(Ok(())) => HttpResponse::Ok().json(ApiResponse::<()>::success(())),
         Ok(Err(e)) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e)),
         Err(e) => HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string())),

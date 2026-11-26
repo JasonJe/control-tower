@@ -2,10 +2,45 @@
 
 use std::time::Duration;
 
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use reqwest::blocking::Client as BlockingClient;
 
 use crate::ServiceState;
 use super::logging::ConnectionMetadata;
+
+/// Location of the per-group proxy selections.
+fn selections_path() -> std::path::PathBuf {
+    crate::settings::resolve_paths()
+        .config_dir
+        .join("proxy-selections.yaml")
+}
+
+fn load_proxy_selections() -> std::collections::BTreeMap<String, String> {
+    match std::fs::read_to_string(selections_path()) {
+        Ok(content) => serde_yaml_ng::from_str(&content).unwrap_or_default(),
+        Err(_) => std::collections::BTreeMap::new(),
+    }
+}
+
+fn save_proxy_selection(group: &str, name: &str) -> Result<(), String> {
+    // Selection writes come from independent HTTP requests; serialize them so
+    // two groups selected at the same time do not overwrite each other.
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let mut selections = load_proxy_selections();
+    selections.insert(group.to_string(), name.to_string());
+    let yaml = serde_yaml_ng::to_string(&selections)
+        .map_err(|e| format!("Failed to serialize proxy selections: {}", e))?;
+    let path = selections_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+    }
+    control_tower_service_core::write_private_atomic(&path, &yaml)
+        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+}
+
 
 impl ServiceState {
     /// Get the Mihomo API base URL
@@ -202,22 +237,69 @@ impl ServiceState {
         Ok(())
     }
 
-    /// Select a proxy via Clash API
+    /// Select a proxy in the GLOBAL group.
     pub(crate) fn select_proxy(&self, name: &str) -> Result<(), String> {
+        self.select_proxy_in("GLOBAL", name)
+    }
+
+    /// Select a proxy inside a specific proxy group (e.g. "节点选择").
+    ///
+    /// Mihomo exposes manual selection per selector group: `PUT
+    /// /proxies/{group}`. The previous implementation always targeted GLOBAL,
+    /// which is not the group most subscriptions route through, so clicking a
+    /// node in the UI could leave the effective route unchanged.
+    pub(crate) fn select_proxy_in(&self, group: &str, name: &str) -> Result<(), String> {
+        let group = if group.trim().is_empty() {
+            "GLOBAL"
+        } else {
+            group
+        };
         let client = BlockingClient::new();
-        let url = format!("{}/proxies/GLOBAL", self.get_api_url());
+        let url = format!(
+            "{}/proxies/{}",
+            self.get_api_url(),
+            utf8_percent_encode(group, NON_ALPHANUMERIC)
+        );
 
         let response = client
             .put(&url)
             .json(&serde_json::json!({ "name": name }))
             .timeout(Duration::from_secs(5))
             .send()
-            .map_err(|e| format!("Failed to select proxy: {}", e))?;
+            .map_err(|e| format!("Failed to select proxy in {}: {}", group, e))?;
 
         if !response.status().is_success() {
-            return Err(format!("Failed to select proxy: {}", response.status()));
+            return Err(format!(
+                "Failed to select proxy '{}' in group '{}': {}",
+                name,
+                group,
+                response.status()
+            ));
+        }
+
+        if let Err(e) = save_proxy_selection(group, name) {
+            tracing::warn!("Failed to persist proxy selection: {}", e);
         }
         Ok(())
+    }
+
+    /// Re-apply per-group selections after a Mihomo start/restart.
+    ///
+    /// Selections are stored in `proxy-selections.yaml` because putting them in
+    /// settings.yaml would make every settings save rewrite them, and the UI
+    /// PUT handler has to copy dozens of unrelated fields.
+    pub(crate) fn restore_proxy_selections(&self) {
+        let mut selections = load_proxy_selections();
+        // Compatibility with the old single `selected_proxy` key.
+        if let Some(legacy) = self.load_selected_proxy() {
+            selections.entry("GLOBAL".to_string()).or_insert(legacy);
+        }
+        for (group, name) in selections {
+            match self.select_proxy_in(&group, &name) {
+                Ok(()) => tracing::info!("Restored proxy selection in {}: {}", group, name),
+                Err(e) => tracing::warn!("Failed to restore proxy selection in {}: {}", group, e),
+            }
+        }
     }
 
     /// Trigger Mihomo config hot-reload via PUT /configs?force=true

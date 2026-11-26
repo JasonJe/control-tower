@@ -333,6 +333,14 @@ enum ServiceAction {
     /// Example:
     ///   ctctl service restart
     Restart,
+    /// Install the service as a systemd unit
+    ///
+    /// Copies the binaries, Mihomo and settings to /opt/ctsvc, writes
+    /// /etc/systemd/system/ctsvc.service and enables it. Must run as root.
+    ///
+    /// Example:
+    ///   sudo ctctl service install
+    Install,
 }
 
 #[derive(Subcommand, Debug)]

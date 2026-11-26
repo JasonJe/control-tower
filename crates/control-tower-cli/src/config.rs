@@ -40,6 +40,10 @@ pub fn load_profiles() -> Result<Vec<Profile>> {
                 profile_type: item.type_,
                 script: item.script,
                 merge: item.merge,
+                upload: item.upload,
+                download: item.download,
+                total: item.total,
+                expire: item.expire,
             }
         })
         .collect();

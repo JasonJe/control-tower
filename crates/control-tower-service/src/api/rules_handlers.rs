@@ -126,6 +126,54 @@ pub async fn get_rules() -> HttpResponse {
     HttpResponse::Ok().json(ApiResponse::success(response))
 }
 
+#[derive(serde::Deserialize)]
+pub struct MatchRuleRequest {
+    pub target: String,
+    #[serde(default)]
+    pub port: Option<u16>,
+}
+
+/// POST /api/rules/match - Test a destination against the active rule list
+pub async fn match_rule(body: web::Json<MatchRuleRequest>) -> HttpResponse {
+    let req = body.into_inner();
+    if req.target.trim().is_empty() {
+        return HttpResponse::BadRequest()
+            .json(ApiResponse::<()>::error("target must not be empty"));
+    }
+
+    let rules = match tokio::task::spawn_blocking(read_config_rules).await {
+        Ok(rules) => rules,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(ApiResponse::<()>::error(e.to_string()))
+        }
+    };
+
+    let result = control_tower_service_core::rule_match::evaluate(&rules, &req.target, req.port);
+    HttpResponse::Ok().json(ApiResponse::success(result))
+}
+
+/// Read the rule list from the active config.yaml.
+fn read_config_rules() -> Vec<String> {
+    let paths = super::get_control_tower_paths();
+    let config_path = &paths.active_config_path;
+    if !config_path.exists() {
+        return Vec::new();
+    }
+    std::fs::read_to_string(config_path)
+        .ok()
+        .and_then(|content| serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&content).ok())
+        .and_then(|yaml| {
+            yaml.get("rules")?
+                .as_sequence()?
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect::<Vec<_>>()
+                .into()
+        })
+        .unwrap_or_default()
+}
+
 /// Detect how many custom rules are prepended to config by comparing against
 /// the active profile file. Finds the first occurrence of a profile rule in
 /// config — all rules before it are custom rules.

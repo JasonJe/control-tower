@@ -216,6 +216,10 @@ INSTALL_DIR="/opt/ctsvc"
 BINARY="$INSTALL_DIR/ctsvc"
 SERVICE_NAME="ctsvc"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+# Run the daemon as the desktop user who invoked sudo, not as root: the system
+# proxy settings and the config directory belong to that user. CT_USER
+# overrides the choice; fall back to root when there is no invoking user.
+RUN_USER="${CT_USER:-${SUDO_USER:-root}}"
 
 echo "Installing ${SERVICE_NAME} service to $INSTALL_DIR..."
 
@@ -255,6 +259,11 @@ fi
 # Make binary executable
 chmod +x "$BINARY"
 
+# Let the service user own its configuration and logs.
+if [ "$RUN_USER" != "root" ]; then
+    chown -R "$RUN_USER:$RUN_USER" "$INSTALL_DIR"
+fi
+
 echo "Running pre-installation checks..."
 
 # Check if ctsvc is already running
@@ -289,7 +298,7 @@ Type=simple
 ExecStart="${BINARY}"
 Restart=on-failure
 RestartSec=5
-User=${USER}
+User=${RUN_USER}
 Environment="RUST_LOG=info"
 # The IPC socket lives in /tmp; PrivateTmp would hide it from ctctl.
 NoNewPrivileges=true

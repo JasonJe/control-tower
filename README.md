@@ -14,6 +14,11 @@
 - **连接历史** — 自动记录关闭的连接（来源/目标/节点/流量），持久化存储
 - **节点测速** — 一键批量检测节点延迟
 - **流量统计** — 实时上下行速率 + 累计流量
+- **系统代理** — 一键开启/关闭 Linux 桌面代理，服务重启后自动恢复
+- **策略组** — 按策略组选择节点并持久化，切换订阅/重启后保留选择
+- **订阅信息** — `ctctl profile list` 展示订阅流量与到期时间（`subscription-userinfo`）
+- **分享链接导入** — 粘贴 vmess/vless/trojan/ss 链接直接生成本地 profile
+- **内核看护** — Mihomo 异常退出自动重启（指数退避），支持 `ctctl service install`
 - **CLI 工具** — `ctctl` 提供完整的命令行操作能力
 
 ---
@@ -82,6 +87,7 @@ ctctl connections history             # 历史记录
 # 设置
 ctctl dns get|set                     # DNS 配置
 ctctl rule-provider list              # Rule Providers
+ctctl service install                 # 安装 systemd 服务（需 root）
 ```
 
 ---
@@ -169,6 +175,25 @@ rule-providers:
 ---
 
 ## 更新记录
+
+### 0.3.0
+
+- **系统代理**：Web UI 支持开启/关闭 Linux 桌面代理（GNOME/KDE 等），状态持久化到 `system-proxy.yaml`，服务重启或桌面会话恢复后自动重新应用；服务退出时自动还原，避免系统代理指向已关闭的端口。
+- **策略组选择**：`/api/proxies/select` 支持指定策略组（默认 GLOBAL），选择结果持久化到 `proxy-selections.yaml`，切换订阅或重启后保留。
+- **订阅流量与到期**：解析订阅响应头 `subscription-userinfo`，`ctctl profile list` 展示已用流量、总量、使用比例和到期日期。
+- **分享链接导入**：Web UI 与 `/api/profiles/import-links` 支持一次粘贴多条 `vmess://`、`vless://`、`trojan://`、`ss://` 链接，生成本地 profile。
+- **内核看护**：`ctsvc` 每 5 秒检查 Mihomo，意外退出后按指数退避自动重启；`service stop` 后不会被误拉起。
+- **服务安装**：新增 `ctctl service install`，复制二进制与配置到 `/opt/ctsvc`、写入 systemd 单元并启用；`CT_USER` 可指定运行用户（默认 `SUDO_USER`）。
+- **0.4 预览**：配置校验/备份/回滚（`/api/config/validate`、`/api/config/backups`）、规则匹配测试（`/api/rules/match`）、流量统计持久化与 `/api/stats`，Web UI 已提供对应入口。
+
+### 0.2.4
+
+- `ctctl profile update` 更新当前 profile 后自动替换 `config.yaml` 并重启服务，`ctctl proxy list` 立即反映新节点。
+- `-H "User-Agent: ..."` 可覆盖 `profiles.yaml` 中已保存的 `user_agent`。
+
+### 0.2.3
+
+- 修复 `options.user_agent` 被 `options.headers` 中的 `user-agent` 覆盖的问题；优先级改为 `options.user_agent` > `headers.user-agent` > 默认值，并避免重复发送 UA。
 
 ### 0.2.2
 

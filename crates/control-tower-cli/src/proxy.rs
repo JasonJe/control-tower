@@ -1,8 +1,12 @@
 //! Proxy management module
 
 use anyhow::Result;
+use serde_json::Value;
 
-use crate::service::{get_clash_proxies, select_proxy as service_select_proxy, test_proxy_ipc};
+use crate::service::{
+    get_clash_proxies, select_proxy as service_select_proxy,
+    select_proxy_in as service_select_proxy_in, test_proxy_ipc,
+};
 use crate::ProxyAction;
 
 /// Truncate string to max_width characters, showing start and end with "..." in middle if truncated
@@ -34,20 +38,24 @@ fn truncate_str(s: &str, max_width: usize) -> String {
 
 pub async fn handle(action: ProxyAction) -> Result<()> {
     match action {
-        ProxyAction::List => list_proxies().await?,
-        ProxyAction::Select { name } => select_proxy_node(&name).await?,
+        ProxyAction::List { group } => {
+            list_proxies(group.as_deref().unwrap_or("GLOBAL")).await?
+        }
+        ProxyAction::Select { name, group } => {
+            select_proxy_node(&name, group.as_deref()).await?
+        }
         ProxyAction::Test { name } => test_proxy(name.as_deref()).await?,
         ProxyAction::Stats => show_stats().await?,
     }
     Ok(())
 }
 
-/// Get all proxy names from GLOBAL group
-async fn get_global_proxy_list() -> Result<Vec<String>> {
+/// Get all member names of a selector group (`GLOBAL` by default).
+async fn get_group_proxy_list(group: &str) -> Result<Vec<String>> {
     let proxies = get_clash_proxies().await?;
 
-    if let Some(global) = proxies.get("proxies").and_then(|p| p.get("GLOBAL")) {
-        if let Some(all) = global.get("all").and_then(|a| a.as_array()) {
+    if let Some(entry) = proxies.get("proxies").and_then(|p| p.get(group)) {
+        if let Some(all) = entry.get("all").and_then(|a| a.as_array()) {
             return Ok(all.iter().filter_map(|v| v.as_str().map(String::from)).collect());
         }
     }
@@ -55,13 +63,18 @@ async fn get_global_proxy_list() -> Result<Vec<String>> {
     Ok(vec![])
 }
 
-async fn list_proxies() -> Result<()> {
+/// Get all proxy names from GLOBAL group
+async fn get_global_proxy_list() -> Result<Vec<String>> {
+    get_group_proxy_list("GLOBAL").await
+}
+
+async fn list_proxies(group: &str) -> Result<()> {
     let proxies = get_clash_proxies().await?;
 
-    // Collect all proxy names from GLOBAL group for indexing
-    let proxy_names = get_global_proxy_list().await?;
+    // Collect all proxy names from the selected group for indexing
+    let proxy_names = get_group_proxy_list(group).await?;
 
-    println!("Proxy Nodes ({} total):", proxy_names.len());
+    println!("Proxy Nodes in group `{}` ({} total):", group, proxy_names.len());
     println!("{:<6}  {:<35}  {:<12}  {:<10}", "Index", "Name", "Type", "Status");
     println!("{}", "-".repeat(68));
 
@@ -88,14 +101,20 @@ async fn list_proxies() -> Result<()> {
     }
 
     println!();
-    println!("Tip: Use index number to select: clash proxy select 5");
-    println!("     Or use name directly: clash proxy select \"香港 101\"");
+    if let Some(entry) = proxies.get("proxies").and_then(|p| p.get(group)) {
+        if let Some(now) = entry.get("now").and_then(Value::as_str) {
+            println!("Current selection: {}", now);
+        }
+    }
+    println!("Tip: ctctl proxy select '#5' --group '{}'", group);
+    println!("     Or use a name: ctctl proxy select \"香港 101\" --group '{}'", group);
 
     Ok(())
 }
 
-async fn select_proxy_node(selector: &str) -> Result<()> {
-    let proxy_names = get_global_proxy_list().await?;
+async fn select_proxy_node(selector: &str, group: Option<&str>) -> Result<()> {
+    let group = group.unwrap_or("GLOBAL");
+    let proxy_names = get_group_proxy_list(group).await?;
 
     let proxy_name = if let Some(stripped) = selector.strip_prefix('#') {
         // Index selection: #1, #2, etc.
@@ -159,9 +178,13 @@ async fn select_proxy_node(selector: &str) -> Result<()> {
         }
     };
 
-    service_select_proxy(&proxy_name).await?;
+    if group == "GLOBAL" {
+        service_select_proxy(&proxy_name).await?;
+    } else {
+        service_select_proxy_in(group, &proxy_name).await?;
+    }
     crate::settings::set_selected_proxy(proxy_name.clone());
-    println!("Selected proxy: {}", proxy_name);
+    println!("Selected proxy in `{}`: {}", group, proxy_name);
     Ok(())
 }
 

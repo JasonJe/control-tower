@@ -38,9 +38,13 @@
 ```bash
 cd target/dist/control-tower
 sudo ./install-service.sh
+# 或（升级时推荐，保留已有配置与订阅）
+sudo ./ctctl service install
 ```
 
-服务部署至 `/opt/ctsvc`，注册 systemd 单元 `ctsvc`。
+服务部署至 `/opt/ctsvc`，注册 systemd 单元 `ctsvc`。默认以执行 `sudo` 的用户运行，可用 `CT_USER=<用户>` 指定。
+
+> 升级请使用 `sudo ./ctctl service install`；`install-service.sh` 会用包内默认 `settings.yaml` 覆盖现有设置。
 
 ### 启动与停止
 
@@ -58,36 +62,62 @@ sudo systemctl status ctsvc   # 状态
 
 ## CLI 参考
 
-> `ctctl` 需要以服务运行用户（通过 installer 安装时通常是 `root`）执行，才能访问权限为 `0600` 的 IPC socket 和配置目录；普通用户可使用 Web UI 或只读接口。
+> `ctctl` 需要以服务运行用户执行，才能访问权限为 `0600` 的 IPC socket 和配置目录。安装脚本默认把服务用户设为执行 `sudo` 的用户（`SUDO_USER`），可用 `CT_USER` 覆盖；普通用户可使用 Web UI。
+>
+> 按场景组织的完整说明见 **[docs/ctctl-scenarios.md](docs/ctctl-scenarios.md)**（安装升级、订阅、策略组、规则、排障与自动化）。
 
 ```bash
 # 订阅管理
-ctctl profile list                    # 列出所有订阅
+ctctl profile list                    # 列出所有订阅（含流量/到期）
 ctctl profile add <URL> [名称]         # 添加订阅
 ctctl profile add <URL> [名称] -H "X-Token: abc"  # 添加订阅并自定义请求头
+ctctl profile import <link...> [--file F] [--name N] [--activate]  # 分享链接导入
 ctctl profile activate <ID>            # 激活订阅
 ctctl profile cron <ID> <分钟>        # 设置自动更新间隔
 ctctl profile update                  # 手动更新（沿用已保存的请求头）
 ctctl profile update <ID> -H "Authorization: Bearer abc"  # 覆盖请求头并更新
 
 # 节点管理
-ctctl proxy list                      # 列出节点
-ctctl proxy select <名称>              # 选择节点
+ctctl proxy list [--group <组名>]      # 列出节点（默认 GLOBAL 组）
+ctctl proxy select <名称> [--group <组名>]  # 选择节点/策略组节点
 ctctl proxy test                      # 测速所有节点
+ctctl proxy stats                     # 延迟/健康状态/连接数
 
 # 模式切换
 ctctl mode get                        # 查看当前模式
 ctctl mode set global|rule|direct     # 切换模式
+ctctl mode tun status|enable|disable  # TUN 模式
+
+# 规则管理
+ctctl rule list [--limit N]           # 查看规则
+ctctl rule add "TYPE,VALUE,PROXY"     # 添加规则（需 service restart 生效）
+ctctl rule remove <序号>              # 删除规则
+ctctl rule import|export <文件>       # 导入/导出规则
+ctctl rule match <域名|IP|URL> [--json] # 离线测试规则匹配
 
 # 连接管理
-ctctl connections list                 # 当前连接
-ctctl connections close <ID>          # 关闭连接
-ctctl connections history             # 历史记录
+ctctl connections list                # 当前连接
+ctctl connections detail <序号>       # 连接详情
+ctctl connections close <序号>        # 关闭连接
+ctctl connections top                 # 实时连接监控
+ctctl connections history [-n N]      # 已关闭连接历史
 
-# 设置
-ctctl dns get|set                     # DNS 配置
-ctctl rule-provider list              # Rule Providers
+# 配置与排障
+ctctl config show [--json]            # 查看当前 config.yaml
+ctctl config validate [文件]          # 校验（不保存）
+ctctl config backup list|create|restore <ID>|delete <ID>
+ctctl config edit                     # $EDITOR 编辑，自动备份/回滚
+ctctl logs [-n N] [--source service|mihomo] [-f]
+ctctl stats [--json] [--reset]        # 累计/按天/按节点流量统计
+
+# 系统与设置
+ctctl system-proxy status|on|off      # 桌面系统代理（由服务用户执行）
+ctctl rule-provider list|refresh <名称|--all>
+ctctl settings get [key] / set <key> <value>
+
+# 维护
 ctctl service install                 # 安装 systemd 服务（需 root）
+ctctl update all|mihomo|geoip|geosite # 更新内核与地理数据库
 ```
 
 ---
@@ -175,6 +205,13 @@ rule-providers:
 ---
 
 ## 更新记录
+
+### 0.3.1
+
+- **CLI 补齐（P0）**：新增 `ctctl config show|validate|backup list|create|restore|delete|edit`（复用服务端校验、备份、热加载与失败回滚；`edit` 用 `$EDITOR`）、`ctctl logs`（支持 `-n`、`--source service|mihomo`、`-f`）、`ctctl rule match`、`ctctl proxy list/select --group`、`ctctl profile import`。
+- **CLI 补齐（P1）**：新增 `ctctl stats`、`ctctl connections history`、`ctctl system-proxy`、`ctctl rule-provider list|refresh`、`ctctl settings get|set`。
+- **问题修复**：`profile remove` 只在删除当前激活订阅时停止内核并删除 `config.yaml`；`service status` 的 API 地址不再硬编码 `9090`。
+- **文档**：新增 [docs/ctctl-scenarios.md](docs/ctctl-scenarios.md)，按场景说明安装升级、订阅、策略组、规则、排障与自动化；CLI 参考去除不存在的命令。
 
 ### 0.3.0
 

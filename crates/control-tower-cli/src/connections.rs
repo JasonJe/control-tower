@@ -14,8 +14,74 @@ pub async fn handle(action: ConnectionsAction) -> Result<()> {
         ConnectionsAction::Close { index } => close_by_index(index).await?,
         ConnectionsAction::Detail { index } => show_detail(index).await?,
         ConnectionsAction::Top { interval } => top_connections(interval).await?,
+        ConnectionsAction::History { limit, clear, json } => {
+            history(limit, clear, json).await?
+        }
     }
     Ok(())
+}
+
+/// Show connections recorded by the service in connection_history.yaml.
+///
+/// This is a local read, so it works even when the Mihomo API is down.
+async fn history(limit: usize, clear: bool, json: bool) -> Result<()> {
+    let path = crate::settings::shared_paths()?
+        .config_dir
+        .join("connection_history.yaml");
+
+    let entries: Vec<Value> = if path.exists() {
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+        serde_yaml_ng::from_str(&content).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    } else if entries.is_empty() {
+        println!("No connection history recorded yet.");
+    } else {
+        println!("Connection History (showing up to {} of {}):", limit, entries.len());
+        println!("{:<10}  {:<26}  {:<24}  {:>10}  {:>10}", "Closed", "Destination", "Chains", "Upload", "Download");
+        println!("{}", "-".repeat(90));
+        for entry in entries.iter().rev().take(limit) {
+            let chains = entry
+                .get("chains")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(" → ")
+                })
+                .unwrap_or_default();
+            println!(
+                "{:<10}  {:<26}  {:<24}  {:>10}  {:>10}",
+                entry.get("closed_at").and_then(Value::as_str).unwrap_or("?"),
+                truncate(entry.get("destination").and_then(Value::as_str).unwrap_or("?"), 26),
+                truncate(&chains, 24),
+                entry.get("upload").and_then(Value::as_u64).unwrap_or(0),
+                entry.get("download").and_then(Value::as_u64).unwrap_or(0)
+            );
+        }
+        println!("\nFull file: {}", path.display());
+    }
+
+    if clear {
+        control_tower_service_core::write_private_atomic(&path, "[]\n")?;
+        println!("Connection history cleared.");
+    }
+    Ok(())
+}
+
+fn truncate(value: &str, max: usize) -> String {
+    if value.chars().count() <= max {
+        return value.to_string();
+    }
+    let shortened: String = value.chars().take(max.saturating_sub(3)).collect();
+    format!("{}...", shortened)
 }
 
 pub async fn list_connections() -> Result<()> {
